@@ -140,6 +140,17 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
             false
         }
     }
+
+    fn elements(&self) -> Vec<T> {
+        self.adds.iter().fold(Vec::new(), |mut acc, (elem, dots)| {
+            if dots.is_empty() {
+                acc
+            } else {
+                acc.push(elem.clone());
+                acc
+            }
+        })
+    }
 }
 
 #[test]
@@ -188,11 +199,15 @@ fn basic() {
     assert_eq!(true, orset1.join_state(orset2));
     assert_eq!(orset, orset1);
 
+    assert_eq!(0, orset.elements().len());
+
     let delta = Delta::Add {element: "dog".to_string(),
                             dot: Dot {actor: "node2".to_string(), counter: 1}};
 
     // Check that joining an Add mutator mutates the set
     assert_eq!(true, orset.join(delta));
+
+    assert_eq!(1, orset.elements().len());
 
     let delta = Delta::Remove {element: "dog".to_string(),
                                dots: vec![Dot {actor: "node2".to_string(),
