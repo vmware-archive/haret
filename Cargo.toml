@@ -1,0 +1,7 @@
+[package]
+name = "v2r2"
+version = "0.1.0"
+authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
+
+[dev-dependencies]
+quickcheck = "*"
