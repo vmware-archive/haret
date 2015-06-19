@@ -5,3 +5,4 @@ authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 
 [dev-dependencies]
 quickcheck = "*"
+rand = "*"

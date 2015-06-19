@@ -3,6 +3,7 @@ name = "v2r2"
 version = "0.1.0"
 dependencies = [
  "quickcheck 0.2.20 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
