@@ -41,6 +41,13 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         }
     }
 
+    fn seen(&mut self, element: &T) -> Option<Vec<Dot>> {
+        match self.adds.get(element) {
+            None => None,
+            Some(dots) => Some(dots.clone())
+        }
+    }
+
     fn add(&mut self, element: T) -> Delta<T> {
         self.counter += 1;
         let dot = Dot {actor: self.name.clone(), counter: self.counter};
@@ -50,20 +57,13 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         delta
     }
 
-    // Don't do anything if there are no adds to remove
-    fn remove(&mut self, element: T) -> Option<Delta<T>> {
-        match self.adds.get_mut(&element) {
-            None => None,
-            Some(adds) => {
-                let removes = self.removes.entry(element.clone()).or_insert(Vec::new());
-                let mut dots = Vec::new();
-                while let Some(dot) = adds.pop() {
-                    removes.push(dot.clone());
-                    dots.push(dot);
-                }
-                Some(Delta::Remove { element: element, dots: dots })
-            }
+    fn remove(&mut self, element: T, seen: Vec<Dot>) -> Delta<T> {
+        let removes = self.removes.entry(element.clone()).or_insert(Vec::new());
+        for dot in &seen {
+            removes.push(dot.clone());
+            self.adds.remove(&element);
         }
+        Delta::Remove { element: element, dots: seen}
     }
 
     // No overloaded functions in Rust. This feels wrong...
@@ -161,17 +161,13 @@ mod tests {
     use super::*;
     use std::collections::{HashMap};
 
-    #[test]
-    fn basic() {
+
+    fn assert_add() -> ORSet<String> {
         let mut orset = ORSet::new("node1".to_string());
         let add = orset.add("dog".to_string());
-        let add2 = add.clone();
-
-        // save a copy for later
-        let mut orset1 = orset.clone();
 
         // Test that our add mutator is correct
-        if let Delta::Add {element, dot} = add {
+        if let Delta::Add {element, dot} = add.clone() {
             assert_eq!(element, "dog".to_string());
             assert_eq!(dot.counter, 1);
             assert_eq!(dot.actor, "node1".to_string());
@@ -182,16 +178,19 @@ mod tests {
         // Check contents of our orset
         assert_eq!(true, orset.contains(&"dog".to_string()));
         assert_eq!(false, orset.contains(&"cat".to_string()));
-        assert_eq!(false, orset.join(add2));
 
-        let remove = orset.remove("dog".to_string());
-        let remove2 = remove.clone().unwrap();
+        // Check that adds are idempotent
+        assert_eq!(false, orset.join(add));
+        orset
+    }
 
-        // Save another copy for later
-        let orset2 = orset.clone();
+    fn assert_successful_remove(orset: &ORSet<String>) -> ORSet<String> {
+        let mut orset = orset.clone();
+        let seen = orset.seen(&"dog".to_string()).unwrap();
+        let remove = orset.remove("dog".to_string(), seen);
 
         // Test that we have a proper remove mutator
-        if let Some(Delta::Remove {dots, ..}) = remove {
+        if let Delta::Remove {dots, ..} = remove.clone() {
             assert_eq!(dots.len(), 1);
             assert_eq!(dots[0].actor, "node1".to_string());
             assert_eq!(dots[0].counter, 1);
@@ -200,33 +199,50 @@ mod tests {
         }
 
         // Check that removes are idempotent
-        // We already removed this, and we try to join the resulting delta mutator from the state
-        assert_eq!(false, orset.join(remove2));
-
-        // Ensure that joining two states is the same as directly mutating the states
-        assert_eq!(true, orset1.join_state(orset2));
-        assert_eq!(orset, orset1);
-
+        assert_eq!(false, orset.join(remove));
         assert_eq!(0, orset.elements().len());
+        orset
+    }
+
+    fn assert_deltas(orset: ORSet<String>) {
+        let mut orset = orset;
 
         let delta = Delta::Add {element: "dog".to_string(),
                                 dot: Dot {actor: "node2".to_string(), counter: 1}};
 
         // Check that joining an Add mutator mutates the set
-        assert_eq!(true, orset.join(delta));
-
+        assert_eq!(true, orset.join(delta.clone()));
         assert_eq!(1, orset.elements().len());
+
+        // Check that add delta mutators are idempotent
+        assert_eq!(false, orset.join(delta));
 
         let delta = Delta::Remove {element: "dog".to_string(),
                                    dots: vec![Dot {actor: "node2".to_string(),
                                                    counter: 1}]};
 
         // Check that joining a Remove mutator mutates the set
-        assert_eq!(true, orset.join(delta));
+        assert_eq!(true, orset.join(delta.clone()));
+        assert_eq!(0, orset.elements().len());
 
-        // Ensure that joining two states is the same as joining the deltas
-        assert_eq!(true, orset1.join_state(orset.clone()));
-        assert_eq!(orset, orset1);
+        // Check that remove mutators are idempotent
+        assert_eq!(false, orset.join(delta));
+    }
+
+    #[test]
+    fn basic() {
+        let mut orset = assert_add();
+        let orset2 = assert_successful_remove(&orset);
+
+        // Ensure that states are mutated correctly
+        assert_eq!(true, orset.join_state(orset2.clone()));
+        assert_eq!(orset, orset2);
+
+        // Ensure that joining states is idempotent
+        assert_eq!(false, orset.join_state(orset2.clone()));
+        assert_eq!(orset, orset2);
+
+        assert_deltas(orset);
     }
 
     fn oneof<G: Gen, T: Clone>(g: &mut G, range: Vec<T>) -> T {
@@ -267,30 +283,47 @@ mod tests {
         }
     }
 
+    type ORSetsMap = HashMap<String, ORSet<String>>;
+    type MutatorsMap = HashMap<String, Vec<Delta<String>>>;
+
+    fn add_op(element: String, node: String, orsets: &mut ORSetsMap,
+              mutators: &mut MutatorsMap) {
+        let mut orset =
+            orsets.entry(node.clone()).or_insert(ORSet::new(node.clone()));
+        let delta = orset.add(element);
+        let mut mutator = mutators.entry(node).or_insert(Vec::new());
+        mutator.push(delta)
+    }
+
+    fn remove_op(element: String, node: String, orsets: &mut ORSetsMap,
+                 mutators: &mut MutatorsMap) {
+        match orsets.get_mut(&node) {
+            None => (),
+            Some(orset) => {
+                match orset.seen(&element) {
+                    None => (),
+                    Some(seen) => {
+                        let delta = orset.remove(element, seen);
+                        let mut mutator = mutators.get_mut(&node).unwrap();
+                        mutator.push(delta)
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn prop_joins_equivalent() {
         fn prop(ops: Vec<Op>) -> bool {
-            let mut orsets: HashMap<String, ORSet<String>> = HashMap::new();
-            let mut mutators: HashMap<String, Vec<_>> = HashMap::new();
+            let mut orsets: ORSetsMap = HashMap::new();
+            let mut mutators: MutatorsMap = HashMap::new();
             for op in ops {
                 match op {
                     Op::Add {element, node} => {
-                        let mut orset =
-                            orsets.entry(node.clone()).or_insert(ORSet::new(node.clone()));
-                        let delta = orset.add(element);
-                        let mut mutator = mutators.entry(node).or_insert(Vec::new());
-                        mutator.push(delta)
+                        add_op(element, node, &mut orsets, &mut mutators);
                     }
                     Op::Remove {element, node} => {
-                        let mut orset =
-                            orsets.entry(node.clone()).or_insert(ORSet::new(node.clone()));
-                        match orset.remove(element) {
-                            None => (),
-                            Some(delta) => {
-                                let mut mutator = mutators.entry(node).or_insert(Vec::new());
-                                mutator.push(delta)
-                            }
-                        }
+                        remove_op(element, node, &mut orsets, &mut mutators);
                     }
                 }
             }
@@ -302,8 +335,7 @@ mod tests {
         quickcheck(prop as fn(Vec<Op>) -> bool);
     }
 
-    fn orsets_are_logically_equal(map: HashMap<String, ORSet<String>>,
-                                  map2: HashMap<String, ORSet<String>>) -> bool {
+    fn orsets_are_logically_equal(map: ORSetsMap, map2: ORSetsMap) -> bool {
         let mut equal = true;
         for orset in map.values() {
             for orset2 in map2.values() {
@@ -315,8 +347,7 @@ mod tests {
         equal
     }
 
-    fn join_deltas(orsets: &mut HashMap<String, ORSet<String>>,
-                   mutators: HashMap<String, Vec<Delta<String>>>) {
+    fn join_deltas(orsets: &mut ORSetsMap, mutators: MutatorsMap) {
         // Apply each mutator to every node that isn't the creator of the delta
         for (node, deltas) in mutators.iter() {
             for (node2, mut orset) in orsets.iter_mut() {
@@ -329,7 +360,7 @@ mod tests {
         }
     }
 
-    fn join_states(orsets: &mut HashMap<String, ORSet<String>>) {
+    fn join_states(orsets: &mut ORSetsMap) {
         let orsets2 = orsets.clone();
         for (node, mut orset) in orsets.iter_mut() {
             for (node2, orset2) in orsets2.iter() {
