@@ -44,7 +44,13 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
     fn seen(&mut self, element: &T) -> Option<Vec<Dot>> {
         match self.adds.get(element) {
             None => None,
-            Some(dots) => Some(dots.clone())
+            Some(dots) => {
+                if dots.len() == 0 {
+                    None
+                } else {
+                    Some(dots.clone())
+                }
+            }
         }
     }
 
@@ -52,16 +58,21 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         self.counter += 1;
         let dot = Dot {actor: self.name.clone(), counter: self.counter};
         let delta = Delta::Add { element: element.clone(), dot: dot.clone() };
-        let adds = self.adds.entry(element).or_insert(Vec::new());
+        let mut adds = self.adds.entry(element).or_insert(Vec::new());
         (*adds).push(dot);
         delta
     }
 
+    /// Invariant: seen can never be empty
     fn remove(&mut self, element: T, seen: Vec<Dot>) -> Delta<T> {
-        let removes = self.removes.entry(element.clone()).or_insert(Vec::new());
+        assert!(seen.len() != 0);
+        let mut removes = self.removes.entry(element.clone()).or_insert(Vec::new());
+        let mut adds = self.adds.get_mut(&element).unwrap();
         for dot in &seen {
-            removes.push(dot.clone());
-            self.adds.remove(&element);
+            if !removes.contains(dot) {
+                removes.push(dot.clone());
+                adds.retain(|x| *x != *dot);
+            }
         }
         Delta::Remove { element: element, dots: seen}
     }
