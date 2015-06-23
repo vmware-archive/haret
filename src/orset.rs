@@ -41,7 +41,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         }
     }
 
-    fn seen(&mut self, element: &T) -> Option<Vec<Dot>> {
+    fn seen(&self, element: &T) -> Option<Vec<Dot>> {
         match self.adds.get(element) {
             None => None,
             Some(dots) => {
@@ -167,10 +167,14 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
 #[cfg(test)]
 mod tests {
 
-    use quickcheck::{quickcheck, Arbitrary, Gen};
-    use rand::Rng;
+    use quickcheck::{QuickCheck, quickcheck, Arbitrary, Gen};
+    use rand::{thread_rng, Rng};
     use super::*;
     use std::collections::{HashMap};
+    use std::sync::{Arc, RwLock};
+    use std::thread;
+    use std::sync::mpsc;
+    use std::sync::mpsc::{Sender, Receiver};
 
 
     fn assert_add() -> ORSet<String> {
@@ -256,23 +260,6 @@ mod tests {
         assert_deltas(orset);
     }
 
-    fn oneof<G: Gen, T: Clone>(g: &mut G, range: Vec<T>) -> T {
-        let index = g.gen_range(0, range.len());
-        let ref x = range[index];
-        x.clone()
-    }
-
-    /// Create n strings of s appended with an incrementing integer from 1 to n
-    fn n_strings(s: &str, n: u32) -> Vec<String> {
-        let mut strings = Vec::new();
-        for i in 1..n+1 {
-            let mut string = s.to_string();
-            string.push_str(&(i.to_string()));
-            strings.push(string)
-        }
-        strings
-    }
-
     #[derive(Debug, Clone)]
     enum Op {
         Add {element: String, node: String},
@@ -297,7 +284,197 @@ mod tests {
     type ORSetsMap = HashMap<String, ORSet<String>>;
     type MutatorsMap = HashMap<String, Vec<Delta<String>>>;
 
-    fn add_op(element: String, node: String, orsets: &mut ORSetsMap,
+    #[test]
+    fn prop_joins_equivalent() {
+        fn prop(ops: Vec<Op>) -> bool {
+            let mut orsets: ORSetsMap = HashMap::new();
+            let mut mutators: MutatorsMap = HashMap::new();
+            for op in ops {
+                match op {
+                    Op::Add {element, node} => {
+                        serial_add_op(element, node, &mut orsets, &mut mutators);
+                    }
+                    Op::Remove {element, node} => {
+                        serial_remove_op(element, node, &mut orsets, &mut mutators);
+                    }
+                }
+            }
+            let mut orsets2 = orsets.clone();
+            join_deltas(&mut orsets, mutators);
+            join_states(&mut orsets2);
+            orsets_are_logically_equal(orsets, orsets2)
+        }
+        quickcheck(prop as fn(Vec<Op>) -> bool);
+    }
+
+    #[test]
+    fn prop_concurrent() {
+        fn prop(ops: Vec<Op>) -> bool {
+            let num_clients = 2;
+            let num_ops = ops.len();
+            let orsets = Arc::new(RwLock::new(HashMap::new()));
+            let (tx, rx) = mpsc::channel();
+            for slice in ops.chunks(num_clients) {
+                let tx = tx.clone();
+                let orsets = orsets.clone();
+                let slice = slice.to_vec();
+                thread::spawn(move || {
+                    orset_client(orsets, slice, tx)
+                });
+            }
+
+            let mut delta_only_orset = ORSet::new("delta_only".to_string());
+            let adds = collect_deltas(orsets.clone(), rx, &mut delta_only_orset, num_ops);
+            assert_merge_equality(orsets, delta_only_orset.clone()) &&
+                assert_dots_either_in_adds_or_removes(&delta_only_orset, &adds) &&
+                assert_dot_count(&delta_only_orset, adds.len())
+        }
+        let qc = QuickCheck::new();
+        qc.tests(10000);
+        quickcheck(prop as fn(Vec<Op>) -> bool);
+    }
+
+    fn assert_dot_count(orset: &ORSet<String>, count: usize) -> bool {
+        let mut total = 0;
+        for (_, vec) in orset.adds.iter() {
+            total += vec.len();
+        }
+        for (_, vec) in orset.removes.iter() {
+            total += vec.len();
+        }
+        total == count
+    }
+
+    fn assert_dots_either_in_adds_or_removes(orset: &ORSet<String>,
+                                             adds: &Vec<(String, Dot)>) -> bool {
+        // Pattern matching on references is insane
+        for &(ref element, ref dot) in &(*adds) {
+            let in_adds = orset.adds.get(element).unwrap().contains(&dot);
+            match orset.removes.get(element) {
+                None => {
+                    if !in_adds { return false }
+                },
+                Some(vec) => {
+                    if vec.contains(&dot) {
+                        if in_adds { return false }
+                    } else {
+                        if !in_adds { return false }
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn assert_merge_equality(state_orsets: Arc<RwLock<ORSetsMap>>,
+                             delta_orset: ORSet<String>) -> bool {
+        let mut orsets = state_orsets.write().unwrap().clone();
+        join_states(&mut orsets);
+        let mut delta_map = HashMap::new();
+        delta_map.insert("delta_only".to_string(), delta_orset);
+        orsets_are_logically_equal(orsets, delta_map)
+    }
+
+    fn orset_client(orsets: Arc<RwLock<ORSetsMap>>, ops: Vec<Op>,
+                    tx: Sender<Option<Delta<String>>>) {
+        for op in ops {
+            match op {
+                Op::Add {element, node} => {
+                    let mut orsets = orsets.write().unwrap();
+                    let mut orset = orsets.entry(node.clone())
+                                          .or_insert(ORSet::new(node.clone()));
+                    let delta = orset.add(element);
+                    tx.send(Some(delta)).unwrap();
+                }
+                Op::Remove {element, node} => {
+                    let seen = {
+                        let orsets = orsets.read().unwrap();
+                        match orsets.get(&node) {
+                            None => None,
+                            Some(orset) => {
+                                orset.seen(&element)
+                            }
+                        }
+                    };
+                    // Simulate a round trip
+                    thread::sleep_ms(5);
+                    let mut orsets = orsets.write().unwrap();
+                    match seen {
+                        None => tx.send(None).unwrap(),
+                        Some(seen) => {
+                            let mut orset = orsets.get_mut(&node).unwrap();
+                            let delta = orset.remove(element, seen);
+                            tx.send(Some(delta)).unwrap();
+                        }
+                    };
+                }
+            }
+        }
+    }
+
+    fn collect_deltas(orsets: Arc<RwLock<ORSetsMap>>,
+                      rx: Receiver<Option<Delta<String>>>,
+                      delta_only_orset: &mut ORSet<String>,
+                      num_ops: usize) -> Vec<(String, Dot)> {
+        // Maintain all adds so we can do an internal consistency check
+        let mut adds: Vec<(String, Dot)> = Vec::new();
+        for _ in 0..num_ops {
+            match rx.recv().unwrap() {
+                None => (),
+                Some(delta) => {
+                    save_adds(&mut adds, delta.clone());
+                    delta_only_orset.join(delta.clone());
+                    let mut orsets = orsets.write().unwrap().clone();
+                    // Randomly merge some deltas. Joins should be commutative and idempotent.
+                    let random: u64 = thread_rng().gen();
+                    for (_, orset) in orsets.iter_mut() {
+                        if (random % (orset.counter+1)) == 0 {
+                            (*orset).join(delta.clone());
+                        }
+                    }
+                }
+            };
+        }
+        adds
+    }
+
+    fn save_adds(adds: &mut Vec<(String, Dot)>, delta: Delta<String>) {
+        match delta {
+            Delta::Add {element, dot} => adds.push((element, dot)),
+            _ => ()
+        }
+    }
+
+    fn orsets_are_logically_equal(map: ORSetsMap, map2: ORSetsMap) -> bool {
+        let mut equal = true;
+        for orset in map.values() {
+            for orset2 in map2.values() {
+                if orset.elements().sort() != orset2.elements().sort() {
+                    equal = false;
+                }
+            }
+        }
+        equal
+    }
+
+    fn oneof<G: Gen, T: Clone>(g: &mut G, range: Vec<T>) -> T {
+        let index = g.gen_range(0, range.len());
+        let ref x = range[index];
+        x.clone()
+    }
+
+    /// Create n strings of s appended with an incrementing integer from 1 to n
+    fn n_strings(s: &str, n: u32) -> Vec<String> {
+        let mut strings = Vec::new();
+        for i in 1..n+1 {
+            let mut string = s.to_string();
+            string.push_str(&(i.to_string()));
+            strings.push(string)
+        }
+        strings
+    }
+
+    fn serial_add_op(element: String, node: String, orsets: &mut ORSetsMap,
               mutators: &mut MutatorsMap) {
         let mut orset =
             orsets.entry(node.clone()).or_insert(ORSet::new(node.clone()));
@@ -306,7 +483,7 @@ mod tests {
         mutator.push(delta)
     }
 
-    fn remove_op(element: String, node: String, orsets: &mut ORSetsMap,
+    fn serial_remove_op(element: String, node: String, orsets: &mut ORSetsMap,
                  mutators: &mut MutatorsMap) {
         match orsets.get_mut(&node) {
             None => (),
@@ -321,41 +498,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn prop_joins_equivalent() {
-        fn prop(ops: Vec<Op>) -> bool {
-            let mut orsets: ORSetsMap = HashMap::new();
-            let mut mutators: MutatorsMap = HashMap::new();
-            for op in ops {
-                match op {
-                    Op::Add {element, node} => {
-                        add_op(element, node, &mut orsets, &mut mutators);
-                    }
-                    Op::Remove {element, node} => {
-                        remove_op(element, node, &mut orsets, &mut mutators);
-                    }
-                }
-            }
-            let mut orsets2 = orsets.clone();
-            join_deltas(&mut orsets, mutators);
-            join_states(&mut orsets2);
-            orsets_are_logically_equal(orsets, orsets2)
-        }
-        quickcheck(prop as fn(Vec<Op>) -> bool);
-    }
-
-    fn orsets_are_logically_equal(map: ORSetsMap, map2: ORSetsMap) -> bool {
-        let mut equal = true;
-        for orset in map.values() {
-            for orset2 in map2.values() {
-                if orset.elements().sort() != orset2.elements().sort() {
-                    equal = false;
-                }
-            }
-        }
-        equal
     }
 
     fn join_deltas(orsets: &mut ORSetsMap, mutators: MutatorsMap) {
