@@ -260,6 +260,18 @@ mod tests {
         assert_deltas(orset);
     }
 
+    #[test]
+    fn concurrent_add_wins() {
+        let element = "tarz".to_string();
+        let mut orset = ORSet::new("yabadabadoo".to_string());
+        orset.add(element.clone());
+        let seen = orset.seen(&element).unwrap();
+        orset.add(element.clone());
+        orset.remove(element.clone(), seen);
+        assert_eq!(true, orset.contains(&element));
+        assert_eq!(1, orset.elements().len());
+    }
+
     #[derive(Debug, Clone)]
     enum Op {
         Add {element: String, node: String},
