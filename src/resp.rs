@@ -2,6 +2,7 @@ use mio::tcp::TcpStream;
 use std::io::{Result, Error, ErrorKind, Read, Write};
 use std::str;
 
+#[derive(Debug)]
 pub enum WriteCompletion {
     Done,
     Incomplete
@@ -43,7 +44,8 @@ impl Writer {
                 Ok(n) => {
                     self.pos.1 += n;
                     if self.pos.1 == inner.len() {
-                        self.pos.0 += 1
+                        self.pos.0 += 1;
+                        self.pos.1 = 0;
                     }
                 },
                 Err(err) => return Err(err)
@@ -52,12 +54,10 @@ impl Writer {
     }
 
     fn complete(&self) -> bool {
-        if self.pos.0 != (self.data.len()) { return false}
-        let ref inner = self.data[self.pos.0];
-        if self.pos.1 == (inner.len()) {
-            true
-        } else {
+        if self.pos.0 != (self.data.len()) {
             false
+        } else {
+            true
         }
     }
 }
@@ -115,6 +115,19 @@ impl Combinator {
         self
     }
 
+    fn bulk_s(mut self, bulk: &str) -> Combinator {
+        let lenstr = bulk.len().to_string();
+        let mut string = String::with_capacity(3 + lenstr.len());
+        string.push('$');
+        string.push_str(&lenstr);
+        string.push_str("\r\n");
+        self.output.push(string.into_bytes());
+        self.output.push(bulk.to_string().into_bytes());
+        self.output.push("\r\n".to_string().into_bytes());
+        self.bump_count();
+        self
+    }
+
     fn bulk(mut self, bulk: Vec<u8>) -> Combinator {
         let lenstr = bulk.len().to_string();
         let mut string = String::with_capacity(3 + lenstr.len());
@@ -156,8 +169,8 @@ impl Combinator {
 
     // Increment the number of elements in the inner most array
     fn bump_count(&mut self) {
-        if let Some(&mut (_, mut count)) = self.open.last_mut() {
-            count += 1;
+        if let Some(&mut (_, ref mut count)) = self.open.last_mut() {
+            *count += 1;
         }
     }
 }
@@ -171,6 +184,12 @@ pub enum RespType{
     Array(usize)
 }
 
+enum SizeOp {
+    Bulk,
+    Array
+}
+
+#[derive(Debug)]
 pub enum ReadCompletion<T: Parse> {
     Done(T),
     Incomplete
@@ -181,8 +200,11 @@ pub struct Reader<T: Parse> {
     data: Vec<RespType>,
     // Current buffer being read into
     buf: Vec<u8>,
-    // Location in the vector marking the start of an unread RespType
+    // Index in the vector marking the start of an unread RespType
     start_byte: usize,
+    // The number of bytes actually read into buf.
+    // Buf must be initialized to be read into, so we can't use buf.len()
+    read_bytes: usize,
     parsers: Vec<Parser<T>>
 }
 
@@ -200,8 +222,9 @@ impl<T: Parse> Reader<T> {
         Reader {
             data: Vec::new(),
             // Somewhat arbitrary size
-            buf: Vec::with_capacity(128),
+            buf: vec![0; 128],
             start_byte: 0,
+            read_bytes: 0,
             parsers: parsers
         }
     }
@@ -223,8 +246,10 @@ impl<T: Parse> Reader<T> {
             if parser.expected.is_empty() {
                 // We have a complete message!
                 let ref f = parser.construct;
-                let msg = f(&self.data);
-                return Ok(ReadCompletion::Done(msg))
+                match f(&self.data) {
+                    Ok(msg) => return Ok(ReadCompletion::Done(msg)),
+                    Err(e) => return Err(e)
+                }
             }
         }
         if count == 0 {
@@ -237,12 +262,12 @@ impl<T: Parse> Reader<T> {
         loop {
             self.maybe_shift_buffer();
             self.maybe_double_capacity();
-            let start = self.buf.len();
+            let start = self.read_bytes;
             match sock.read(&mut self.buf[start..]) {
-                Ok(0) => return Ok(ReadCompletion::Incomplete),
-                Ok(n) => (),
+                Ok(0) => (),
+                Ok(n) => self.read_bytes += n,
                 Err(e) => return Err(e)
-            }
+            };
             let completion = match self.buf[self.start_byte] as char {
                 '*' => self.read_array(),
                 '+' => self.read_simple(),
@@ -265,36 +290,65 @@ impl<T: Parse> Reader<T> {
     }
 
     fn read_array(&mut self) -> Result<RespTypeCompletion> {
-        match self.read_size() {
+        match self.read_size(SizeOp::Array) {
             Ok(None) => Ok(RespTypeCompletion::Incomplete),
             Err(e) => Err(e),
-            Ok(Some((size, end))) => {
-                self.start_byte = end;
+            Ok(Some((size, start))) => {
+                println!("About to return an array: size = {}, start = {}", size, start);
+                self.start_byte = start;
                 Ok(RespTypeCompletion::Done(RespType::Array(size)))
             }
         }
     }
 
     fn read_bulk(&mut self) -> Result<RespTypeCompletion> {
-        match self.read_size() {
+        match self.read_size(SizeOp::Bulk) {
             Ok(None) => Ok(RespTypeCompletion::Incomplete),
             Err(e) => Err(e),
-            Ok(Some((size, end))) => {
-                self.resize_buffer(size, end);
-                Ok(RespTypeCompletion::Incomplete)
+            Ok(Some((size, start))) => {
+                // Reserve enough space for the blob + CRLF
+                self.resize_buffer(size+2, start);
+                match self.read_blob(size, start) {
+                    Ok(Some(blob)) => Ok(RespTypeCompletion::Done(RespType::Bulk(blob))),
+                    Ok(None) => Ok(RespTypeCompletion::Incomplete),
+                    Err(err) => Err(err)
+                }
             }
         }
+    }
+
+    fn read_blob(&mut self, size: usize, start: usize) -> Result<Option<Vec<u8>>> {
+        let end = start + size + 2;
+        if self.read_bytes < end { return Ok(None) }
+        if !(self.buf[end-2] == CR && self.buf[end-1] == LF) {
+            let string = "Bulk strings require CRLF after blob";
+            return Err(Error::new(ErrorKind::InvalidInput, string))
+        }
+        self.start_byte = end;
+        let mut vec = Vec::with_capacity(size);
+        for i in start..end-2 {
+            vec.push(self.buf[i])
+        }
+        Ok(Some(vec))
     }
 
     // TODO: Do we want to try to shift the buffer left when starting past a certain point
     // instead of allocating more space?
     fn resize_buffer(&mut self, size: usize, start: usize) {
         let capacity = self.buf.capacity();
-        if capacity > (start+1) {
-            let remaining = capacity - (start + 1);
-            self.buf.reserve(size - remaining);
+        if capacity > start {
+            let remaining = capacity - start;
+            println!("SIZE = {}, REMAINING = {}", size, remaining);
+            if (remaining < size) { self.buf.reserve(size - remaining) }
         } else {
             self.buf.reserve(size)
+        }
+        self.initialize_buffer();
+    }
+
+    fn initialize_buffer(&mut self) {
+        for i in self.buf.len()..self.buf.capacity() {
+            self.buf.push(0);
         }
     }
 
@@ -304,17 +358,19 @@ impl<T: Parse> Reader<T> {
     /// resize_buffer().
     fn maybe_shift_buffer(&mut self) {
         if self.start_byte as f64 >= 0.5 as f64 * self.buf.capacity() as f64 {
-            for i in 0..self.start_byte {
-                self.buf.remove(i);
+            for _ in 0..self.start_byte {
+                self.buf.remove(0);
+                self.read_bytes -= 1;
             }
+            self.initialize_buffer();
         }
     }
 
-    #[inline]
     fn maybe_double_capacity(&mut self) {
         let capacity = self.buf.capacity();
-        if self.buf.len() == capacity {
+        if self.read_bytes == capacity {
             self.buf.reserve(capacity);
+            self.initialize_buffer();
         }
     }
 
@@ -323,9 +379,9 @@ impl<T: Parse> Reader<T> {
         let slice = &self.buf[start..];
         let mut it = slice.iter().skip_while(|&a| *a != LF);
         let end = start + it.count() + 1;
-        if self.buf.len() <= end { return Ok(RespTypeCompletion::Incomplete) }
+        if self.read_bytes <= end { return Ok(RespTypeCompletion::Incomplete) }
         if !(self.buf[end-1] == CR && self.buf[end] == LF) {
-            return Err(Error::new(ErrorKind::InvalidInput, "Arrays Require CRLF after size"))
+            return Err(Error::new(ErrorKind::InvalidInput, "Simple strings require CRLF after size"))
         }
         self.start_byte = end;
         match str::from_utf8(&self.buf[start..end-1]) {
@@ -350,7 +406,7 @@ impl<T: Parse> Reader<T> {
         }
     }
 
-    fn read_size(&self) -> Result<Option<(usize, usize)>> {
+    fn read_size(&self, op: SizeOp) -> Result<Option<(usize, usize)>> {
         let slice = &self.buf[self.start_byte+1..];
         let mut it = slice.iter().take_while(|&i| is_digit(*i));
         let mut size: usize = 0;
@@ -359,13 +415,18 @@ impl<T: Parse> Reader<T> {
             size = size*10 + to_decimal(*i);
             count += 1;
         }
-        let start = self.start_byte + 1 + count;
-        let end = start + 3;
-        if self.buf.len() <= end { return Ok(None) }
+        let end = self.start_byte + count + 2;
+        println!("start = {}, end = {}", self.start_byte, end);
+        println!("self.read_bytes = {}", self.read_bytes);
+        if self.read_bytes <= end { return Ok(None) }
         if !(self.buf[end-1] == CR && self.buf[end] == LF) {
-            return Err(Error::new(ErrorKind::InvalidInput, "Arrays Require CRLF after size"))
+            let string = match op {
+                SizeOp::Bulk => "Bulk strings require CRLF after size",
+                SizeOp::Array => "Arrays require CRLF after size"
+            };
+            return Err(Error::new(ErrorKind::InvalidInput, string))
         }
-        Ok(Some((size, end)))
+        Ok(Some((size, end+1)))
     }
 }
 
@@ -388,15 +449,15 @@ pub trait Parse {
     fn parsers() -> Vec<Parser<Self>>;
 }
 
+// TODO: Instead of using closures should we use pointers to named functions?
 pub struct Parser<T: Parse> {
-    // TODO: new() should return a result
-    construct: Box<Fn(&Vec<RespType>) -> T>,
+    construct: Box<Fn(&Vec<RespType>) -> Result<T>>,
     expected: Vec<Box<Fn(&RespType) -> bool>>,
     open: Vec<(usize, usize)>
 }
 
 impl<T: Parse> Parser<T> {
-    fn new(constructor: Box<Fn(&Vec<RespType>) -> T>) -> Parser<T> {
+    fn new(constructor: Box<Fn(&Vec<RespType>) -> Result<T>>) -> Parser<T> {
         Parser {
             construct: constructor,
             expected: Vec::new(),
@@ -531,5 +592,85 @@ impl<T: Parse> Parser<T> {
         if let Some(&mut (_, ref mut count)) = self.open.last_mut() {
             *count += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write, Result, Error, ErrorKind};
+    use std::fs::File;
+    use super::*;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum Command {
+        ClusterSetName(String),
+        ClusterGetName
+    }
+
+    impl Format for Command {
+        fn format(&self) -> Combinator {
+            let mut c = Combinator::new();
+            match *self {
+                Command::ClusterSetName(ref name) =>
+                    c.array().bulk_s("cluster").bulk_s("setname").bulk_s(&name).end(),
+                Command::ClusterGetName =>
+                    c.array().bulk_s("cluster").bulk_s("getname").end()
+            }
+        }
+    }
+
+    impl Parse for Command {
+        fn parsers() -> Vec<Parser<Command>> {
+            vec![Parser::new(Box::new(|params| {
+                    if let RespType::Bulk(ref val) = params[3] {
+                        match String::from_utf8(val.clone()) {
+                            Ok(string) => Ok(Command::ClusterSetName(string)),
+                            Err(e) => Err(Error::new(ErrorKind::InvalidInput, e))
+                        }
+                    } else {
+                        // We should never reach this spot
+                        assert!(false);
+                        Err(Error::new(ErrorKind::InvalidInput, "Failed to parse ClusterSetName"))
+                    }
+                })).array().bulk(Some("cluster")).bulk(Some("setname")).bulk(None).end(),
+
+                 Parser::new(Box::new(|_| Ok(Command::ClusterGetName)))
+                     .array().bulk(Some("cluster")).bulk(Some("getname")).end()
+                ]
+        }
+    }
+
+    fn write_msg(path: &str, msg: &Command) {
+        let mut file = File::create(path).unwrap();
+        let mut writer = Writer::new();
+        writer.format((*msg).clone());
+        match writer.write(&mut file) {
+            Ok(WriteCompletion::Done) => assert!(true),
+            _ => assert!(false)
+        }
+    }
+
+    fn read_msg(path: &str) -> Command {
+        let mut file = File::open(path).unwrap();
+        let mut reader = Reader::new();
+        loop {
+            match reader.read(&mut file) {
+                Ok(ReadCompletion::Done(msg)) => return msg,
+                Ok(ReadCompletion::Incomplete) => (),
+                e => {
+                    println!("Error in read_msg: {:?}", e);
+                    assert!(false)
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn basic() {
+        let path = "/tmp/resp_test";
+        let msg = Command::ClusterSetName("cluster1".to_string());
+        write_msg(path, &msg);
+        let msg2 = read_msg(path);
+        assert_eq!(msg, msg2);
     }
 }
