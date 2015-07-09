@@ -1,4 +1,3 @@
-use mio::tcp::TcpStream;
 use std::io::{Result, Error, ErrorKind, Read, Write};
 use std::str;
 
@@ -30,9 +29,8 @@ impl Writer {
     }
 
     fn write<T: Write>(&mut self, sock: &mut T) -> Result<WriteCompletion> {
-        let mut done = false;
         loop {
-            if (self.complete()) {
+            if self.complete() {
                 self.pos = (0, 0);
                 self.data = Vec::new();
                 return Ok(WriteCompletion::Done)
@@ -175,7 +173,7 @@ impl Combinator {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum RespType{
     Simple(String),
     Error(String),
@@ -195,6 +193,13 @@ pub enum ReadCompletion<T: Parse> {
     Incomplete
 }
 
+#[derive(Debug)]
+enum RespTypeCompletion {
+    Done(RespType),
+    Incomplete
+}
+
+
 pub struct Reader<T: Parse> {
     // Complete resp types. These are to be parsed with Parser<T>.
     data: Vec<RespType>,
@@ -205,54 +210,49 @@ pub struct Reader<T: Parse> {
     // The number of bytes actually read into buf.
     // Buf must be initialized to be read into, so we can't use buf.len()
     read_bytes: usize,
-    parsers: Vec<Parser<T>>
-}
-
-enum RespTypeCompletion {
-    Done(RespType),
-    Incomplete
+    parsers: Vec<Parser<T>>,
+    // Indexes of matching parsers
+    matching: Vec<usize>
 }
 
 impl<T: Parse> Reader<T> {
     fn new() -> Reader<T> {
-        let mut parsers = T::parsers();
-        for parser in &mut parsers {
-            parser.expected.reverse()
-        }
+        let parsers = T::parsers();
         Reader {
             data: Vec::new(),
             // Somewhat arbitrary size
             buf: vec![0; 128],
             start_byte: 0,
             read_bytes: 0,
+            matching: (0..parsers.len()).collect(),
             parsers: parsers
+
         }
     }
 
     fn parse_complete(&mut self, r: RespType) -> Result<ReadCompletion<T>> {
+        let index = self.data.len();
         self.data.push(r.clone());
-        let it = self.parsers.iter_mut().filter_map(move |p| {
-            if let Some(f) = p.expected.pop() {
-                if f(&r) { Some(p) } else { None }
-            } else {
-                // We should never get here
-                assert!(false);
-                None
-            }
-        });
-        let mut count = 0;
-        for parser in it {
-            count += 1;
-            if parser.expected.is_empty() {
-                // We have a complete message!
-                let ref f = parser.construct;
-                match f(&self.data) {
-                    Ok(msg) => return Ok(ReadCompletion::Done(msg)),
-                    Err(e) => return Err(e)
+        let mut matching = Vec::new();
+        while let Some(i) = self.matching.pop() {
+            if let Some(p) = self.parsers.get(i) {
+                if let Some(f) = p.expected.get(index) {
+                    if f(&r) {
+                        if p.expected.len() == index + 1 {
+                            // We have a complete message!
+                            let ref f = p.construct;
+                            match f(&self.data) {
+                                Ok(msg) => return Ok(ReadCompletion::Done(msg)),
+                                Err(e) => return Err(e)
+                            }
+                        }
+                        matching.push(i);
+                    }
                 }
             }
         }
-        if count == 0 {
+        self.matching = matching;
+        if self.matching.len() == 0 {
             return Err(Error::new(ErrorKind::InvalidInput, "No such message"))
         }
         Ok(ReadCompletion::Incomplete)
@@ -268,19 +268,28 @@ impl<T: Parse> Reader<T> {
                 Ok(n) => self.read_bytes += n,
                 Err(e) => return Err(e)
             };
+            if self.start_byte == self.read_bytes { return Ok(ReadCompletion::Incomplete) }
             let completion = match self.buf[self.start_byte] as char {
                 '*' => self.read_array(),
                 '+' => self.read_simple(),
                 ':' => self.read_int(),
                 '$' => self.read_bulk(),
                 '-' => self.read_error(),
-                _ => return Err(Error::new(ErrorKind::InvalidInput, "Invalid Lead Byte"))
+                c => {
+                    return Err(Error::new(ErrorKind::InvalidInput,
+                                           format!("Invalid Lead Byte: {}", c)))
+                }
             };
             match completion {
                 Ok(RespTypeCompletion::Done(resp_type)) => {
                     match self.parse_complete(resp_type) {
                         Ok(ReadCompletion::Incomplete) => (),
-                        val => return val
+                        val => {
+                            // Reset for the next message
+                            self.data = Vec::new();
+                            self.matching = (0..self.parsers.len()).collect();
+                            return val
+                        }
                     }
                 },
                 Ok(RespTypeCompletion::Incomplete) => return Ok(ReadCompletion::Incomplete),
@@ -294,7 +303,6 @@ impl<T: Parse> Reader<T> {
             Ok(None) => Ok(RespTypeCompletion::Incomplete),
             Err(e) => Err(e),
             Ok(Some((size, start))) => {
-                println!("About to return an array: size = {}, start = {}", size, start);
                 self.start_byte = start;
                 Ok(RespTypeCompletion::Done(RespType::Array(size)))
             }
@@ -338,8 +346,7 @@ impl<T: Parse> Reader<T> {
         let capacity = self.buf.capacity();
         if capacity > start {
             let remaining = capacity - start;
-            println!("SIZE = {}, REMAINING = {}", size, remaining);
-            if (remaining < size) { self.buf.reserve(size - remaining) }
+            if remaining < size { self.buf.reserve(size - remaining) }
         } else {
             self.buf.reserve(size)
         }
@@ -347,7 +354,7 @@ impl<T: Parse> Reader<T> {
     }
 
     fn initialize_buffer(&mut self) {
-        for i in self.buf.len()..self.buf.capacity() {
+        for _ in self.buf.len()..self.buf.capacity() {
             self.buf.push(0);
         }
     }
@@ -362,6 +369,7 @@ impl<T: Parse> Reader<T> {
                 self.buf.remove(0);
                 self.read_bytes -= 1;
             }
+            self.start_byte = 0;
             self.initialize_buffer();
         }
     }
@@ -377,14 +385,14 @@ impl<T: Parse> Reader<T> {
     fn read_simple(&mut self) -> Result<RespTypeCompletion> {
         let start = self.start_byte + 1;
         let slice = &self.buf[start..];
-        let mut it = slice.iter().skip_while(|&a| *a != LF);
-        let end = start + it.count() + 1;
-        if self.read_bytes <= end { return Ok(RespTypeCompletion::Incomplete) }
-        if !(self.buf[end-1] == CR && self.buf[end] == LF) {
+        let strlen = slice.iter().take_while(|&a| *a != CR).count();
+        let end = start + strlen + 2;
+        if self.read_bytes < end { return Ok(RespTypeCompletion::Incomplete) }
+        if !(self.buf[end-2] == CR && self.buf[end-1] == LF) {
             return Err(Error::new(ErrorKind::InvalidInput, "Simple strings require CRLF after size"))
         }
         self.start_byte = end;
-        match str::from_utf8(&self.buf[start..end-1]) {
+        match str::from_utf8(&self.buf[start..end-2]) {
             Ok(string) => Ok(RespTypeCompletion::Done(RespType::Simple(string.to_string()))),
             Err(err) => Err(Error::new(ErrorKind::InvalidInput, err))
         }
@@ -408,7 +416,7 @@ impl<T: Parse> Reader<T> {
 
     fn read_size(&self, op: SizeOp) -> Result<Option<(usize, usize)>> {
         let slice = &self.buf[self.start_byte+1..];
-        let mut it = slice.iter().take_while(|&i| is_digit(*i));
+        let it = slice.iter().take_while(|&i| is_digit(*i));
         let mut size: usize = 0;
         let mut count = 0;
         for i in it {
@@ -416,8 +424,6 @@ impl<T: Parse> Reader<T> {
             count += 1;
         }
         let end = self.start_byte + count + 2;
-        println!("start = {}, end = {}", self.start_byte, end);
-        println!("self.read_bytes = {}", self.read_bytes);
         if self.read_bytes <= end { return Ok(None) }
         if !(self.buf[end-1] == CR && self.buf[end] == LF) {
             let string = match op {
@@ -599,65 +605,113 @@ impl<T: Parse> Parser<T> {
 mod tests {
     use std::io::{Read, Write, Result, Error, ErrorKind};
     use std::fs::File;
+    use std::fmt::Debug;
     use super::*;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
-    enum Command {
+    enum Msg {
         ClusterSetName(String),
-        ClusterGetName
+        ClusterGetName,
+        NumClients(usize),
+        ClusterName(String),
+        Error(String)
     }
 
-    impl Format for Command {
+    impl Format for Msg {
         fn format(&self) -> Combinator {
-            let mut c = Combinator::new();
+            let c = Combinator::new();
             match *self {
-                Command::ClusterSetName(ref name) =>
+                Msg::ClusterSetName(ref name) =>
                     c.array().bulk_s("cluster").bulk_s("setname").bulk_s(&name).end(),
-                Command::ClusterGetName =>
-                    c.array().bulk_s("cluster").bulk_s("getname").end()
+                Msg::ClusterGetName =>
+                    c.array().bulk_s("cluster").bulk_s("getname").end(),
+                Msg::NumClients(num) => c.int(num),
+                Msg::ClusterName(ref name) => c.simple(name),
+                Msg::Error(ref string) => c.error(string)
             }
         }
     }
 
-    impl Parse for Command {
-        fn parsers() -> Vec<Parser<Command>> {
-            vec![Parser::new(Box::new(|params| {
-                    if let RespType::Bulk(ref val) = params[3] {
-                        match String::from_utf8(val.clone()) {
-                            Ok(string) => Ok(Command::ClusterSetName(string)),
-                            Err(e) => Err(Error::new(ErrorKind::InvalidInput, e))
-                        }
-                    } else {
-                        // We should never reach this spot
-                        assert!(false);
-                        Err(Error::new(ErrorKind::InvalidInput, "Failed to parse ClusterSetName"))
+    impl Parse for Msg {
+        fn parsers() -> Vec<Parser<Msg>> {
+            // The constructor takes the chain of matched types from parsing
+            // and constructs a Msg::ClusterSetName(...)
+            let cluster_set_name_constructor = Box::new(|types: &Vec<RespType>| {
+                if let RespType::Bulk(ref val) = types[3] {
+                    match String::from_utf8(val.clone()) {
+                        Ok(string) => return Ok(Msg::ClusterSetName(string)),
+                        Err(e) => return Err(Error::new(ErrorKind::InvalidInput, e))
                     }
-                })).array().bulk(Some("cluster")).bulk(Some("setname")).bulk(None).end(),
+                } else {
+                    // We should never get here
+                    assert!(false);
+                    Err(Error::new(ErrorKind::InvalidInput,
+                                   "Failed to construct Msg::ClusterSetName"))
+                }
+            });
 
-                 Parser::new(Box::new(|_| Ok(Command::ClusterGetName)))
-                     .array().bulk(Some("cluster")).bulk(Some("getname")).end()
+            vec![Parser::new(cluster_set_name_constructor).array()
+                .bulk(Some("cluster")).bulk(Some("setname")).bulk(None).end(),
+
+                 Parser::new(Box::new(|_| Ok(Msg::ClusterGetName)))
+                     .array().bulk(Some("cluster")).bulk(Some("getname")).end(),
+
+                 Parser::new(Box::new(|types| {
+                    if let Some(&RespType::Int(i)) = types.first() {
+                        Ok(Msg::NumClients(i))
+                    } else {
+                        // We should never get here
+                        assert!(false);
+                        Err(Error::new(ErrorKind::InvalidInput,
+                                       "Failed to construct Msg::NumClients"))
+                    }
+                 })).int(None),
+
+                 Parser::new(Box::new(|types| {
+                     if let Some(&RespType::Simple(ref s)) = types.first() {
+                         return Ok(Msg::ClusterName(s.clone()))
+                     } else {
+                        // We should never get here
+                        assert!(false);
+                        Err(Error::new(ErrorKind::InvalidInput,
+                                       "Failed to construct Msg::ClusterName"))
+                     }
+                 })).simple(None),
+
+                 Parser::new(Box::new(|types| {
+                     if let Some(&RespType::Error(ref s)) = types.first() {
+                         return Ok(Msg::Error(s.clone()))
+                     } else {
+                        // We should never get here
+                        assert!(false);
+                        Err(Error::new(ErrorKind::InvalidInput,
+                                       "Failed to construct Msg::Error"))
+                     }
+                 })).error(None)
+
                 ]
         }
     }
 
-    fn write_msg(path: &str, msg: &Command) {
-        let mut file = File::create(path).unwrap();
+    fn write_msg<T: Format + Clone>(file: &mut File, msg: &T) {
         let mut writer = Writer::new();
         writer.format((*msg).clone());
-        match writer.write(&mut file) {
+        match writer.write(file) {
             Ok(WriteCompletion::Done) => assert!(true),
             _ => assert!(false)
         }
     }
 
-    fn read_msg(path: &str) -> Command {
-        let mut file = File::open(path).unwrap();
-        let mut reader = Reader::new();
+    fn read_msg<T>(file: &mut File, reader: &mut Reader<T>) -> T
+      where T: Parse + Format + Clone + Debug {
         loop {
-            match reader.read(&mut file) {
-                Ok(ReadCompletion::Done(msg)) => return msg,
+            match reader.read(file) {
+                Ok(ReadCompletion::Done(msg)) => {
+                    println!("msg = {:?}", msg);
+                    return msg
+                }
                 Ok(ReadCompletion::Incomplete) => (),
-                e => {
+                Err(e) => {
                     println!("Error in read_msg: {:?}", e);
                     assert!(false)
                 }
@@ -667,10 +721,28 @@ mod tests {
 
     #[test]
     fn basic() {
+        let msg = Msg::ClusterSetName("cluster1".to_string());
+        let msg1 = Msg::Error("Some Error".to_string());
+        let msg2 = Msg::NumClients(1000);
+        let msg3 = Msg::ClusterName("cluster2".to_string());
         let path = "/tmp/resp_test";
-        let msg = Command::ClusterSetName("cluster1".to_string());
-        write_msg(path, &msg);
-        let msg2 = read_msg(path);
-        assert_eq!(msg, msg2);
+        // Extra scope to close the file
+        {
+            let mut file = File::create(path).unwrap();
+            write_msg(&mut file, &msg);
+            write_msg(&mut file, &msg1);
+            write_msg(&mut file, &msg2);
+            write_msg(&mut file, &msg3);
+        }
+        let mut reader = Reader::new();
+        let mut file = File::open(path).unwrap();
+        let msg4 = read_msg(&mut file, &mut reader);
+        assert_eq!(msg, msg4);
+        let msg4 = read_msg(&mut file, &mut reader);
+        assert_eq!(msg1, msg4);
+        let msg4 = read_msg(&mut file, &mut reader);
+        assert_eq!(msg2, msg4);
+        let msg4 = read_msg(&mut file, &mut reader);
+        assert_eq!(msg3, msg4);
     }
 }
