@@ -13,22 +13,22 @@ pub struct Writer {
 }
 
 impl Writer {
-    fn new() -> Writer {
+    pub fn new() -> Writer {
         Writer {
             pos: (0, 0),
             data: Vec::new()
         }
     }
 
-    fn format<T: Format>(&mut self, msg: T) {
+    pub fn format<T: Format>(&mut self, msg: T) {
         self.data = msg.format().value();
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    fn write<T: Write>(&mut self, sock: &mut T) -> Result<WriteCompletion> {
+    pub fn write<T: Write>(&mut self, sock: &mut T) -> Result<WriteCompletion> {
         loop {
             if self.complete() {
                 self.pos = (0, 0);
@@ -72,27 +72,27 @@ pub struct Combinator {
 
 /// Contains combinators that build up the formatter
 impl Combinator {
-    fn new() -> Combinator {
+    pub fn new() -> Combinator {
         Combinator {
             output: Vec::new(),
             open: Vec::new()
         }
     }
 
-    fn value(self) -> Vec<Vec<u8>> {
+    pub fn value(self) -> Vec<Vec<u8>> {
         if !self.open.is_empty() {
             panic!("Tried to realize an incomplete io string: {:?}", self.output)
         }
         self.output
     }
 
-    fn array(mut self) -> Combinator {
+    pub fn array(mut self) -> Combinator {
         self.output.push(vec!['*' as u8]);
         self.open.push((self.output.len() - 1, 0));
         self
     }
 
-    fn simple(mut self, simple: &str) -> Combinator {
+    pub fn simple(mut self, simple: &str) -> Combinator {
         let mut string = String::with_capacity(3 + simple.len());
         string.push('+');
         string.push_str(simple);
@@ -102,7 +102,7 @@ impl Combinator {
         self
     }
 
-    fn int(mut self, int: usize) -> Combinator {
+    pub fn int(mut self, int: usize) -> Combinator {
         let intstr = int.to_string();
         let mut string = String::with_capacity(3 + intstr.len());
         string.push(':');
@@ -113,7 +113,7 @@ impl Combinator {
         self
     }
 
-    fn bulk_s(mut self, bulk: &str) -> Combinator {
+    pub fn bulk_s(mut self, bulk: &str) -> Combinator {
         let lenstr = bulk.len().to_string();
         let mut string = String::with_capacity(3 + lenstr.len());
         string.push('$');
@@ -126,7 +126,7 @@ impl Combinator {
         self
     }
 
-    fn bulk(mut self, bulk: Vec<u8>) -> Combinator {
+    pub fn bulk(mut self, bulk: Vec<u8>) -> Combinator {
         let lenstr = bulk.len().to_string();
         let mut string = String::with_capacity(3 + lenstr.len());
         string.push('$');
@@ -139,7 +139,7 @@ impl Combinator {
         self
     }
 
-    fn error(mut self, err: &str) -> Combinator {
+    pub fn error(mut self, err: &str) -> Combinator {
         let mut string = String::with_capacity(3 + err.len());
         string.push('-');
         string.push_str(err);
@@ -150,7 +150,7 @@ impl Combinator {
     }
 
     /// Closes an array
-    fn end(mut self) -> Combinator {
+    pub fn end(mut self) -> Combinator {
         // fail fast
         let (index, count) = self.open.pop().unwrap();
         // Change of scope so we can end the borrow on array before we return self
@@ -187,19 +187,6 @@ enum SizeOp {
     Array
 }
 
-#[derive(Debug)]
-pub enum ReadCompletion<T: Parse> {
-    Done(T),
-    Incomplete
-}
-
-#[derive(Debug)]
-enum RespTypeCompletion {
-    Done(RespType),
-    Incomplete
-}
-
-
 pub struct Reader<T: Parse> {
     // Complete resp types. These are to be parsed with Parser<T>.
     data: Vec<RespType>,
@@ -216,21 +203,23 @@ pub struct Reader<T: Parse> {
 }
 
 impl<T: Parse> Reader<T> {
-    fn new() -> Reader<T> {
+    pub fn new() -> Reader<T> {
         let parsers = T::parsers();
+        let mut matching: Vec<_> = (0..parsers.len()).collect();
+        matching.reverse();
         Reader {
             data: Vec::new(),
             // Somewhat arbitrary size
             buf: vec![0; 128],
             start_byte: 0,
             read_bytes: 0,
-            matching: (0..parsers.len()).collect(),
+            matching: matching,
             parsers: parsers
 
         }
     }
 
-    fn parse_complete(&mut self, r: RespType) -> Result<ReadCompletion<T>> {
+    fn parse_complete(&mut self, r: RespType) -> Result<Option<T>> {
         let index = self.data.len();
         self.data.push(r.clone());
         let mut matching = Vec::new();
@@ -242,7 +231,7 @@ impl<T: Parse> Reader<T> {
                             // We have a complete message!
                             let ref f = p.construct;
                             match f(&self.data) {
-                                Ok(msg) => return Ok(ReadCompletion::Done(msg)),
+                                Ok(msg) => return Ok(Some(msg)),
                                 Err(e) => return Err(e)
                             }
                         }
@@ -251,15 +240,17 @@ impl<T: Parse> Reader<T> {
                 }
             }
         }
+        matching.reverse();
         self.matching = matching;
         if self.matching.len() == 0 {
             return Err(Error::new(ErrorKind::InvalidInput, "No such message"))
         }
-        Ok(ReadCompletion::Incomplete)
+        Ok(None)
     }
 
-    fn read<R: Read>(&mut self, sock: &mut R) -> Result<ReadCompletion<T>> {
+    pub fn read<R: Read>(&mut self, sock: &mut R) -> Result<Option<T>> {
         loop {
+            // TODO: Do we ever want to shrink the buffer after we've grown it?
             self.maybe_shift_buffer();
             self.maybe_double_capacity();
             let start = self.read_bytes;
@@ -268,7 +259,7 @@ impl<T: Parse> Reader<T> {
                 Ok(n) => self.read_bytes += n,
                 Err(e) => return Err(e)
             };
-            if self.start_byte == self.read_bytes { return Ok(ReadCompletion::Incomplete) }
+            if self.start_byte == self.read_bytes { return Ok(None) }
             let completion = match self.buf[self.start_byte] as char {
                 '*' => self.read_array(),
                 '+' => self.read_simple(),
@@ -281,44 +272,45 @@ impl<T: Parse> Reader<T> {
                 }
             };
             match completion {
-                Ok(RespTypeCompletion::Done(resp_type)) => {
+                Ok(Some(resp_type)) => {
                     match self.parse_complete(resp_type) {
-                        Ok(ReadCompletion::Incomplete) => (),
+                        Ok(None) => (),
                         val => {
                             // Reset for the next message
                             self.data = Vec::new();
                             self.matching = (0..self.parsers.len()).collect();
+                            self.matching.reverse();
                             return val
                         }
                     }
                 },
-                Ok(RespTypeCompletion::Incomplete) => return Ok(ReadCompletion::Incomplete),
+                Ok(None) => return Ok(None),
                 Err(e) => return Err(e)
             }
         }
     }
 
-    fn read_array(&mut self) -> Result<RespTypeCompletion> {
+    fn read_array(&mut self) -> Result<Option<RespType>> {
         match self.read_size(SizeOp::Array) {
-            Ok(None) => Ok(RespTypeCompletion::Incomplete),
+            Ok(None) => Ok(None),
             Err(e) => Err(e),
             Ok(Some((size, start))) => {
                 self.start_byte = start;
-                Ok(RespTypeCompletion::Done(RespType::Array(size)))
+                Ok(Some(RespType::Array(size)))
             }
         }
     }
 
-    fn read_bulk(&mut self) -> Result<RespTypeCompletion> {
+    fn read_bulk(&mut self) -> Result<Option<RespType>> {
         match self.read_size(SizeOp::Bulk) {
-            Ok(None) => Ok(RespTypeCompletion::Incomplete),
+            Ok(None) => Ok(None),
             Err(e) => Err(e),
             Ok(Some((size, start))) => {
                 // Reserve enough space for the blob + CRLF
                 self.resize_buffer(size+2, start);
                 match self.read_blob(size, start) {
-                    Ok(Some(blob)) => Ok(RespTypeCompletion::Done(RespType::Bulk(blob))),
-                    Ok(None) => Ok(RespTypeCompletion::Incomplete),
+                    Ok(Some(blob)) => Ok(Some(RespType::Bulk(blob))),
+                    Ok(None) => Ok(None),
                     Err(err) => Err(err)
                 }
             }
@@ -382,34 +374,34 @@ impl<T: Parse> Reader<T> {
         }
     }
 
-    fn read_simple(&mut self) -> Result<RespTypeCompletion> {
+    fn read_simple(&mut self) -> Result<Option<RespType>> {
         let start = self.start_byte + 1;
         let slice = &self.buf[start..];
         let strlen = slice.iter().take_while(|&a| *a != CR).count();
         let end = start + strlen + 2;
-        if self.read_bytes < end { return Ok(RespTypeCompletion::Incomplete) }
+        if self.read_bytes < end { return Ok(None) }
         if !(self.buf[end-2] == CR && self.buf[end-1] == LF) {
             return Err(Error::new(ErrorKind::InvalidInput, "Simple strings require CRLF after size"))
         }
         self.start_byte = end;
         match str::from_utf8(&self.buf[start..end-2]) {
-            Ok(string) => Ok(RespTypeCompletion::Done(RespType::Simple(string.to_string()))),
+            Ok(string) => Ok(Some(RespType::Simple(string.to_string()))),
             Err(err) => Err(Error::new(ErrorKind::InvalidInput, err))
         }
     }
 
-    fn read_error(&mut self) -> Result<RespTypeCompletion> {
+    fn read_error(&mut self) -> Result<Option<RespType>> {
         match self.read_simple() {
-            Ok(RespTypeCompletion::Done(RespType::Simple(string))) =>
-                Ok(RespTypeCompletion::Done(RespType::Error(string))),
+            Ok(Some(RespType::Simple(string))) =>
+                Ok(Some(RespType::Error(string))),
             val => val
         }
     }
 
-    fn read_int(&mut self) -> Result<RespTypeCompletion> {
+    fn read_int(&mut self) -> Result<Option<RespType>> {
         match self.read_array() {
-            Ok(RespTypeCompletion::Done(RespType::Array(int))) =>
-                Ok(RespTypeCompletion::Done(RespType::Int(int))),
+            Ok(Some(RespType::Array(int))) =>
+                Ok(Some(RespType::Int(int))),
             val => val
         }
     }
@@ -463,7 +455,7 @@ pub struct Parser<T: Parse> {
 }
 
 impl<T: Parse> Parser<T> {
-    fn new(constructor: Box<Fn(&Vec<RespType>) -> Result<T>>) -> Parser<T> {
+    pub fn new(constructor: Box<Fn(&Vec<RespType>) -> Result<T>>) -> Parser<T> {
         Parser {
             construct: constructor,
             expected: Vec::new(),
@@ -471,14 +463,14 @@ impl<T: Parse> Parser<T> {
         }
     }
 
-    fn array(mut self) -> Parser<T> {
+    pub fn array(mut self) -> Parser<T> {
         // dummy closure
         self.expected.push(Box::new(|_| true));
         self.open.push((self.expected.len() -1, 0));
         self
     }
 
-    fn end(mut self) -> Parser<T> {
+    pub fn end(mut self) -> Parser<T> {
         let (index, count) = self.open.pop().unwrap();
         self.expected[index] = Box::new(move |a| {
             match a {
@@ -490,7 +482,7 @@ impl<T: Parse> Parser<T> {
     }
 
     /// Match a variable length array
-    fn vararray(mut self) -> Parser<T> {
+    pub fn vararray(mut self) -> Parser<T> {
         self.expected.push(Box::new(|a| {
             match a {
                 &RespType::Array(_) => true,
@@ -500,7 +492,7 @@ impl<T: Parse> Parser<T> {
         self
     }
 
-    fn simple(mut self, val: Option<&str>) -> Parser<T> {
+    pub fn simple(mut self, val: Option<&str>) -> Parser<T> {
         match val {
             None => self.expected.push(Box::new(|s| {
                 match s {
@@ -522,7 +514,7 @@ impl<T: Parse> Parser<T> {
         self
     }
 
-    fn error(mut self, val: Option<&str>) -> Parser<T> {
+    pub fn error(mut self, val: Option<&str>) -> Parser<T> {
         match val {
             None => self.expected.push(Box::new(|s| {
                 match s {
@@ -544,7 +536,7 @@ impl<T: Parse> Parser<T> {
         self
     }
 
-    fn int(mut self, val: Option<usize>) -> Parser<T> {
+    pub fn int(mut self, val: Option<usize>) -> Parser<T> {
         match val {
             None => self.expected.push(Box::new(|i| {
                 match i {
@@ -566,7 +558,7 @@ impl<T: Parse> Parser<T> {
     // Basically the only time we want to match is for a human readable string
     // denoting a command or response. Make the api nicer by not requiring
     // conversion to a vec for this.
-    fn bulk(mut self, val: Option<&str>) -> Parser<T> {
+    pub fn bulk(mut self, val: Option<&str>) -> Parser<T> {
         match val {
             None => self.expected.push(Box::new(|v| {
                 match v {
@@ -706,11 +698,11 @@ mod tests {
       where T: Parse + Format + Clone + Debug {
         loop {
             match reader.read(file) {
-                Ok(ReadCompletion::Done(msg)) => {
+                Ok(Some(msg)) => {
                     println!("msg = {:?}", msg);
                     return msg
                 }
-                Ok(ReadCompletion::Incomplete) => (),
+                Ok(None) => (),
                 Err(e) => {
                     println!("Error in read_msg: {:?}", e);
                     assert!(false)
