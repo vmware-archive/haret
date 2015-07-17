@@ -81,9 +81,9 @@ mod tests {
         let path = "/tmp/v2r2.json";
         let config = Config {
             node_name: "node1".to_string(),
-            ip: "192.168.1.1:5000".to_string(),
             cluster_name: "cluster1".to_string(),
-            peers: Vec::new()
+            cluster_host: "192.168.1.1:5000".to_string(),
+            admin_host: "127.0.0.1:5000".to_string()
         };
 
         config.write_path(path);
