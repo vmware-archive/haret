@@ -1,22 +1,19 @@
 use std::io::{Result, Error, ErrorKind, Read, Write};
 use std::str;
-
-#[derive(Debug)]
-pub enum WriteCompletion {
-    Done,
-    Incomplete
-}
+use libc::EAGAIN;
 
 pub struct Writer {
     pos: (usize, usize),
     data: Vec<Vec<u8>>,
+    ready: bool
 }
 
 impl Writer {
     pub fn new() -> Writer {
         Writer {
             pos: (0, 0),
-            data: Vec::new()
+            data: Vec::new(),
+            ready: false
         }
     }
 
@@ -24,21 +21,29 @@ impl Writer {
         self.data = msg.format().value();
     }
 
+    pub fn is_ready(&self) -> bool {
+        self.ready
+    }
+
+    pub fn ready(&mut self, ready: bool) {
+        self.ready = ready;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    pub fn write<T: Write>(&mut self, sock: &mut T) -> Result<WriteCompletion> {
+    pub fn write<T: Write>(&mut self, sock: &mut T) -> Result<Option<()>> {
         loop {
             if self.complete() {
                 self.pos = (0, 0);
                 self.data = Vec::new();
-                return Ok(WriteCompletion::Done)
+                return Ok(Some(()))
             }
             let ref mut inner = self.data[self.pos.0];
             let ref mut slice = &inner[self.pos.1..];
             match sock.write(slice) {
-                Ok(0) => return Ok(WriteCompletion::Incomplete),
+                Ok(0) => return Ok(None),
                 Ok(n) => {
                     self.pos.1 += n;
                     if self.pos.1 == inner.len() {
@@ -257,7 +262,12 @@ impl<T: Parse> Reader<T> {
             match sock.read(&mut self.buf[start..]) {
                 Ok(0) => (),
                 Ok(n) => self.read_bytes += n,
-                Err(e) => return Err(e)
+                Err(e) => {
+                    if let Some(code) = e.raw_os_error() {
+                        if code == EAGAIN { return Ok(None) }
+                    }
+                    return Err(e)
+                }
             };
             if self.start_byte == self.read_bytes { return Ok(None) }
             let completion = match self.buf[self.start_byte] as char {
@@ -689,7 +699,7 @@ mod tests {
         let mut writer = Writer::new();
         writer.format((*msg).clone());
         match writer.write(file) {
-            Ok(WriteCompletion::Done) => assert!(true),
+            Ok(Some(())) => assert!(true),
             _ => assert!(false)
         }
     }

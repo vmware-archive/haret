@@ -1,6 +1,6 @@
 use mio;
 use mio::{Token, Handler, PollOpt, Interest, ReadHint };
-use mio::tcp::{TcpListener, TcpStream, TcpSocket, Shutdown};
+use mio::tcp::{TcpListener, TcpSocket};
 use tcpserver::TcpServer;
 
 const ACCEPTOR: Token = Token(0);
@@ -11,8 +11,8 @@ pub struct EventLoop<T: TcpServer> {
 }
 
 impl<T: TcpServer> EventLoop<T> {
-    pub fn new(ipstr: &str, server: T) -> EventLoop<T> {
-        let addr = ipstr.parse().unwrap();
+    pub fn new(server: T) -> EventLoop<T> {
+        let addr = server.host().parse().unwrap();
         let sock = TcpSocket::v4().unwrap();
         sock.set_reuseaddr(true).unwrap();
         sock.bind(&addr).unwrap();
@@ -49,10 +49,10 @@ impl<T: TcpServer> Context<T> {
     }
 
     fn try_accept(&mut self, event_loop: &mut mio::EventLoop<Context<T>>) {
-        println!("Waiting to accept a connection");
         match self.listener.accept() {
             Ok(None) => (), // EWOULDBLOCK
             Ok(Some(sock)) => {
+                println!("Connection Accepted");
                 let Token(count) = self.last_token;
                 self.last_token = Token(count + 1);
                 event_loop.register_opt(&sock, self.last_token,
@@ -77,7 +77,7 @@ impl<T: TcpServer> Handler for Context<T> {
         }
     }
 
-    fn writable(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token) {
+    fn writable(&mut self, _event_loop: &mut mio::EventLoop<Context<T>>, token: Token) {
         self.server.writable(token);
     }
 }
