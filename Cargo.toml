@@ -3,6 +3,14 @@ name = "v2r2"
 version = "0.1.0"
 authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 
+[dependencies]
+serde = "*"
+serde_macros = "*"
+libc = "0.1"
+
+[dependencies.mio]
+git = "https://github.com/carllerche/mio.git"
+
 [dev-dependencies]
 quickcheck = "*"
 rand = "*"
