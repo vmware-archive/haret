@@ -6,11 +6,13 @@ use std::thread::{Thread, JoinHandle};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
+use mio;
 use mio::Token;
 use mio::tcp::TcpStream;
 use tcpserver::{TcpServer, Event};
 use resp::{Format, Combinator, Writer, Reader, Parse, Parser, RespType};
 use config::Config;
+use event_loop::Notification;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Req {
@@ -133,17 +135,26 @@ impl Parse for Msg {
 /// via the AdminHandler.
 pub struct AdminServer {
     // Other types of servers can have thread pools and multiple senders
-    thread: JoinHandle<()>,
-    sender: Sender<Event>,
+    // We need to declare these types before initializing, hence the Option type.
+    thread: Option<JoinHandle<()>>,
+    sender: Option<Sender<Event>>,
     config: Arc<RwLock<Config>>
 }
 
 impl TcpServer for AdminServer {
-    fn run(config: Arc<RwLock<Config>>) -> AdminServer {
-        let config2 = config.clone();
+    fn new(config: Arc<RwLock<Config>>) -> AdminServer {
+        AdminServer {
+            thread: None,
+            sender: None,
+            config: config
+        }
+    }
+
+    fn run(&mut self, event_loop_sender: mio::Sender<Notification>) {
+        let config = self.config.clone();
         let (tx, rx) = channel();
         let handle = thread::Builder::new().name("admin_server".to_string()).spawn(move || {
-            let mut handler = AdminHandler::new(config);
+            let mut handler = AdminHandler::new(config, event_loop_sender);
             loop {
                 match rx.recv().unwrap() {
                     Event::NewSock(token, sock) => handler.insert(token, sock),
@@ -153,11 +164,8 @@ impl TcpServer for AdminServer {
             }
         }).unwrap();
 
-        AdminServer {
-            thread: handle,
-            sender: tx,
-            config: config2
-        }
+        self.sender = Some(tx);
+        self.thread = Some(handle);
     }
 
     fn host(&self) -> String {
@@ -166,15 +174,15 @@ impl TcpServer for AdminServer {
     }
 
     fn new_sock(&mut self, token: Token, sock: TcpStream) {
-        self.sender.send(Event::NewSock(token, sock)).unwrap();
+        self.sender.as_ref().unwrap().send(Event::NewSock(token, sock)).unwrap();
     }
 
     fn readable(&mut self, token: Token) {
-        self.sender.send(Event::Readable(token)).unwrap();
+        self.sender.as_ref().unwrap().send(Event::Readable(token)).unwrap();
     }
 
     fn writable(&mut self, token: Token) {
-        self.sender.send(Event::Writable(token)).unwrap();
+        self.sender.as_ref().unwrap().send(Event::Writable(token)).unwrap();
     }
 }
 
@@ -183,15 +191,17 @@ impl TcpServer for AdminServer {
 struct AdminHandler {
     config: Arc<RwLock<Config>>,
     conns: HashMap<Token, (TcpStream, Reader<Msg>, Writer)>,
-    replies: HashMap<Token, Vec<Msg>>
+    replies: HashMap<Token, Vec<Msg>>,
+    sender: mio::Sender<Notification>
 }
 
 impl AdminHandler {
-    fn new(config: Arc<RwLock<Config>>) -> AdminHandler {
+    fn new(config: Arc<RwLock<Config>>, tx: mio::Sender<Notification>) -> AdminHandler {
         AdminHandler {
             config: config,
             conns: HashMap::new(),
-            replies: HashMap::new()
+            replies: HashMap::new(),
+            sender: tx
         }
     }
 
@@ -199,76 +209,101 @@ impl AdminHandler {
         self.conns.insert(token, (sock, Reader::new(), Writer::new()));
     }
 
-    fn set_config(&mut self, token: Token, key: String, val: String) {
-        let mut replies = self.replies.entry(token).or_insert(Vec::new());
-        let mut config = self.config.write().unwrap();
-        match config.set(key, val) {
-            Ok(()) => replies.push(Msg::Res(Res::Ok)),
-            Err(e) => replies.push(Msg::Res(Res::Err(e.description().to_string())))
-        };
-    }
-
-    fn get_config(&mut self, token: Token, key: String) {
-        let mut replies = self.replies.entry(token).or_insert(Vec::new());
-        let config = self.config.read().unwrap();
-        match config.get(key) {
-            Ok(string) => replies.push(Msg::Res(Res::Simple(string))),
-            Err(e) => replies.push(Msg::Res(Res::Err(e.description().to_string())))
-        };
+    fn deregister(&mut self, token: Token) {
+        if let Some((sock, _, _)) = self.conns.remove(&token) {
+            self.replies.remove(&token);
+            self.sender.send(Notification::Deregister(sock)).unwrap();
+            println!("Deregistered socket for {:?}", token);
+        } else {
+            println!("Error: Tried to deregister a token with no corresponding socket");
+        }
     }
 
     fn read(&mut self, token: Token) {
         match self.do_read(token) {
-            Ok(None) => (),
-            Ok(Some(Msg::Req(Req::ConfigSet(key, val)))) => self.set_config(token, key, val),
-            Ok(Some(Msg::Req(Req::ConfigGet(key)))) => self.get_config(token, key),
-            Ok(Some(msg)) => println!("Got a message {:?}", msg),
-            Err(e) => {
-                // TODO: deregister the socket
-                println!("Got an error on read: {:?}", e)
-            }
+            None => (),
+            Some(token) => self.deregister(token)
         }
-        self.do_write(token);
     }
 
-    fn do_read(&mut self, token: Token) -> Result<Option<Msg>> {
-        let &mut(ref mut sock, ref mut reader, _) = self.conns.get_mut(&token).unwrap();
-        reader.read(sock)
-    }
-
-    fn do_write(&mut self, token: Token) {
-        let &mut(ref mut sock, _, ref mut writer) = self.conns.get_mut(&token).unwrap();
-        while writer.is_ready() {
-            if writer.is_empty() {
-                if let Some(replies) = self.replies.get_mut(&token) {
-                    if replies.len() > 0 {
-                        let reply = replies.remove(0);
-                        writer.format(reply);
-                    } else {
-                        return;
-                    }
-                } else {
-                    return;
+    fn do_read(&mut self, token: Token) -> Option<Token> {
+        if let Some(&mut(ref mut sock, ref mut reader, ref mut writer)) =
+          self.conns.get_mut(&token) {
+            let mut replies = self.replies.entry(token).or_insert(Vec::new());
+            let mut config = &mut self.config;
+            match reader.read(sock) {
+                Ok(None) => (),
+                Ok(Some(Msg::Req(Req::ConfigSet(key, val)))) => set_config(token, key, val,
+                                                                           replies, config),
+                Ok(Some(Msg::Req(Req::ConfigGet(key)))) => get_config(token, key, replies, config),
+                Ok(Some(msg)) => println!("Got a message {:?}", msg),
+                Err(e) => {
+                    println!("Error reading from socket with token {:?}: {:?}", token, e);
+                    return Some(token);
                 }
             }
-            match writer.write(sock) {
-                Ok(None) => writer.ready(false), // EWOULDBLOCK
-                Ok(Some(())) => (), // We completed writing the message
-                Err(err) => {
-                    // TODO: deregister the socket
-                    println!("Got an error on write: {:?}", err)
-                }
-            }
+            do_write(token, sock, writer, replies)
+        } else {
+            None
         }
     }
 
     fn write(&mut self, token: Token) {
-        self.writer_ready(token, true);
-        self.do_write(token);
+        match self.writer_ready(token) {
+            None => (),
+            Some(token) => self.deregister(token)
+        }
     }
 
-    fn writer_ready(&mut self, token: Token, ready: bool) {
-        let &mut(_, _, ref mut writer) = self.conns.get_mut(&token).unwrap();
-        writer.ready(ready);
+    fn writer_ready(&mut self, token: Token) -> Option<Token> {
+        // It's possible we already deregistered and one last write gets triggered
+        if let Some(&mut (ref mut sock, _, ref mut writer)) = self.conns.get_mut(&token) {
+            let mut replies = self.replies.entry(token).or_insert(Vec::new());
+            writer.ready(true);
+            do_write(token, sock, writer, replies)
+        } else {
+            None
+        }
     }
 }
+
+fn do_write(token: Token, sock: &mut TcpStream, writer: &mut Writer, replies: &mut Vec<Msg>) ->
+Option<Token> {
+    while writer.is_ready() {
+        if writer.is_empty() {
+            if replies.len() > 0 {
+                let reply = replies.remove(0);
+                writer.format(reply);
+            } else {
+                return None;
+            }
+        }
+        match writer.write(sock) {
+            Ok(None) => writer.ready(false), // EWOULDBLOCK
+            Ok(Some(())) => (), // We completed writing the message
+            Err(err) => {
+                println!("Got an error on write: {:?}", err);
+                return Some(token);
+            }
+        }
+    }
+    None
+}
+
+fn set_config(token: Token, key: String, val: String, replies: &mut Vec<Msg>,
+              config: &mut Arc<RwLock<Config>>) {
+    let mut config = config.write().unwrap();
+    match config.set(key, val) {
+        Ok(()) => replies.push(Msg::Res(Res::Ok)),
+        Err(e) => replies.push(Msg::Res(Res::Err(e.description().to_string())))
+    };
+}
+
+fn get_config(token: Token, key: String, replies: &mut Vec<Msg>, config: &mut Arc<RwLock<Config>>) {
+    let config = config.read().unwrap();
+    match config.get(key) {
+        Ok(string) => replies.push(Msg::Res(Res::Simple(string))),
+        Err(e) => replies.push(Msg::Res(Res::Err(e.description().to_string())))
+    };
+}
+

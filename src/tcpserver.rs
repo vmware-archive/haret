@@ -1,6 +1,7 @@
-use mio::Token;
+use mio::{Token, Sender};
 use mio::tcp::TcpStream;
 use std::sync::{Arc, RwLock};
+use event_loop::Notification;
 use config::Config;
 
 pub enum Event {
@@ -10,7 +11,8 @@ pub enum Event {
 }
 
 pub trait TcpServer {
-    fn run(config: Arc<RwLock<Config>>) -> Self;
+    fn new(config: Arc<RwLock<Config>>) -> Self;
+    fn run(&mut self, tx: Sender<Notification>);
     fn host(&self) -> String;
     fn new_sock(&mut self, token: Token, sock: TcpStream);
     fn readable(&mut self, token: Token);

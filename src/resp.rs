@@ -260,7 +260,8 @@ impl<T: Parse> Reader<T> {
             self.maybe_double_capacity();
             let start = self.read_bytes;
             match sock.read(&mut self.buf[start..]) {
-                Ok(0) => (),
+                Ok(0) => return Err(Error::new(ErrorKind::ConnectionAborted,
+                                               "Client closed connection")),
                 Ok(n) => self.read_bytes += n,
                 Err(e) => {
                     if let Some(code) = e.raw_os_error() {

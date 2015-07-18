@@ -1,9 +1,14 @@
 use mio;
 use mio::{Token, Handler, PollOpt, Interest, ReadHint };
-use mio::tcp::{TcpListener, TcpSocket};
+use mio::tcp::{TcpListener, TcpSocket, TcpStream};
 use tcpserver::TcpServer;
 
 const ACCEPTOR: Token = Token(0);
+
+#[derive(Debug)]
+pub enum Notification {
+    Deregister(TcpStream)
+}
 
 pub struct EventLoop<T: TcpServer> {
     ctx: Context<T>,
@@ -29,6 +34,8 @@ impl<T: TcpServer> EventLoop<T> {
 
     /// This will block the current thread
     pub fn run(&mut self) {
+        let tx = self.event_loop.channel();
+        self.ctx.server.run(tx);
         self.event_loop.run(&mut self.ctx).unwrap();
     }
 }
@@ -67,7 +74,7 @@ impl<T: TcpServer> Context<T> {
 
 impl<T: TcpServer> Handler for Context<T> {
     type Timeout = ();
-    type Message = ();
+    type Message = Notification;
 
     fn readable(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, _: ReadHint)
     {
@@ -79,6 +86,12 @@ impl<T: TcpServer> Handler for Context<T> {
 
     fn writable(&mut self, _event_loop: &mut mio::EventLoop<Context<T>>, token: Token) {
         self.server.writable(token);
+    }
+
+    fn notify(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, msg: Notification) {
+        println!("Event loop got notification {:?}", msg);
+        let Notification::Deregister(sock) = msg;
+        event_loop.deregister(&sock);
     }
 }
 

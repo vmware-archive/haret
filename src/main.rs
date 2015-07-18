@@ -25,6 +25,6 @@ use std::sync::{Arc, RwLock};
 
 fn main() {
     let config = Arc::new(RwLock::new(Config::read()));
-    let mut event_loop = EventLoop::new(AdminServer::run(config.clone()));
+    let mut event_loop = EventLoop::new(AdminServer::new(config.clone()));
     event_loop.run();
 }
