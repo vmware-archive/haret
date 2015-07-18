@@ -1,8 +1,8 @@
-use std::io::{Result, ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::io;
 use std::error::Error;
 use std::thread;
-use std::thread::{Thread, JoinHandle};
+use std::thread::JoinHandle;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
@@ -233,9 +233,9 @@ impl AdminHandler {
             let mut config = &mut self.config;
             match reader.read(sock) {
                 Ok(None) => (),
-                Ok(Some(Msg::Req(Req::ConfigSet(key, val)))) => set_config(token, key, val,
-                                                                           replies, config),
-                Ok(Some(Msg::Req(Req::ConfigGet(key)))) => get_config(token, key, replies, config),
+                Ok(Some(Msg::Req(Req::ConfigSet(key, val)))) => set_config(key, val, replies,
+                                                                           config),
+                Ok(Some(Msg::Req(Req::ConfigGet(key)))) => get_config(key, replies, config),
                 Ok(Some(msg)) => println!("Got a message {:?}", msg),
                 Err(e) => {
                     println!("Error reading from socket with token {:?}: {:?}", token, e);
@@ -290,7 +290,7 @@ Option<Token> {
     None
 }
 
-fn set_config(token: Token, key: String, val: String, replies: &mut Vec<Msg>,
+fn set_config(key: String, val: String, replies: &mut Vec<Msg>,
               config: &mut Arc<RwLock<Config>>) {
     let mut config = config.write().unwrap();
     match config.set(key, val) {
@@ -299,7 +299,7 @@ fn set_config(token: Token, key: String, val: String, replies: &mut Vec<Msg>,
     };
 }
 
-fn get_config(token: Token, key: String, replies: &mut Vec<Msg>, config: &mut Arc<RwLock<Config>>) {
+fn get_config(key: String, replies: &mut Vec<Msg>, config: &mut Arc<RwLock<Config>>) {
     let config = config.read().unwrap();
     match config.get(key) {
         Ok(string) => replies.push(Msg::Res(Res::Simple(string))),

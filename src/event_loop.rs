@@ -91,7 +91,7 @@ impl<T: TcpServer> Handler for Context<T> {
     fn notify(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, msg: Notification) {
         println!("Event loop got notification {:?}", msg);
         let Notification::Deregister(sock) = msg;
-        event_loop.deregister(&sock);
+        event_loop.deregister(&sock).unwrap();
     }
 }
 

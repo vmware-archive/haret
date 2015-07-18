@@ -270,33 +270,34 @@ impl<T: Parse> Reader<T> {
                     return Err(e)
                 }
             };
-            if self.start_byte == self.read_bytes { return Ok(None) }
-            let completion = match self.buf[self.start_byte] as char {
-                '*' => self.read_array(),
-                '+' => self.read_simple(),
-                ':' => self.read_int(),
-                '$' => self.read_bulk(),
-                '-' => self.read_error(),
-                c => {
-                    return Err(Error::new(ErrorKind::InvalidInput,
-                                           format!("Invalid Lead Byte: {}", c)))
-                }
-            };
-            match completion {
-                Ok(Some(resp_type)) => {
-                    match self.parse_complete(resp_type) {
-                        Ok(None) => (),
-                        val => {
-                            // Reset for the next message
-                            self.data = Vec::new();
-                            self.matching = (0..self.parsers.len()).collect();
-                            self.matching.reverse();
-                            return val
-                        }
+            while self.start_byte != self.read_bytes {
+                let completion = match self.buf[self.start_byte] as char {
+                    '*' => self.read_array(),
+                    '+' => self.read_simple(),
+                    ':' => self.read_int(),
+                    '$' => self.read_bulk(),
+                    '-' => self.read_error(),
+                    c => {
+                        return Err(Error::new(ErrorKind::InvalidInput,
+                                               format!("Invalid Lead Byte: {}", c)))
                     }
-                },
-                Ok(None) => return Ok(None),
-                Err(e) => return Err(e)
+                };
+                match completion {
+                    Ok(Some(resp_type)) => {
+                        match self.parse_complete(resp_type) {
+                            Ok(None) => (),
+                            val => {
+                                // Reset for the next message
+                                self.data = Vec::new();
+                                self.matching = (0..self.parsers.len()).collect();
+                                self.matching.reverse();
+                                return val
+                            }
+                        }
+                    },
+                    Ok(None) => return Ok(None),
+                    Err(e) => return Err(e)
+                }
             }
         }
     }
@@ -607,7 +608,7 @@ impl<T: Parse> Parser<T> {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write, Result, Error, ErrorKind};
-    use std::fs::File;
+    use std::fs::{File, OpenOptions};
     use std::fmt::Debug;
     use super::*;
 
@@ -705,19 +706,16 @@ mod tests {
         }
     }
 
-    fn read_msg<T>(file: &mut File, reader: &mut Reader<T>) -> T
+    fn read_msg<T>(file: &mut File, reader: &mut Reader<T>) -> Option<T>
       where T: Parse + Format + Clone + Debug {
-        loop {
-            match reader.read(file) {
-                Ok(Some(msg)) => {
-                    println!("msg = {:?}", msg);
-                    return msg
-                }
-                Ok(None) => (),
-                Err(e) => {
-                    println!("Error in read_msg: {:?}", e);
-                    assert!(false)
-                }
+        match reader.read(file) {
+            Ok(Some(msg)) => Some(msg),
+            Ok(None) => None,
+            Err(e) => {
+                println!("file len = {}", file.metadata().unwrap().len());
+                println!("Error in read_msg: {:?}", e);
+                assert!(false);
+                None
             }
         }
     }
@@ -729,23 +727,34 @@ mod tests {
         let msg2 = Msg::NumClients(1000);
         let msg3 = Msg::ClusterName("cluster2".to_string());
         let path = "/tmp/resp_test";
-        // Extra scope to close the file
-        {
-            let mut file = File::create(path).unwrap();
-            write_msg(&mut file, &msg);
-            write_msg(&mut file, &msg1);
-            write_msg(&mut file, &msg2);
-            write_msg(&mut file, &msg3);
-        }
         let mut reader = Reader::new();
-        let mut file = File::open(path).unwrap();
-        let msg4 = read_msg(&mut file, &mut reader);
-        assert_eq!(msg, msg4);
-        let msg4 = read_msg(&mut file, &mut reader);
-        assert_eq!(msg1, msg4);
-        let msg4 = read_msg(&mut file, &mut reader);
-        assert_eq!(msg2, msg4);
-        let msg4 = read_msg(&mut file, &mut reader);
-        assert_eq!(msg3, msg4);
+        let mut file1 = OpenOptions::new()
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true)
+                                    .open(path).unwrap();
+        let mut file2 = OpenOptions::new()
+                                    .read(true)
+                                    .open(path).unwrap();
+        write_msg(&mut file1, &msg);
+        if let Some(msg4) = read_msg(&mut file2, &mut reader) {
+            println!("readmsg1");
+            assert_eq!(msg, msg4);
+        } else { assert!(false) }
+        write_msg(&mut file1, &msg1);
+        if let Some(msg4) = read_msg(&mut file2, &mut reader) {
+            println!("readmsg2");
+            assert_eq!(msg1, msg4);
+        } else { assert!(false) }
+        write_msg(&mut file1, &msg2);
+        if let Some(msg4) = read_msg(&mut file2, &mut reader) {
+            println!("readmsg3");
+            assert_eq!(msg2, msg4);
+        } else { assert!(false) }
+        write_msg(&mut file1, &msg3);
+        if let Some(msg4) = read_msg(&mut file2, &mut reader) {
+            println!("readmsg4");
+            assert_eq!(msg3, msg4);
+        } else { assert!(false) }
     }
 }
