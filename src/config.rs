@@ -1,8 +1,9 @@
+use std::env;
 use std::fs::File;
 use std::io::{Result, Read, Write, Error, ErrorKind};
 use serde::json;
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Config {
     pub node_name: String,
     pub cluster_name: String,
@@ -12,11 +13,12 @@ pub struct Config {
 
 impl Config {
     pub fn read() -> Config {
-        Config::read_path("./config.json")
+        println!("CurDir = {:?}", env::current_dir().unwrap());
+        Config::read_path("config.json")
     }
 
     pub fn write(&self) {
-        self.write_path("./config.json");
+        self.write_path("config.json");
     }
 
     fn read_path(path: &str) -> Config {
@@ -28,7 +30,7 @@ impl Config {
     }
 
     // TODO: return errors instead of crashing
-    fn write_path(&self, path: &str) {
+    pub fn write_path(&self, path: &str) {
         let mut file = File::create(path).unwrap();
         let string = json::to_string(&self).unwrap().into_bytes();
         file.write_all(&string);

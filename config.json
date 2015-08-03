@@ -2,5 +2,5 @@
  "node_name": "node1",
  "cluster_name":"cluster1",
  "admin_host": "127.0.0.1:5000",
- "cluster_host": "localhost:5001"
+ "cluster_host": "127.0.0.1:5001"
 }

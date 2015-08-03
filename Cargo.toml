@@ -7,9 +7,13 @@ authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 serde = "*"
 serde_macros = "*"
 libc = "0.1"
+rustc-serialize = "*"
 
 [dependencies.mio]
 git = "https://github.com/carllerche/mio.git"
+
+[dependencies.msgpack]
+git = "https://github.com/mneumann/rust-msgpack.git"
 
 [dev-dependencies]
 quickcheck = "*"

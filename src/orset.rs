@@ -5,14 +5,15 @@
 use std::collections::{HashMap};
 use std::hash::Hash;
 use std::option::Option;
+use rustc_serialize::{Encodable, Decodable};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Dot {
     actor: String,
     counter: u64
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable)]
 pub enum Delta<T> {
     Add { element: T, dot: Dot },
     Remove { element: T, dots: Vec<Dot> }
@@ -23,16 +24,16 @@ pub enum Delta<T> {
 /// also increases efficiency for membership existence checks by only requiring
 /// checking `adds` for emptyness instead of requiring comparison between `adds`
 /// and `removes`. It does however, increase the cost of joins.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct ORSet<T: Eq + Hash> {
-    name: String,
+pub name: String,
     counter: u64,
     adds: HashMap<T, Vec<Dot>>,
     removes: HashMap<T, Vec<Dot>>
 }
 
 impl<T: Eq + Hash + Clone> ORSet<T> {
-    fn new(name: String) -> ORSet<T> {
+    pub fn new(name: String) -> ORSet<T> {
         ORSet {
             name: name,
             counter: 0,
@@ -54,7 +55,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         }
     }
 
-    fn add(&mut self, element: T) -> Delta<T> {
+    pub fn add(&mut self, element: T) -> Delta<T> {
         self.counter += 1;
         let dot = Dot {actor: self.name.clone(), counter: self.counter};
         let delta = Delta::Add { element: element.clone(), dot: dot.clone() };
@@ -64,7 +65,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
     }
 
     /// Invariant: seen can never be empty
-    fn remove(&mut self, element: T, seen: Vec<Dot>) -> Delta<T> {
+    pub fn remove(&mut self, element: T, seen: Vec<Dot>) -> Delta<T> {
         assert!(seen.len() != 0);
         let mut removes = self.removes.entry(element.clone()).or_insert(Vec::new());
         let mut adds = self.adds.get_mut(&element).unwrap();
@@ -79,7 +80,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
 
     // No overloaded functions in Rust. This feels wrong...
     /// Returns true if the state was mutated, false otherwise
-    fn join_state(&mut self, from: ORSet<T>) -> bool {
+    pub fn join_state(&mut self, from: ORSet<T>) -> bool {
         let mut mutated = false;
         for (element, dots) in from.removes.iter() {
             if self.join_remove(element.clone(), dots.clone()) {
@@ -98,7 +99,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
     }
 
     /// Returns true if the state was mutated, false otherwise
-    fn join(&mut self, delta: Delta<T>) -> bool {
+    pub fn join(&mut self, delta: Delta<T>) -> bool {
         match delta {
             Delta::Add {element, dot} => self.join_add(element, dot),
             Delta::Remove { element, dots } => self.join_remove(element, dots)
