@@ -11,16 +11,17 @@ extern crate serde;
 extern crate mio;
 extern crate msgpack;
 extern crate rustc_serialize;
+extern crate time;
 
 pub mod config;
 pub mod event_loop;
 pub mod admin;
 pub mod cluster;
 pub mod state;
+pub mod resp;
 
 mod event;
 mod orset;
-mod resp;
 mod tcpserver;
 mod tcphandler;
 mod membership;

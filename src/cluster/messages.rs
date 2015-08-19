@@ -7,7 +7,8 @@ use std::io::{Error, ErrorKind};
 
 #[derive(Debug, RustcEncodable, RustcDecodable)]
 pub enum Msg {
-    Members(ORSet<Member>)
+    Members(String, ORSet<Member>),
+    Ping
 }
 
 // This just wraps a message pack encoded string inside a resp bulk string

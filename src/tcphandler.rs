@@ -13,4 +13,5 @@ pub trait TcpHandler {
     fn deregister(&mut self, token: Token, addr: SocketAddr) {}
     fn handle_tcp_msg(&mut self, token: Token, msg: Self::TcpMsg);
     fn handle_event(&mut self, Self::Event);
+    fn tick(&mut self) {}
 }

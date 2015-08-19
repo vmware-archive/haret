@@ -28,12 +28,9 @@ impl TcpHandler for AdminHandler {
     type TcpMsg = Msg;
 
     fn new(state: State, tx: mio::Sender<Notification>) -> AdminHandler {
-        let state2 = state.clone();
-        let members = state2.members.read().unwrap();
-        let myname = (*members).orset.name.clone();
         let handler =
             AdminHandler {
-                node: myname,
+                node: state.members.local_name(),
                 state: state,
                 sender: tx
             };
@@ -61,6 +58,8 @@ impl TcpHandler for AdminHandler {
             Msg::Req(Req::ConfigSet(key, val)) => self.set_config(token, key, val),
             Msg::Req(Req::ConfigGet(key)) => self.get_config(token, key),
             Msg::Req(Req::ClusterJoin(ipstr)) => self.join(token, ipstr),
+            Msg::Req(Req::ClusterMembers) => self.cluster_members(token),
+            Msg::Req(Req::ClusterStatus) => self.cluster_status(token),
             _ => ()
         }
     }
@@ -81,6 +80,17 @@ impl AdminHandler {
     fn join(&self, token: Token, ipstr: String) {
         let msg = Event::ApiEvent(ClusterEvent::Join {token: token, ipstr: ipstr});
         self.state.cluster_tx.as_ref().unwrap().send(msg).unwrap();
+    }
+
+    fn cluster_members(&self, token: Token) {
+        let msg = format!("{}", self.state.members);
+        let msg = Writer::encode(Msg::Res(Res::Simple(msg)));
+        self.sender.send(Notification::WireMsg(token, msg)).unwrap();
+    }
+
+    fn cluster_status(&self, token: Token) {
+        let msg = Writer::encode(Msg::Res(Res::Simple(self.state.members.status())));
+        self.sender.send(Notification::WireMsg(token, msg)).unwrap();
     }
 
     fn set_config(&self, token: Token, key: String, val: String) {
