@@ -17,8 +17,12 @@ impl Writer {
         }
     }
 
-    pub fn format<T: Format>(&mut self, msg: T) {
-        self.data = msg.format().value();
+    pub fn encode<T: Format>(msg: T) -> Vec<Vec<u8>>{
+        msg.format().value()
+    }
+
+    pub fn set_data(&mut self, data: Vec<Vec<u8>>) {
+        self.data = data;
     }
 
     pub fn is_ready(&self) -> bool {
@@ -235,7 +239,7 @@ impl<T: Parse> Reader<T> {
                         if p.expected.len() == index + 1 {
                             // We have a complete message!
                             let ref f = p.construct;
-                            match f(&self.data) {
+                            match f(&mut self.data) {
                                 Ok(msg) => return Ok(Some(msg)),
                                 Err(e) => return Err(e)
                             }
@@ -461,13 +465,13 @@ pub trait Parse {
 
 // TODO: Instead of using closures should we use pointers to named functions?
 pub struct Parser<T: Parse> {
-    construct: Box<Fn(&Vec<RespType>) -> Result<T>>,
+    construct: Box<Fn(&mut Vec<RespType>) -> Result<T>>,
     expected: Vec<Box<Fn(&RespType) -> bool>>,
     open: Vec<(usize, usize)>
 }
 
 impl<T: Parse> Parser<T> {
-    pub fn new(constructor: Box<Fn(&Vec<RespType>) -> Result<T>>) -> Parser<T> {
+    pub fn new(constructor: Box<Fn(&mut Vec<RespType>) -> Result<T>>) -> Parser<T> {
         Parser {
             construct: constructor,
             expected: Vec::new(),
