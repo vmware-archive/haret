@@ -5,7 +5,9 @@ use resp::{Format, Combinator, Parse, Parser, RespType};
 pub enum Req {
     ConfigSet(String, String),
     ConfigGet(String),
-    ClusterJoin(String)
+    ClusterJoin(String),
+    ClusterMembers,
+    ClusterStatus
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +33,10 @@ impl Format for Msg {
                 c.array().bulk_s("config").bulk_s("get").bulk_s(&key).end(),
             Msg::Req(Req::ClusterJoin(ref ipstr)) =>
                 c.array().bulk_s("cluster").bulk_s("join").bulk_s(&ipstr).end(),
+            Msg::Req(Req::ClusterMembers) =>
+                c.array().bulk_s("cluster").bulk_s("members").end(),
+            Msg::Req(Req::ClusterStatus) =>
+                c.array().bulk_s("cluster").bulk_s("status").end(),
             Msg::Res(Res::Ok) => c.simple("ok"),
             Msg::Res(Res::Simple(ref string)) => c.simple(string),
             Msg::Res(Res::Err(ref string)) => c.error(string)
@@ -108,6 +114,12 @@ impl Parse for Msg {
 
              Parser::new(cluster_join_constructor).array()
                  .bulk(Some("cluster")).bulk(Some("join")).bulk(None).end(),
+
+             Parser::new(Box::new(|_| Ok(Msg::Req(Req::ClusterMembers)))).array()
+                 .bulk(Some("cluster")).bulk(Some("members")).end(),
+
+             Parser::new(Box::new(|_| Ok(Msg::Req(Req::ClusterStatus)))).array()
+                 .bulk(Some("cluster")).bulk(Some("status")).end(),
 
              Parser::new(Box::new(|_| Ok(Msg::Res(Res::Ok)))).simple(Some("ok")),
 

@@ -14,4 +14,5 @@ pub trait TcpServer {
     fn new_sock(&self, token: Token, addr: SocketAddr);
     fn handle_tcp_msg(&self, token: Token, msg: Self::TcpMsg);
     fn deregister(&self, token: Token, addr: SocketAddr);
+    fn tick(&self) {}
 }

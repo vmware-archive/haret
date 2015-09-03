@@ -11,7 +11,7 @@ use mio::Token;
 
 pub struct State {
     pub config: Arc<RwLock<Config>>,
-    pub members: Arc<RwLock<Members>>,
+    pub members: Members,
     pub cluster_tx: Option<Sender<Event<ClusterEvent, cluster::Msg>>>,
     pub admin_tx: Option<Sender<Event<AdminEvent, admin::Msg>>>,
     token: Arc<Mutex<Token>>
@@ -26,7 +26,7 @@ impl State {
                                    config.cluster_host.clone());
         State {
             config: Arc::new(RwLock::new(config)),
-            members: Arc::new(RwLock::new(members)),
+            members: members,
             cluster_tx: None,
             admin_tx: None,
             token: Arc::new(Mutex::new(Token(0)))

@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::collections::HashMap;
 
 const ACCEPTOR: Token = Token(0);
+const TICK_TIMEOUT: u64 = 1000;
 
 #[derive(Debug)]
 pub enum Notification {
@@ -29,6 +30,7 @@ pub fn run<T: TcpServer>(state: State) -> (State, JoinHandle<()>) {
         sock.bind(&addr).unwrap();
         let listener = sock.listen(1024).unwrap();
         let mut event_loop = EventLoop::new().unwrap();
+        event_loop.timeout_ms((), TICK_TIMEOUT);
         event_loop.register_opt(&listener, ACCEPTOR,
                                 Interest::readable(),
                                 PollOpt::edge()).unwrap();
@@ -75,11 +77,8 @@ struct Context<T: TcpServer> {
 
 impl<T: TcpServer> Context<T> {
     fn new(state: State, listener: TcpListener, server: T) -> Context<T> {
-        let state2 = state.clone();
-        let members = state2.members.read().unwrap();
-        let myname = (*members).orset.name.clone();
         Context {
-            node: myname,
+            node: state.members.local_name(),
             state: state,
             conns: HashMap::new(),
             listener: listener,
@@ -145,6 +144,15 @@ impl<T: TcpServer> Handler for Context<T> {
             },
             Notification::Connect(token, addr) => self.connect(event_loop, token, addr)
         }
+    }
+
+    // TODO: Just use as a periodic tick. We should probably allow multiple configurable timeouts
+    // per server. We should also probably allow 0 timeouts to save resources. We may also want to
+    // ranomize it within a given range to prevent synchronization with other nodes.
+    // For now this is good enough.
+    fn timeout(&mut self, event_loop: &mut EventLoop<Context<T>>, timeout: ()) {
+        self.server.tick();
+        event_loop.timeout_ms((), TICK_TIMEOUT);
     }
 }
 

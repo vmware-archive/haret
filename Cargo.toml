@@ -8,6 +8,7 @@ serde = "*"
 serde_macros = "*"
 libc = "0.1"
 rustc-serialize = "*"
+time = "*"
 
 [dependencies.mio]
 git = "https://github.com/carllerche/mio.git"

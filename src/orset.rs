@@ -141,7 +141,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         return mutated
     }
 
-    fn contains(&self, element: &T) -> bool {
+    pub fn contains(&self, element: &T) -> bool {
         if let Some(adds) = self.adds.get(element) {
             if adds.is_empty() {
                 false
@@ -153,7 +153,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         }
     }
 
-    fn elements(&self) -> Vec<T> {
+    pub fn elements(&self) -> Vec<T> {
         self.adds.iter().fold(Vec::new(), |mut acc, (elem, dots)| {
             if dots.is_empty() {
                 acc

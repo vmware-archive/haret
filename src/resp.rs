@@ -17,6 +17,10 @@ impl Writer {
         }
     }
 
+    pub fn format<T: Format>(&mut self, msg: T) {
+        self.data = Writer::encode(msg);
+    }
+
     pub fn encode<T: Format>(msg: T) -> Vec<Vec<u8>>{
         msg.format().value()
     }
@@ -644,7 +648,7 @@ mod tests {
         fn parsers() -> Vec<Parser<Msg>> {
             // The constructor takes the chain of matched types from parsing
             // and constructs a Msg::ClusterSetName(...)
-            let cluster_set_name_constructor = Box::new(|types: &Vec<RespType>| {
+            let cluster_set_name_constructor = Box::new(|types: &mut Vec<RespType>| {
                 if let RespType::Bulk(ref val) = types[3] {
                     match String::from_utf8(val.clone()) {
                         Ok(string) => return Ok(Msg::ClusterSetName(string)),

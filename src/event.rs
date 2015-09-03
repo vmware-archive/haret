@@ -9,5 +9,6 @@ pub enum Event<T: Send, P: Parse> {
     NewSock(Token, SocketAddr),
     Deregister(Token, SocketAddr),
     TcpMsg(Token, P),
+    Tick,
     ApiEvent(T)
 }

@@ -37,7 +37,9 @@ impl TcpServer for AdminServer {
                     Event::NewSock(token, addr) => handler.connect(token, addr),
                     Event::Deregister(token, addr) => handler.deregister(token, addr),
                     Event::TcpMsg(token, msg) => handler.handle_tcp_msg(token, msg),
-                    Event::ApiEvent(event) => handler.handle_event(event)
+                    Event::ApiEvent(event) => handler.handle_event(event),
+                    // Timeouts aren't used for the admin server
+                    Event::Tick => ()
                 }
             }
         }).unwrap();

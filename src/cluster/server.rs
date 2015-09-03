@@ -35,6 +35,7 @@ impl TcpServer for ClusterServer {
                     Event::NewSock(token, addr) => handler.connect(token, addr),
                     Event::Deregister(token, addr) => handler.deregister(token, addr),
                     Event::TcpMsg(token, msg) => handler.handle_tcp_msg(token, msg),
+                    Event::Tick => handler.tick(),
                     Event::ApiEvent(event) => handler.handle_event(event)
                 }
             }
@@ -68,5 +69,9 @@ impl TcpServer for ClusterServer {
 
     fn handle_tcp_msg(&self, token: Token, msg: Msg) {
         self.sender.send(Event::TcpMsg(token, msg)).unwrap();
+    }
+
+    fn tick(&self) {
+        self.sender.send(Event::Tick).unwrap();
     }
 }
