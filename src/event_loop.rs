@@ -3,7 +3,7 @@ use std::io::{Error, Result, Read, Write};
 use std::sync::mpsc::{Sender};
 use std::thread::JoinHandle;
 use mio;
-use mio::{Token, Handler, PollOpt, Interest, ReadHint };
+use mio::{Token, Handler, PollOpt, EventSet};
 use mio::tcp::{TcpListener, TcpSocket, TcpStream};
 use tcphandler::TcpHandler;
 use state::State;
@@ -48,9 +48,9 @@ impl<T: 'static + TcpHandler+Send> EventLoop<T> {
             sock.bind(&addr).unwrap();
             let listener = sock.listen(1024).unwrap();
             event_loop.timeout_ms((), TICK_TIMEOUT).unwrap();
-            event_loop.register_opt(&listener, ACCEPTOR,
-                                    Interest::readable(),
-                                    PollOpt::edge()).unwrap();
+            event_loop.register(&listener, ACCEPTOR,
+                                EventSet::readable(),
+                                PollOpt::edge()).unwrap();
             let mut ctx = Context::new(state, listener, tx);
             event_loop.run(&mut ctx).unwrap();
         });
@@ -124,29 +124,33 @@ impl<T: TcpHandler> Handler for Context<T> {
     type Timeout = ();
     type Message = Notification;
 
-    fn readable(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, _: ReadHint)
+    fn ready(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, event:EventSet)
     {
-        match token {
-            ACCEPTOR => { self.accept(event_loop); }
-            _i => {
-                println!("Got Readable for {}", self.node);
-                match self.read(event_loop, token) {
-                    Ok(()) => (),
-                    Err(e) => {
-                        println!("Error reading from clsuter socket for {} with token: {:?}: {}",
-                                 self.node, token, e);
-                        self.deregister(event_loop, token, e);
+        if event.is_readable() {
+            match token {
+                ACCEPTOR => { self.accept(event_loop); }
+                _ => {
+                    println!("Got Readable for {}", self.node);
+                    match self.read(event_loop, token) {
+                        Ok(()) => (),
+                        Err(e) => {
+                            println!("Error reading from clsuter socket for {} with token: {:?}: {}",
+                                     self.node, token, e);
+                            self.deregister(event_loop, token, e);
+                        }
+
                     }
                 }
             }
         }
-    }
 
-    fn writable(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token) {
-        println!("Got Writable for {}", self.node);
-        if let Err(err) = self.writer_ready(event_loop, token) {
-            println!("Got a write error: {} for token {:?} on {}", err, token, self.node);
-            self.deregister(event_loop, token, err);
+        if event.is_writable() {
+            println!("Got Writable for {}", self.node);
+            if let Err(err) = self.writer_ready(event_loop, token) {
+                println!("Got a write error: {} for token {:?} on {}", err, token, self.node);
+                self.deregister(event_loop, token, err);
+            }
+
         }
     }
 
@@ -187,7 +191,7 @@ impl<T: TcpHandler> Context<T> {
             let res = conn.reader.read(&mut conn.sock);
             event_loop.reregister(&conn.sock,
                                   token,
-                                  Interest::readable(),
+                                  EventSet::readable(),
                                   PollOpt::edge() | PollOpt::oneshot()).unwrap();
             res
         })) {
@@ -203,7 +207,7 @@ impl<T: TcpHandler> Context<T> {
             if try!(write::<T>(*conn)) {
                 event_loop.reregister(&conn.sock,
                                       token,
-                                      Interest::writable(),
+                                      EventSet::writable(),
                                       PollOpt::edge() | PollOpt::oneshot()).unwrap();
             };
         }
@@ -218,7 +222,7 @@ impl<T: TcpHandler> Context<T> {
                 Ok(true) => {
                     event_loop.reregister(&conn.sock,
                                           token,
-                                          Interest::writable(),
+                                          EventSet::writable(),
                                           PollOpt::edge() | PollOpt::oneshot()).unwrap();
                     Ok(())
                 },
@@ -231,9 +235,9 @@ impl<T: TcpHandler> Context<T> {
 
     fn register(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, sock: TcpStream,
                 addr: SocketAddr) {
-        event_loop.register_opt(&sock, token,
-                                Interest::readable() | Interest::writable(),
-                                PollOpt::edge() | PollOpt::oneshot()).unwrap();
+        event_loop.register(&sock, token,
+                            EventSet::readable() | EventSet::writable(),
+                            PollOpt::edge() | PollOpt::oneshot()).unwrap();
         let conn = Conn::new(sock, addr.clone());
         self.conns.insert(token, conn);
         self.tx.send(Event::NewSock(token, addr)).unwrap();

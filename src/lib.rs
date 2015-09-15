@@ -9,6 +9,7 @@ extern crate rand;
 
 extern crate libc;
 extern crate serde;
+extern crate serde_json;
 extern crate mio;
 extern crate msgpack;
 extern crate rustc_serialize;

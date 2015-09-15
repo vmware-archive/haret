@@ -6,6 +6,7 @@ authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 [dependencies]
 serde = "*"
 serde_macros = "*"
+serde_json = "*"
 libc = "0.1"
 rustc-serialize = "*"
 time = "*"
