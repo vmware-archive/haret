@@ -1,5 +1,6 @@
 #![feature(custom_derive, plugin)]
 #![plugin(serde_macros)]
+#![feature(mpsc_select)]
 
 #[cfg(test)]
 extern crate quickcheck;
@@ -22,6 +23,5 @@ pub mod resp;
 
 mod event;
 mod orset;
-mod tcpserver;
 mod tcphandler;
 mod membership;

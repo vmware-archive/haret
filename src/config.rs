@@ -33,7 +33,7 @@ impl Config {
     pub fn write_path(&self, path: &str) {
         let mut file = File::create(path).unwrap();
         let string = json::to_string(&self).unwrap().into_bytes();
-        file.write_all(&string);
+        file.write_all(&string).unwrap();
     }
 
     pub fn get(&self, key: String) -> Result<String> {

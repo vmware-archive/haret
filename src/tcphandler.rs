@@ -1,17 +1,19 @@
-use mio::{Token, Sender};
+use mio;
 use event_loop::Notification;
 use state::State;
-use std::net::SocketAddr;
 use resp::Parse;
+use event::Event;
+use std::sync::mpsc::Sender;
 
 pub trait TcpHandler {
-    type Event;
-    type TcpMsg: Parse;
+    type TcpMsg: Parse + Send;
 
-    fn new(state: State, tx: Sender<Notification>) -> Self;
-    fn connect(&mut self, token: Token, addr: SocketAddr) {}
-    fn deregister(&mut self, token: Token, addr: SocketAddr) {}
-    fn handle_tcp_msg(&mut self, token: Token, msg: Self::TcpMsg);
-    fn handle_event(&mut self, Self::Event);
-    fn tick(&mut self) {}
+    // Sets the channel the handler sends messages to the event loop on
+    fn set_event_loop_tx(&mut self, tx: mio::Sender<Notification>);
+
+    // Returns the channel the event loop sends messages to the handler on
+    fn event_loop_sender(&self) -> Sender<Event<Self::TcpMsg>>;
+
+    fn host(state: &State) -> String;
+    fn recv_loop(&mut self);
 }
