@@ -1,9 +1,8 @@
 pub mod server;
 pub mod handler;
-pub mod event;
+pub mod msg;
 mod messages;
 
 pub use self::messages::{Msg, Req, Res};
-pub use self::event::AdminEvent;
+pub use self::msg::AdminMsg;
 pub use self::handler::AdminHandler;
-pub use self::server::AdminServer;

@@ -463,7 +463,7 @@ fn is_digit(i: u8) -> bool {
     i > 47 && i < 58
 }
 
-pub trait Parse {
+pub trait Parse : Sized {
     fn parsers() -> Vec<Parser<Self>>;
 }
 
@@ -615,7 +615,7 @@ impl<T: Parse> Parser<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Write, Result, Error, ErrorKind};
+    use std::io::{Read, Write, Error, ErrorKind};
     use std::fs::{File, OpenOptions};
     use std::fmt::Debug;
     use super::*;

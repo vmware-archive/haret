@@ -5,7 +5,7 @@
 use std::collections::{HashMap};
 use std::hash::Hash;
 use std::option::Option;
-use rustc_serialize::{Encodable, Decodable};
+use rustc_serialize::{Encodable};
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Dot {

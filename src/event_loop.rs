@@ -1,15 +1,16 @@
 use std::thread;
 use std::io::{Error, Result, Read, Write};
-use std::sync::Arc;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender};
 use std::thread::JoinHandle;
-use mio::{EventLoop, Token, Handler, PollOpt, Interest, ReadHint };
+use mio;
+use mio::{Token, Handler, PollOpt, Interest, ReadHint };
 use mio::tcp::{TcpListener, TcpSocket, TcpStream};
-use tcpserver::TcpServer;
+use tcphandler::TcpHandler;
 use state::State;
 use resp::{Parse, Reader, Writer};
 use std::net::SocketAddr;
 use std::collections::HashMap;
+use event::Event;
 
 const ACCEPTOR: Token = Token(0);
 const TICK_TIMEOUT: u64 = 1000;
@@ -21,27 +22,44 @@ pub enum Notification {
     WireMsg(Token, Vec<Vec<u8>>)
 }
 
-pub fn run<T: TcpServer>(state: State) -> (State, JoinHandle<()>) {
-    let (state_tx, state_rx) = channel();
-    let handle = thread::spawn(move || {
-        let addr = T::host(&state).parse().unwrap();
-        let sock = TcpSocket::v4().unwrap();
-        sock.set_reuseaddr(true).unwrap();
-        sock.bind(&addr).unwrap();
-        let listener = sock.listen(1024).unwrap();
-        let mut event_loop = EventLoop::new().unwrap();
-        event_loop.timeout_ms((), TICK_TIMEOUT);
-        event_loop.register_opt(&listener, ACCEPTOR,
-                                Interest::readable(),
-                                PollOpt::edge()).unwrap();
-        let tx = event_loop.channel();
-        let server = T::new(state, tx);
-        state_tx.send(server.state());
-        let mut ctx = Context::new(server.state(), listener, server);
-        event_loop.run(&mut ctx).unwrap();
-    });
-    let state = state_rx.recv().unwrap();
-    (state, handle)
+pub struct EventLoop<T: TcpHandler+Send> {
+    state: State,
+    tx: Sender<Event<T::TcpMsg>>,
+    event_loop: Option<mio::EventLoop<Context<T>>>
+}
+
+impl<T: 'static + TcpHandler+Send> EventLoop<T> {
+    pub fn new(state: State, tx: Sender<Event<T::TcpMsg>>) -> EventLoop<T> {
+        EventLoop {
+            state: state,
+            tx: tx,
+            event_loop: Some(mio::EventLoop::new().unwrap())
+        }
+    }
+
+    pub fn run(&mut self) -> JoinHandle<()> {
+        let tx = self.tx.clone();
+        let state = self.state.clone();
+        let mut event_loop = self.event_loop.take().unwrap();
+        let handle = thread::spawn(move || {
+            let addr = T::host(&state).parse().unwrap();
+            let sock = TcpSocket::v4().unwrap();
+            sock.set_reuseaddr(true).unwrap();
+            sock.bind(&addr).unwrap();
+            let listener = sock.listen(1024).unwrap();
+            event_loop.timeout_ms((), TICK_TIMEOUT).unwrap();
+            event_loop.register_opt(&listener, ACCEPTOR,
+                                    Interest::readable(),
+                                    PollOpt::edge()).unwrap();
+            let mut ctx = Context::new(state, listener, tx);
+            event_loop.run(&mut ctx).unwrap();
+        });
+        handle
+    }
+
+    pub fn sender(&self) -> mio::Sender<Notification> {
+        self.event_loop.as_ref().unwrap().channel()
+    }
 }
 
 // TODO: We don't want to do parsing and messge construction in the event loop.
@@ -67,26 +85,26 @@ impl<T: Parse> Conn<T> {
     }
 }
 
-struct Context<T: TcpServer> {
+struct Context<T: TcpHandler> {
     node: String,
     state: State,
     conns: HashMap<Token, Conn<T::TcpMsg>>,
     listener: TcpListener,
-    server: T
+    tx: Sender<Event<T::TcpMsg>>
 }
 
-impl<T: TcpServer> Context<T> {
-    fn new(state: State, listener: TcpListener, server: T) -> Context<T> {
+impl<T: TcpHandler> Context<T> {
+    fn new(state: State, listener: TcpListener, tx: Sender<Event<T::TcpMsg>>) -> Context<T> {
         Context {
             node: state.members.local_name(),
             state: state,
             conns: HashMap::new(),
             listener: listener,
-            server: server
+            tx: tx
         }
     }
 
-    fn accept(&mut self, event_loop: &mut EventLoop<Context<T>>) {
+    fn accept(&mut self, event_loop: &mut mio::EventLoop<Context<T>>) {
         match self.listener.accept() {
             Ok(None) => (), // EWOULDBLOCK
             Ok(Some(sock)) => {
@@ -102,11 +120,11 @@ impl<T: TcpServer> Context<T> {
     }
 }
 
-impl<T: TcpServer> Handler for Context<T> {
+impl<T: TcpHandler> Handler for Context<T> {
     type Timeout = ();
     type Message = Notification;
 
-    fn readable(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token, _: ReadHint)
+    fn readable(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, _: ReadHint)
     {
         match token {
             ACCEPTOR => { self.accept(event_loop); }
@@ -124,7 +142,7 @@ impl<T: TcpServer> Handler for Context<T> {
         }
     }
 
-    fn writable(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token) {
+    fn writable(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token) {
         println!("Got Writable for {}", self.node);
         if let Err(err) = self.writer_ready(event_loop, token) {
             println!("Got a write error: {} for token {:?} on {}", err, token, self.node);
@@ -132,7 +150,7 @@ impl<T: TcpServer> Handler for Context<T> {
         }
     }
 
-    fn notify(&mut self, event_loop: &mut EventLoop<Context<T>>, msg: Notification) {
+    fn notify(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, msg: Notification) {
         println!("Event loop got notification {:?} for {}", msg, self.node);
         match msg {
             Notification::Deregister(token, err) => self.deregister(event_loop, token, err),
@@ -150,21 +168,21 @@ impl<T: TcpServer> Handler for Context<T> {
     // per server. We should also probably allow 0 timeouts to save resources. We may also want to
     // ranomize it within a given range to prevent synchronization with other nodes.
     // For now this is good enough.
-    fn timeout(&mut self, event_loop: &mut EventLoop<Context<T>>, timeout: ()) {
-        self.server.tick();
-        event_loop.timeout_ms((), TICK_TIMEOUT);
+    fn timeout(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, _timeout: ()) {
+        self.tx.send(Event::Tick).unwrap();
+        event_loop.timeout_ms((), TICK_TIMEOUT).unwrap();
     }
 }
 
-impl<T: TcpServer> Context<T> {
-    fn connect(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token, addr: SocketAddr) {
+impl<T: TcpHandler> Context<T> {
+    fn connect(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, addr: SocketAddr) {
         match TcpStream::connect(&addr) {
             Ok(sock) => self.register(event_loop, token, sock, addr),
-            Err(e) => self.server.deregister(token, addr)
+            Err(_e) => self.tx.send(Event::Deregister(token, addr)).unwrap()
         }
     }
 
-    fn read(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token) -> Result<()>{
+    fn read(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token) -> Result<()>{
         if let Some(msg) = try!(self.conns.get_mut(&token).map_or(Ok(None), |ref mut conn| {
             let res = conn.reader.read(&mut conn.sock);
             event_loop.reregister(&conn.sock,
@@ -173,16 +191,16 @@ impl<T: TcpServer> Context<T> {
                                   PollOpt::edge() | PollOpt::oneshot()).unwrap();
             res
         })) {
-            self.server.handle_tcp_msg(token, msg);
+            self.tx.send(Event::TcpMsg(token, msg)).unwrap();
         };
         Ok(())
     }
 
-    fn push_outgoing(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token,
+    fn push_outgoing(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token,
                      msg: Vec<Vec<u8>>) -> Result<bool> {
         if let Some(ref mut conn) = self.conns.get_mut(&token) {
             conn.outgoing.push(msg);
-            if try!(write::<T>(token, *conn)) {
+            if try!(write::<T>(*conn)) {
                 event_loop.reregister(&conn.sock,
                                       token,
                                       Interest::writable(),
@@ -192,11 +210,11 @@ impl<T: TcpServer> Context<T> {
         Ok(false)
     }
 
-    fn writer_ready(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token) -> Result<()> {
+    fn writer_ready(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token) -> Result<()> {
         // It's possible we already deregistered and one last write gets triggered
         self.conns.get_mut(&token).map(|ref mut conn| {
             conn.writer.ready(true);
-            match write::<T>(token, *conn) {
+            match write::<T>(*conn) {
                 Ok(true) => {
                     event_loop.reregister(&conn.sock,
                                           token,
@@ -211,21 +229,21 @@ impl<T: TcpServer> Context<T> {
         Ok(())
     }
 
-    fn register(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token, sock: TcpStream,
+    fn register(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, sock: TcpStream,
                 addr: SocketAddr) {
         event_loop.register_opt(&sock, token,
                                 Interest::readable() | Interest::writable(),
                                 PollOpt::edge() | PollOpt::oneshot()).unwrap();
         let conn = Conn::new(sock, addr.clone());
         self.conns.insert(token, conn);
-        self.server.new_sock(token, addr);
+        self.tx.send(Event::NewSock(token, addr)).unwrap();
     }
 
-    fn deregister(&mut self, event_loop: &mut EventLoop<Context<T>>, token: Token, err: Error) {
+    fn deregister(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, token: Token, err: Error) {
         if let Some(conn) = self.conns.remove(&token) {
             event_loop.deregister(&conn.sock).unwrap();
             println!("Deregistered cluster socket for token {:?} with error: {}", token, err);
-            self.server.deregister(token, conn.addr);
+            self.tx.send(Event::Deregister(token, conn.addr)).unwrap();
         } else {
             println!("Error: Tried to deregister a token with no corresponding socket");
         }
@@ -235,7 +253,7 @@ impl<T: TcpServer> Context<T> {
 /// Return Ok(true) if we need to reregister the socket. We only need to do this when the OS
 /// tells us we would block. Otherwise we either have nothing to write, or are already waiting on a
 /// writable notification.
-fn write<T: TcpServer>(token: Token, conn: &mut Conn<T::TcpMsg>) -> Result<bool> {
+fn write<T: TcpHandler>(conn: &mut Conn<T::TcpMsg>) -> Result<bool> {
     while conn.writer.is_ready() {
         if conn.writer.is_empty() {
             if conn.outgoing.len() > 0 {

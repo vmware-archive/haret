@@ -6,7 +6,6 @@ use std::result;
 use std::io::Result;
 use std::fmt::{Display, Error, Formatter};
 use rustc_serialize::Encodable;
-use std::net::SocketAddr;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 

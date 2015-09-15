@@ -1,16 +1,16 @@
 use resp::Writer;
-use std::io::{Error, Result, ErrorKind};
+use std::io::{Error, ErrorKind};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::mpsc::{channel, Sender, Receiver};
 use mio;
 use mio::Token;
 use event_loop::Notification;
 use state::State;
 use event::Event;
 use tcphandler::TcpHandler;
-use super::ClusterEvent;
 use super::messages::Msg;
-use admin::AdminEvent;
+use admin::AdminMsg;
 use orset::ORSet;
 use membership::Member;
 use time::{SteadyTime, Duration};
@@ -35,18 +35,59 @@ pub struct ClusterHandler {
     unestablished_clients: HashSet<Token>,
     established_by_addr: HashMap<String, (bool, Token)>,
     established_by_token: HashMap<Token, (bool, String)>,
-    sender: mio::Sender<Notification>
+
+    admin_tx: Sender<AdminMsg>,
+    admin_rx: Option<Receiver<AdminMsg>>,
+    event_loop_tx: Option<mio::Sender<Notification>>,
+    event_loop_rx: Option<Receiver<Event<Msg>>>,
+
+    // To be given away to the event loop so it can send us messages
+    event_loop_sender: Sender<Event<Msg>>
 }
 
 impl TcpHandler for ClusterHandler {
-    type Event = ClusterEvent;
     type TcpMsg = Msg;
 
-    fn new(state: State, tx: mio::Sender<Notification>) -> ClusterHandler {
+    fn set_event_loop_tx(&mut self, tx: mio::Sender<Notification>) {
+        self.event_loop_tx = Some(tx);
+    }
+
+    fn event_loop_sender(&self) -> Sender<Event<Msg>> {
+        self.event_loop_sender.clone()
+    }
+
+    fn host(state: &State) -> String {
+        let config = state.config.read().unwrap();
+        config.cluster_host.clone()
+    }
+
+    // Main handler loop
+    fn recv_loop(&mut self) {
+        let admin_rx = self.admin_rx.take().unwrap();
+        let event_loop_rx = self.event_loop_rx.take().unwrap();
+        loop {
+            select! {
+                msg = admin_rx.recv()=> self.handle_admin_msg(msg.unwrap()),
+                event = event_loop_rx.recv()=> self.handle_event(event.unwrap())
+            }
+        }
+    }
+}
+
+fn connected_ips(established: &HashMap<String, (bool, Token)>) -> HashSet<String> {
+    established.iter().map(|(ref addr, _)| addr.to_string()).collect()
+}
+
+impl ClusterHandler {
+    pub fn new(state: State, admin_tx: Sender<AdminMsg>, admin_rx: Receiver<AdminMsg>)
+        -> ClusterHandler {
+
         let addr = {
             let config = state.config.read().unwrap();
             config.cluster_host.parse().unwrap()
         };
+        let (tx, rx) = channel();
+
         ClusterHandler {
             node: state.members.local_name(),
             addr: addr,
@@ -56,11 +97,25 @@ impl TcpHandler for ClusterHandler {
             unestablished_clients: HashSet::new(),
             established_by_addr: HashMap::new(),
             established_by_token: HashMap::new(),
-            sender: tx
+
+            admin_tx: admin_tx,
+            admin_rx: Some(admin_rx),
+            event_loop_tx: None,
+            event_loop_rx: Some(rx),
+            event_loop_sender: tx
         }
     }
 
-    fn connect(&mut self, token: Token, addr: SocketAddr) {
+    fn handle_event(&mut self, event: Event<Msg>) {
+        match event {
+            Event::NewSock(token, addr) => self.connect(token, addr),
+            Event::Deregister(token, addr) => self.deregister(token, addr),
+            Event::TcpMsg(token, msg) => self.handle_tcp_msg(token, msg),
+            Event::Tick => self.tick()
+        }
+    }
+
+    fn connect(&mut self, token: Token, _addr: SocketAddr) {
         self.send_members(token);
         self.receipts.insert(token, SteadyTime::now());
     }
@@ -80,10 +135,10 @@ impl TcpHandler for ClusterHandler {
         self.receipts.remove(&token);
     }
 
-    fn handle_event(&mut self, event: ClusterEvent) {
+    fn handle_admin_msg(&mut self, event: AdminMsg) {
         match event {
-            ClusterEvent::Join {token, ipstr} => self.start_join(token, ipstr),
-            ClusterEvent::State(state) => self.state = state
+            AdminMsg::Join {token, ipstr} => self.start_join(token, ipstr),
+            _ => ()
         }
     }
 
@@ -95,7 +150,7 @@ impl TcpHandler for ClusterHandler {
                 self.join_members(orset, token);
                 self.check_connections();
             },
-            Ping => {
+            Msg::Ping => {
                 self.receipts.insert(token, SteadyTime::now());
             }
         }
@@ -106,13 +161,6 @@ impl TcpHandler for ClusterHandler {
         self.send_pings();
         self.check_connections();
     }
-}
-
-fn connected_ips(established: &HashMap<String, (bool, Token)>) -> HashSet<String> {
-    established.iter().map(|(ref addr, _)| addr.to_string()).collect()
-}
-
-impl ClusterHandler {
 
     /// The current tick comes in at one second intervals, meaning each node should send a `Ping`
     /// every second. If we haven't received a Ping within 5 seconds, the connection should be
@@ -124,18 +172,18 @@ impl ClusterHandler {
     fn check_liveness(&mut self) {
         let now = SteadyTime::now();
         let to_remove =
-            self.receipts.iter().filter(|&(&token, &time)| now - time > Duration::seconds(5));
+            self.receipts.iter().filter(|&(_, &time)| now - time > Duration::seconds(5));
         for (&token, _) in to_remove {
             let msg = format!("Cluster connection for {:?} timed out", token);
             let err = Error::new(ErrorKind::TimedOut, msg);
-            self.sender.send(Notification::Deregister(token, err)).unwrap();
+            self.event_loop_tx.as_ref().unwrap().send(Notification::Deregister(token, err)).unwrap();
         }
     }
 
     fn send_pings(&self) {
         let msg = Writer::encode(Msg::Ping);
         for (&token, _) in self.receipts.iter() {
-            self.sender.send(Notification::WireMsg(token, msg.clone())).unwrap();
+            self.event_loop_tx.as_ref().unwrap().send(Notification::WireMsg(token, msg.clone())).unwrap();
         }
     }
 
@@ -148,14 +196,14 @@ impl ClusterHandler {
                 let err = Error::new(ErrorKind::Other, msg);
                 if deregister_token == token {
                     // Deregister the incoming connection
-                    self.sender.send(Notification::Deregister(token, err)).unwrap();
+                    self.event_loop_tx.as_ref().unwrap().send(Notification::Deregister(token, err)).unwrap();
                 } else {
                     // Deregister the already established connection
                     // Cleanup connection here and not in deregister callback, because we don't want
                     // to call self.state.members.disconnected();
                     self.established_by_token.remove(&deregister_token);
                     self.established_by_addr.remove(&addr);
-                    self.sender.send(Notification::Deregister(deregister_token, err)).unwrap();
+                    self.event_loop_tx.as_ref().unwrap().send(Notification::Deregister(deregister_token, err)).unwrap();
                     self.establish_connection(token, addr);
                 }
             },
@@ -198,7 +246,7 @@ impl ClusterHandler {
             if let Some(&(_, ref token)) = self.established_by_addr.get(&addr) {
                 let msg = format!("{:?} no longer part of cluster membership", addr);
                 let err = Error::new(ErrorKind::Other, msg);
-                self.sender.send(Notification::Deregister(*token, err)).unwrap();
+                self.event_loop_tx.as_ref().unwrap().send(Notification::Deregister(*token, err)).unwrap();
             }
         }
 
@@ -229,15 +277,13 @@ impl ClusterHandler {
     }
 
     fn join_err(&self, token: Token, err: Error) {
-        let reply =
-            Event::ApiEvent(AdminEvent::JoinReply {token: token, reply: Err(err)});
-        self.state.admin_tx.as_ref().unwrap().send(reply).unwrap();
+        let reply = AdminMsg::JoinReply {token: token, reply: Err(err)};
+        self.admin_tx.send(reply).unwrap();
     }
 
     fn join_success(&self, token: Token) {
-        let reply =
-            Event::ApiEvent(AdminEvent::JoinReply {token: token, reply: Ok(())});
-        self.state.admin_tx.as_ref().unwrap().send(reply).unwrap();
+        let reply = AdminMsg::JoinReply {token: token, reply: Ok(())};
+        self.admin_tx.send(reply).unwrap();
     }
 
     fn start_join(&mut self, join_token: Token, ipstr: String) {
@@ -249,7 +295,7 @@ impl ClusterHandler {
             Ok(addr) => {
                 let token = self.state.next_token();
                 self.pending_joins.insert(token, join_token);
-                self.sender.send(Notification::Connect(token, addr)).unwrap();
+                self.event_loop_tx.as_ref().unwrap().send(Notification::Connect(token, addr)).unwrap();
             }
         }
     }
@@ -264,13 +310,13 @@ impl ClusterHandler {
 
     fn init_connect(&mut self, addr: SocketAddr) {
         let token = self.state.next_token();
-        self.sender.send(Notification::Connect(token, addr)).unwrap();
+        self.event_loop_tx.as_ref().unwrap().send(Notification::Connect(token, addr)).unwrap();
     }
 
     fn send_members(&mut self, token: Token) {
         println!("Sending members for {}", self.node);
         let orset = self.state.members.get_orset();
         let msg = Writer::encode(Msg::Members(self.addr.clone(), orset));
-        self.sender.send(Notification::WireMsg(token, msg)).unwrap();
+        self.event_loop_tx.as_ref().unwrap().send(Notification::WireMsg(token, msg)).unwrap();
     }
 }
