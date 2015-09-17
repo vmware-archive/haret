@@ -5,6 +5,7 @@ use v2r2::state::State;
 use v2r2::admin;
 use v2r2::admin::AdminMsg;
 use v2r2::cluster;
+use v2r2::vr_api;
 
 fn main() {
     let state = State::new();
@@ -14,12 +15,12 @@ fn main() {
     let (admin_tx, cluster_rx) = channel::<AdminMsg>();
 
     let handles1 = cluster::server::run(state.clone(), cluster_tx, cluster_rx);
-    let handles2 = admin::server::run(state, admin_tx, admin_rx);
+    let handles2 = admin::server::run(state.clone(), admin_tx, admin_rx);
+    let handles3 = vr_api::server::run(state);
 
-    for h in handles1 {
-        h.join().unwrap();
-    }
-    for h in handles2 {
-        h.join().unwrap();
+    for l in vec![handles1, handles2, handles3] {
+        for h in l {
+            h.join().unwrap();
+        }
     }
 }

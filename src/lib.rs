@@ -1,6 +1,7 @@
 #![feature(custom_derive, plugin)]
 #![plugin(serde_macros)]
 #![feature(mpsc_select)]
+#![feature(btree_range, collections_bound)]
 
 #[cfg(test)]
 extern crate quickcheck;
@@ -21,6 +22,8 @@ pub mod admin;
 pub mod cluster;
 pub mod state;
 pub mod resp;
+pub mod vr_api;
+pub mod element;
 
 mod event;
 mod orset;
