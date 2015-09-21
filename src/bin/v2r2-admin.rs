@@ -28,7 +28,13 @@ fn run_interactive(mut sock: TcpStream) {
         io::stdin().read_line(&mut command).unwrap();
         match run(&command, &mut sock) {
             Ok(result) => println!("{}", result),
-            Err(err) => println!("{}", err)
+            Err(err) => {
+                println!("{}", err);
+                let kind = err.kind();
+                if kind == ErrorKind::ConnectionReset || kind == ErrorKind::ConnectionAborted {
+                    exit(-1);
+                }
+            }
         }
     }
 }
