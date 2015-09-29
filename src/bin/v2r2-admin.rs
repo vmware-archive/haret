@@ -65,7 +65,7 @@ fn run(command: &str, sock: &mut TcpStream) -> Result<String> {
 
 fn prompt() {
     let mut stdout = io::stdout();
-    stdout.write_all(b"v2r2> ").unwrap();
+    stdout.write_all(b"v2r2-admin> ").unwrap();
     stdout.flush().unwrap();
 }
 
