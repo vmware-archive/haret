@@ -4,7 +4,7 @@ use mio;
 use mio::Token;
 use state::State;
 use tcphandler::TcpHandler;
-use super::messages::{Req, Rsp};
+use super::messages::{VrApiReq, VrApiRsp};
 use event::Event;
 use std::error;
 use std::sync::mpsc::{channel, Sender, Receiver};
@@ -17,19 +17,19 @@ pub struct VrApiHandler {
     vr_tx: Sender<VrReq>,
     vr_rx: Option<Receiver<VrResp>>,
     event_loop_tx: Option<mio::Sender<Notification>>,
-    event_loop_rx: Option<Receiver<Event<Req>>>,
+    event_loop_rx: Option<Receiver<Event<VrApiReq>>>,
     // To be given away to the event loop so it can send us messages
-    event_loop_sender: Sender<Event<Req>>
+    event_loop_sender: Sender<Event<VrApiReq>>
 }
 
 impl TcpHandler for VrApiHandler {
-    type TcpMsg = Req;
+    type TcpMsg = VrApiReq;
 
     fn set_event_loop_tx(&mut self, tx: mio::Sender<Notification>) {
         self.event_loop_tx = Some(tx);
     }
 
-    fn event_loop_sender(&self) -> Sender<Event<Req>> {
+    fn event_loop_sender(&self) -> Sender<Event<VrApiReq>> {
         self.event_loop_sender.clone()
     }
 
@@ -65,20 +65,21 @@ impl VrApiHandler {
         }
     }
 
-    fn handle_event(&mut self, event: Event<Req>) {
+    fn handle_event(&mut self, event: Event<VrApiReq>) {
         match event {
             Event::TcpMsg(token, msg) => self.handle_tcp_msg(token, msg),
             _ => ()
         }
     }
 
-    fn handle_tcp_msg(&mut self, token: Token, msg: Req) {
+    fn handle_tcp_msg(&mut self, token: Token, msg: VrApiReq) {
         match msg {
-            Req::Create {..} => self.vr_write(token, msg),
-            Req::Put {..} => self.vr_write(token, msg),
-            Req::Delete {..} => self.vr_write(token, msg),
-            Req::Get {..} => self.vr_read(token, msg),
-            Req::List {..} => self.vr_read(token, msg)
+            VrApiReq::Create {..} => self.vr_write(token, msg),
+            VrApiReq::Put {..} => self.vr_write(token, msg),
+            VrApiReq::Delete {..} => self.vr_write(token, msg),
+            VrApiReq::Get {..} => self.vr_read(token, msg),
+            VrApiReq::List {..} => self.vr_read(token, msg),
+            VrApiReq::Null => ()
         };
     }
 
@@ -88,11 +89,11 @@ impl VrApiHandler {
         self.event_loop_tx.as_ref().unwrap().send(Notification::WireMsg(token, msg)).unwrap();
     }
 
-    fn vr_write(&self, token: Token, msg: Req) {
+    fn vr_write(&self, token: Token, msg: VrApiReq) {
         self.vr_tx.send(VrReq::Write(token, msg)).unwrap();
     }
 
-    fn vr_read(&self, token: Token, msg: Req) {
+    fn vr_read(&self, token: Token, msg: VrApiReq) {
         self.vr_tx.send(VrReq::Read(token, msg)).unwrap();
     }
 }

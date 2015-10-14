@@ -4,7 +4,7 @@ use std::sync::mpsc::{Sender};
 use std::thread::JoinHandle;
 use mio;
 use mio::{Token, Handler, PollOpt, EventSet};
-use mio::tcp::{TcpListener, TcpSocket, TcpStream};
+use mio::tcp::{TcpListener, TcpStream};
 use tcphandler::TcpHandler;
 use state::State;
 use resp::{Parse, Reader, Writer};
@@ -43,10 +43,7 @@ impl<T: 'static + TcpHandler+Send> EventLoop<T> {
         let mut event_loop = self.event_loop.take().unwrap();
         let handle = thread::spawn(move || {
             let addr = T::host(&state).parse().unwrap();
-            let sock = TcpSocket::v4().unwrap();
-            sock.set_reuseaddr(true).unwrap();
-            sock.bind(&addr).unwrap();
-            let listener = sock.listen(1024).unwrap();
+            let listener = TcpListener::bind(&addr).unwrap();
             event_loop.timeout_ms((), TICK_TIMEOUT).unwrap();
             event_loop.register(&listener, ACCEPTOR,
                                 EventSet::readable(),
@@ -107,10 +104,9 @@ impl<T: TcpHandler> Context<T> {
     fn accept(&mut self, event_loop: &mut mio::EventLoop<Context<T>>) {
         match self.listener.accept() {
             Ok(None) => (), // EWOULDBLOCK
-            Ok(Some(sock)) => {
+            Ok(Some((sock, addr))) => {
                 // TODO: Should probably not unwrap here, since the connection could close
                 // immediately
-                let addr = sock.peer_addr().unwrap();
                 println!("Connection Accepted for {} from {:?}", self.node, addr);
                 let token = self.state.next_token();
                 self.register(event_loop, token, sock, addr);
