@@ -61,3 +61,11 @@ The second method is specific to our implementation, which is based on gossip fo
 The replica can ask the dispatcher that participates in gossip for the latest config for the given
 tenant. If the local dispatcher has not learned this information yet it can broadcast a request to
 other nodes, or simply wait for the state to converge before replying to the local replica.
+
+## Efficiency
+There are a number of major and minor adjustments we can make that make the VR implementation more efficient. Some of them are described in the paper, and some have been discovered by us during implementation and testing. This section will cover optimizations made in our implementation.
+
+#### Primary Crash and Recovery
+When a replica crashes and restarts it enters recovery mode. This results in a `Recovery` message being sent to the other replicas when it restarts. If, however, in a given view, the primary crashes and restarts before the backups notice the primary crashed, the backups may receive a Recovery message from the crashed primary, which they currently believe is the active primary. In this instance, as described in the paper, the backups are still in 'normal' status and should respond to the recovery message. However, the primary will never recover in this view because it itself is the primary for the largest view received by the quorum of `RecoveryResponse` messages. 
+
+Note that the above scenario is safe because eventually the backups will timeout and start a view change and one of them will become a new primary and respond to further Recovery messages. Therefore the old primary will eventually recover. However, it is suboptimal, in that it requires waiting for a timeout to trigger a view change that can be detected without a timeout. We can eliminate the remaining view change timeout wait time by having a backup start a view change immediately if it sees a `Recovery` message from the primary of the current view. Additionally, the backup does not respond to this message.
