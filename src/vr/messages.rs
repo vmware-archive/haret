@@ -1,8 +1,9 @@
 use uuid::Uuid;
+use rustc_serialize::Encodable;
 use super::replica::{Replica, VersionedReplicas};
 use vr_api::{VrApiReq, VrApiRsp};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum VrMsg {
     /// A message that drives the state of the fsm during periods of inactivity
     Tick,
@@ -108,13 +109,15 @@ pub enum VrMsg {
 #[derive(Debug, Clone)]
 pub struct Envelope {
     pub to: Replica,
+    pub from: Replica,
     pub msg: VrMsg
 }
 
 impl Envelope {
-    pub fn new(to: Replica, msg: VrMsg) -> Envelope {
+    pub fn new(to: Replica, from: Replica, msg: VrMsg) -> Envelope {
         Envelope {
             to: to,
+            from: from,
             msg: msg
         }
     }

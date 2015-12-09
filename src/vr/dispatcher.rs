@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::iter::FromIterator;
 use uuid::Uuid;
-use fsm::{Fsm, FsmType, ThreadedFsm, LocalFsm, Msg};
+use fsm::{Fsm, Msg, StateFn};
 use membership::Member;
 use super::replica::{RawReplica, Replica, VersionedReplicas};
 use super::vr_fsm::{StartupState, VrCtx, VrHandler, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
@@ -20,7 +20,7 @@ pub enum DispatchMsg {
 pub struct Dispatcher {
     pub node: Member,
     pub tenants: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>,
-    pub local_replicas: HashMap<Replica, Box<Fsm<VrHandler>>>,
+    pub local_replicas: HashMap<Replica, Fsm<VrHandler>>,
 
     /// Timeout configuration for VR Fsms
     idle_timeout_ms: i64,
@@ -89,19 +89,19 @@ impl Dispatcher {
         self.tick_frequency = self.primary_tick_ms / 3;
     }
 
-    pub fn create_test_tenant(&mut self, raw_replicas: Vec<RawReplica>, fsm_type: FsmType) -> Uuid {
+    pub fn create_test_tenant(&mut self, raw_replicas: Vec<RawReplica>) -> Uuid {
         let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
-        self.create_tenant_(tenant, raw_replicas, fsm_type);
+        self.create_tenant_(tenant, raw_replicas);
         tenant
     }
 
-    pub fn create_tenant(&mut self, raw_replicas: Vec<RawReplica>, fsm_type: FsmType) -> Uuid {
+    pub fn create_tenant(&mut self, raw_replicas: Vec<RawReplica>) -> Uuid {
         let tenant = Uuid::new_v4();
-        self.create_tenant_(tenant, raw_replicas, fsm_type);
+        self.create_tenant_(tenant, raw_replicas);
         tenant
     }
 
-    fn create_tenant_(&mut self, tenant: Uuid, raw_replicas: Vec<RawReplica>, fsm_type: FsmType) {
+    fn create_tenant_(&mut self, tenant: Uuid, raw_replicas: Vec<RawReplica>) {
         let mut new_replicas = Vec::new();
         for r in raw_replicas {
             new_replicas.push(Replica::new(tenant.clone(), r));
@@ -112,12 +112,12 @@ impl Dispatcher {
         self.tenants.insert(tenant, (old_config.clone(), new_config.clone()));
         for r in new_config.replicas.iter().cloned() {
             if self.node == r.node {
-                self.register(r, new_config.clone(), fsm_type.clone());
+                self.register(r, new_config.clone());
             }
         }
     }
 
-    fn register(&mut self, replica: Replica, new_config: VersionedReplicas, fsm_type: FsmType) {
+    fn register(&mut self, replica: Replica, new_config: VersionedReplicas) {
        let mut ctx = VrCtx::new(replica.clone(),
                                 VersionedReplicas::new(),
                                 new_config,
@@ -127,10 +127,7 @@ impl Dispatcher {
                                 self.dispatch_sender.clone());
        ctx.idle_timeout_ms = self.idle_timeout_ms;
        ctx.primary_tick_ms = self.primary_tick_ms;
-       let mut fsm = match fsm_type {
-           FsmType::Local => Box::new(LocalFsm::<VrHandler>::new(ctx)) as Box<Fsm<VrHandler>>,
-           FsmType::Threaded => Box::new(ThreadedFsm::<VrHandler>::new(ctx)) as Box<Fsm<VrHandler>>
-       };
+       let fsm = Fsm::<VrHandler>::new(ctx);
        self.local_replicas.insert(replica, fsm);
     }
 
@@ -141,7 +138,7 @@ impl Dispatcher {
     }
 
     /// Should only be called outside this module during tests
-    pub fn restart(&mut self, replica: Replica, fsm_type: FsmType) {
+    pub fn restart(&mut self, replica: Replica) {
        if let Some(&(ref old_config, ref new_config)) = self.tenants.get(&replica.tenant) {
            let mut ctx = VrCtx::new(replica.clone(),
                                     old_config.clone(),
@@ -152,12 +149,9 @@ impl Dispatcher {
                                     self.dispatch_sender.clone());
            ctx.idle_timeout_ms = self.idle_timeout_ms;
            ctx.primary_tick_ms = self.primary_tick_ms;
-           let mut fsm = match fsm_type {
-               FsmType::Local => Box::new(LocalFsm::<VrHandler>::new(ctx)) as Box<Fsm<VrHandler>>,
-               FsmType::Threaded => Box::new(ThreadedFsm::<VrHandler>::new(ctx)) as Box<Fsm<VrHandler>>
-           };
+           let mut fsm = Fsm::<VrHandler>::new(ctx);
            // Send an initial tick to transition to proper state
-           (*fsm).send_msg(VrMsg::Tick);
+           fsm.send_msg(VrMsg::Tick);
            self.local_replicas.insert(replica, fsm);
        }
     }
@@ -212,8 +206,7 @@ impl Dispatcher {
                                                      self.dispatch_sender.clone());
                             ctx.idle_timeout_ms = self.idle_timeout_ms;
                             ctx.primary_tick_ms = self.primary_tick_ms;
-                            // TODO: Hmm we don't specify an fsm type. Just use local for now.
-                            let fsm = Box::new(LocalFsm::<VrHandler>::new(ctx)) as Box<Fsm<VrHandler>>;
+                            let fsm = Fsm::<VrHandler>::new(ctx);
                             self.local_replicas.insert(replica, fsm);
                         }
                     }
@@ -277,7 +270,7 @@ impl Dispatcher {
     pub fn dispatch_all_received_messages(&mut self) {
         loop {
             match self.try_recv() {
-                Ok(Envelope {to, msg}) => self.send(&to, msg),
+                Ok(Envelope {to, msg, ..}) => self.send(&to, msg),
                 Err(()) => break
             }
         }
@@ -289,5 +282,39 @@ impl Dispatcher {
     pub fn drop_all_client_replies(&self) {
         while let Ok(envelope) = self.client_reply_receiver.try_recv() {};
     }
+
+    #[cfg(debug_assertions)]
+    pub fn save_state(&self) -> DispatcherState {
+        let mut replica_states = HashMap::new();
+        for (replica, fsm) in self.local_replicas.iter() {
+            replica_states.insert(replica.clone(), fsm.clone());
+        }
+        DispatcherState {
+            node: self.node.clone(),
+            tenants: self.tenants.clone(),
+            local_replicas: replica_states
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn restore_state(&mut self, state: &DispatcherState) {
+        self.tenants = state.tenants.clone();
+        let mut local_replicas = HashMap::new();
+        for (replica, fsm) in state.local_replicas.iter() {
+            local_replicas.insert(replica.clone(), fsm.clone());
+        }
+        self.local_replicas = local_replicas;
+    }
+}
+
+/// This structure is used to save and restore dispatcher state during debugging
+/// Note that states are only stored/retrieved after all messages have been dispatched. Therefore
+/// there should be nothing left in the channels that requires saving.
+#[cfg(debug_assertions)]
+#[derive(Clone)]
+pub struct DispatcherState {
+    pub node: Member,
+    pub tenants: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>,
+    pub local_replicas: HashMap<Replica, Fsm<VrHandler>>
 }
 

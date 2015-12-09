@@ -104,9 +104,11 @@ impl Model {
                         if self.primary.is_none() {
                             // The restarted replica is the current primary. In this case the backups
                             // will start a view change when they see the recovery message
-                            if *replica == compute_primary(self.view, &self.replicas) {
+                            // TODO: FIXME FIXME UNCOMMENT - this is just to test shrinking
+/*                            if *replica == compute_primary(self.view, &self.replicas) {
                                 self.do_view_change();
                             }
+                            */
                             restarted.view = 0;
                             restarted.op = 0;
                             restarted.state = "recovery";
