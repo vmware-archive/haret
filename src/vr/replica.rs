@@ -1,15 +1,16 @@
 use std::cmp::{Ordering, PartialOrd};
+use rustc_serialize::Encodable;
 use membership::Member;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, RustcEncodable, RustcDecodable)]
 /// A replica not yet assigned a tenant
 pub struct RawReplica {
     pub name: String,
     pub node: Member
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, RustcEncodable, RustcDecodable)]
 pub struct Replica {
     pub tenant: Uuid,
     pub name: String,
@@ -46,7 +47,7 @@ impl Replica {
 /// When we create a tenant, the initial group of replicas is at epoch 1. When a reconfiguration
 /// occurs we bump the epoch so when we gossip the information around to start the fsms, we can
 /// chose the latest version.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct VersionedReplicas {
     pub epoch: u64,
     pub op: u64,

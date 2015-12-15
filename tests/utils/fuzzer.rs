@@ -62,15 +62,18 @@ macro_rules! fail {
 pub trait Test {
     type Msg: Clone+Debug+CausalMsg;
 
-    fn reset(&mut self);
+    // Mandatory functions
+    fn reset(&mut self, record: bool);
     fn gen_request(&mut self, n: u64) -> Self::Msg;
-    fn update_model(&mut self, request: Self::Msg);
-    fn drop_msg(&self, request: &Self::Msg) -> bool {
-        false
-    }
-    fn get_states(&self) -> Vec<String>;
-    fn get_model(&self) -> String;
     fn run(&mut self, Self::Msg) -> Result<(), String>;
+
+    // Optional functions
+    fn update_model(&mut self, request: Self::Msg) {}
+    fn drop_msg(&self, request: &Self::Msg) -> bool { false }
+    fn get_states(&self) -> Option<Vec<String>> { None }
+    fn get_model(&self) -> Option<String> { None }
+    // The schedule is most useful in a machine readable format
+    fn get_schedule(&self) -> Option<Vec<u8>> { None }
 }
 
 pub struct Fuzzer<T: Test> {
@@ -110,15 +113,22 @@ impl<T: Test> Fuzzer<T> {
                 Err(msg) => {
                     let dir_name = make_output_dir(&dir_root);
                     let summary = make_summary(i, msg);
-                    log("summary.txt", &dir_name, &summary);
+                    log("summary.txt", &dir_name, summary.as_bytes());
                     self.log_replica_states(&dir_name);
                     self.log_history(&dir_name);
-                    log("model.txt", &dir_name, &self.test.get_model());
+                    if let Some(model) = self.test.get_model() {
+                        log("model.txt", &dir_name, model.as_bytes());
+                    }
                     println!("{}", summary);
                     let shrink_msg = self.shrink();
-                    log("shrink.txt", &dir_name, &shrink_msg);
-                    log("shrink_replica_states.txt", &dir_name, &self.smallest_history_states);
-                    log("shrink_model.txt", &dir_name, &self.smallest_history_model);
+                    self.record_schedule();
+                    if let Some(schedule) = self.test.get_schedule() {
+                        log("schedule.txt", &dir_name, &schedule);
+                    }
+                    log("shrink.txt", &dir_name, shrink_msg.as_bytes());
+                    log("shrink_replica_states.txt", &dir_name,
+                        self.smallest_history_states.as_bytes());
+                    log("shrink_model.txt", &dir_name, self.smallest_history_model.as_bytes());
                     println!("{}", shrink_msg);
                     assert!(false);
                 }
@@ -190,7 +200,7 @@ impl<T: Test> Fuzzer<T> {
     fn try_candidate(&mut self, candidate: Vec<T::Msg>, causal_ids: Vec<Uuid>) -> bool {
         let mut actually_run = Vec::new();
         print!(".{}", candidate.len());
-        self.test.reset();
+        self.test.reset(false);
         for i in 0..candidate.len() {
             let msg = candidate[i].clone();
             let causal_id = msg.causal_id();
@@ -208,16 +218,31 @@ impl<T: Test> Fuzzer<T> {
                     self.smallest_history = actually_run;
                     self.smallest_history_msg = msg;
                     self.smallest_history_states = "".to_string();
-                    for s in self.test.get_states() {
-                        self.smallest_history_states.push_str("\n");
-                        self.smallest_history_states.push_str(&s);
+                    if let Some(states) = self.test.get_states() {
+                        for s in states {
+                            self.smallest_history_states.push_str("\n");
+                            self.smallest_history_states.push_str(&s);
+                        }
                     }
-                    self.smallest_history_model = self.test.get_model();
+                    if let Some(model) = self.test.get_model() {
+                        self.smallest_history_model = model;
+                    }
                     return true;
                 }
             }
         }
         false
+    }
+
+    /// After shrinking we re-run the failing history and tell the test to record every interesting
+    /// thing it deems necessary. This can later be retrieved by calling self.test.get_schedule();
+    fn record_schedule(&mut self) {
+        self.test.reset(true);
+        for i in 0..self.smallest_history.len() {
+            let msg = self.smallest_history[i].clone();
+            self.test.update_model(msg.clone());
+            self.test.run(msg);
+        }
     }
 
     fn causal_ids(&self, msgs: &[T::Msg]) -> Vec<Uuid> {
@@ -232,11 +257,13 @@ impl<T: Test> Fuzzer<T> {
     }
 
     fn log_replica_states(&self, dir_name: &Path) {
-        let mut file = File::create(dir_name.join("replica_states.txt")).unwrap();
-        file.write_all("Replica States: \n".as_bytes());
-        for s in self.test.get_states() {
-            file.write_all(s.as_bytes());
-            file.write_all("\n".as_bytes());
+        if let Some(states) = self.test.get_states() {
+            let mut file = File::create(dir_name.join("replica_states.txt")).unwrap();
+            file.write_all("Replica States: \n".as_bytes());
+            for s in states {
+                file.write_all(s.as_bytes());
+                file.write_all("\n".as_bytes());
+            }
         }
     }
 
@@ -251,9 +278,10 @@ fn make_summary(request_num: u64, msg: String) -> String {
     format!("Test failed on request_num {}\n{}\n", request_num, msg)
 }
 
-fn log(filename: &str, dir_name: &Path, data: &str) {
+fn log(filename: &str, dir_name: &Path, data: &[u8]) {
+    if data.len() == 0 { return; }
     let mut file = File::create(dir_name.join(filename)).unwrap();
-    file.write_all(data.as_bytes());
+    file.write_all(data);
 }
 
 fn make_output_dir(dir_root: &Path) -> PathBuf {
@@ -317,7 +345,7 @@ impl CausalMsg for u64 {
 impl Test for ShrinkTester {
     type Msg = u64;
 
-    fn reset(&mut self) {
+    fn reset(&mut self, _: bool) {
         self.count = 0;
     }
 
@@ -335,14 +363,6 @@ impl Test for ShrinkTester {
         if val == self.magic_num {
             self.count += 1;
         }
-    }
-
-    fn get_states(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn get_model(&self) -> String {
-        "".to_string()
     }
 
     fn run(&mut self, val: u64) -> Result<(), String> {

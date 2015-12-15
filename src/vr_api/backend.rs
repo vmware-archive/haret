@@ -12,7 +12,7 @@ pub struct Element {
     pub data: Vec<u8>
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VrBackend {
     // only public for testing
     pub tree: BTreeMap<String, Element>,

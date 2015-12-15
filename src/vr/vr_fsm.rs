@@ -14,7 +14,7 @@ use rand::{thread_rng, Rng};
 pub const DEFAULT_IDLE_TIMEOUT_MS: i64 = 300;
 pub const DEFAULT_PRIMARY_TICK_MS: i64 = 75;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupState {
     InitialConfig,
     Recovery,
@@ -138,6 +138,7 @@ impl VrCtx {
     }
 }
 
+#[derive(Clone)]
 pub struct VrHandler;
 
 impl FsmHandler for VrHandler {
@@ -556,7 +557,7 @@ fn maybe_send_recovery_response(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandle
             commit_num: None,
             log: None
         };
-        ctx.sender.send(Envelope::new(from, response));
+        ctx.sender.send(Envelope::new(from, ctx.me.clone(), response));
     }
     next!(backup)
 }
@@ -572,7 +573,7 @@ fn send_primary_recovery_response(ctx: &mut VrCtx, msg: VrMsg) {
             commit_num: Some(ctx.commit_num),
             log: Some(ctx.log.clone())
         };
-        ctx.sender.send(Envelope::new(from, response));
+        ctx.sender.send(Envelope::new(from, ctx.me.clone(), response));
     }
 }
 
@@ -593,7 +594,7 @@ fn send_epoch_started(ctx: &mut VrCtx) {
     };
 
     for r in replicas_to_replace(ctx) {
-        ctx.sender.send(Envelope::new(r, msg.clone()));
+        ctx.sender.send(Envelope::new(r, ctx.me.clone(), msg.clone()));
     }
 }
 
@@ -616,7 +617,7 @@ fn send_new_state(ctx: &mut VrCtx, msg: VrMsg) {
             commit_num: ctx.commit_num,
             log_tail: log_tail
         };
-        ctx.sender.send(Envelope::new(from, new_state));
+        ctx.sender.send(Envelope::new(from, ctx.me.clone(), new_state));
     }
 }
 
@@ -762,11 +763,11 @@ fn send_to_random_replica(ctx: &VrCtx, msg: VrMsg, config: &VersionedReplicas) {
         let index = rng.gen_range(0, config.replicas.len());
         to = config.replicas[index].clone()
     }
-    ctx.sender.send(Envelope::new(to, msg));
+    ctx.sender.send(Envelope::new(to, ctx.me.clone(), msg));
 }
 
 fn send_to_primary(ctx: &VrCtx, msg: VrMsg) {
-    ctx.sender.send(Envelope::new(ctx.primary.as_ref().unwrap().clone(), msg));
+    ctx.sender.send(Envelope::new(ctx.primary.as_ref().unwrap().clone(), ctx.me.clone(), msg));
 }
 
 /// Handle a Reconfiguration request as the primary
@@ -1068,7 +1069,7 @@ fn maybe_send_do_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
             log: ctx.log.clone(),
             commit_num: ctx.commit_num
         };
-        ctx.sender.send(Envelope::new(primary, do_view_change));
+        ctx.sender.send(Envelope::new(primary, ctx.me.clone(), do_view_change));
     }
     next!(view_change)
 }
@@ -1134,12 +1135,12 @@ fn start_recovery(ctx: &mut VrCtx) -> StateFn<VrHandler> {
 fn broadcast_old_and_new(ctx: &VrCtx, msg: VrMsg) {
     for r in ctx.old_config.replicas.iter().cloned() {
         if ctx.me != r {
-            ctx.sender.send(Envelope::new(r, msg.clone()));
+            ctx.sender.send(Envelope::new(r, ctx.me.clone(), msg.clone()));
         }
     }
     for r in ctx.new_config.replicas.iter().cloned() {
         if ctx.me != r {
-            ctx.sender.send(Envelope::new(r, msg.clone()));
+            ctx.sender.send(Envelope::new(r, ctx.me.clone(), msg.clone()));
         }
     }
 }
@@ -1148,7 +1149,7 @@ fn broadcast_old_and_new(ctx: &VrCtx, msg: VrMsg) {
 fn broadcast(ctx: &VrCtx, msg: VrMsg) {
     for backup in ctx.new_config.replicas.iter().cloned() {
         if ctx.me != backup {
-            ctx.sender.send(Envelope::new(backup, msg.clone()));
+            ctx.sender.send(Envelope::new(backup, ctx.me.clone(), msg.clone()));
         }
     }
 }

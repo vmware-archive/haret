@@ -2,13 +2,14 @@
 /// actual VrMsg messages, since some messages (like VrMsg::Tick) can signal different things.
 
 use uuid::Uuid;
+use rustc_serialize::Encodable;
 use v2r2::vr::{VrMsg, Replica};
 
 pub trait CausalMsg {
     fn causal_id(&self) -> Option<Uuid>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable)]
 pub enum TestMsg {
     ClientRequest(VrMsg),
     Commit,
