@@ -2,7 +2,6 @@
 
 use v2r2::vr::{Dispatcher, Replica, RawReplica, VrMsg};
 use v2r2::Member;
-use fsm::FsmType;
 
 pub fn init_tenant() -> (Dispatcher, Vec<Replica>) {
     let node = Member {
@@ -18,7 +17,7 @@ pub fn init_tenant() -> (Dispatcher, Vec<Replica>) {
                             RawReplica {name: "r2".to_string(), node: node.clone()},
                             RawReplica {name: "r3".to_string(), node: node.clone()}];
 
-    let tenant = dispatcher.create_test_tenant(raw_replicas.clone(), FsmType::Local);
+    let tenant = dispatcher.create_test_tenant(raw_replicas.clone());
     (dispatcher, raw_replicas.iter().cloned().map(|r| Replica::new(tenant, r)).collect())
 }
 

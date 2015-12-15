@@ -14,7 +14,6 @@ use uuid::Uuid;
 use v2r2::vr::{Dispatcher, Replica, RawReplica, VrMsg, Envelope, ClientReplyEnvelope};
 use v2r2::vr_api::{ElementType, VrApiReq, VrApiRsp};
 use v2r2::Member;
-use fsm::FsmType;
 
 #[test]
 fn initial_view_change() {
@@ -119,7 +118,7 @@ fn recovery() {
     dispatcher.dispatch_all_received_messages();
 
     // Restart the old primary and check the status of the replicas
-    dispatcher.restart(primary.clone(), FsmType::Local);
+    dispatcher.restart(primary.clone());
     let (state, ctx) = dispatcher.get_state(primary).unwrap();
     assert_eq!(state, "recovery");
     assert_eq!(ctx.view, 0);
@@ -227,7 +226,7 @@ fn assert_new_epoch(replicas: &Vec<Replica>, dispatcher: &mut Dispatcher) {
 }
 
 fn dispatch_with_drop(dispatcher: &mut Dispatcher, drop_replica: &Replica) {
-    while let Ok(Envelope {to, msg}) = dispatcher.try_recv() {
+    while let Ok(Envelope {to, msg, ..}) = dispatcher.try_recv() {
         if to != *drop_replica {
             dispatcher.send(&to, msg);
         }
@@ -291,7 +290,7 @@ fn assert_commit_gets_sent(primary: &Replica, dispatcher: &mut Dispatcher, expec
 
     // Ensure the primary sends the commit to the 2 backups
     for _ in 0..2 {
-        let Envelope {to, msg} = dispatcher.try_recv().unwrap();
+        let Envelope {to, msg, ..} = dispatcher.try_recv().unwrap();
         let msg2 = msg.clone();
         if let VrMsg::Commit {view, commit_num, ..} = msg {
             assert_eq!(view, 1);
@@ -400,6 +399,6 @@ fn init_tenant() -> (Dispatcher, Vec<Replica>) {
                             RawReplica {name: "r2".to_string(), node: node.clone()},
                             RawReplica {name: "r3".to_string(), node: node.clone()}];
 
-    let tenant = dispatcher.create_tenant(raw_replicas.clone(), FsmType::Local);
+    let tenant = dispatcher.create_tenant(raw_replicas.clone());
     (dispatcher, raw_replicas.iter().cloned().map(|r| Replica::new(tenant, r)).collect())
 }

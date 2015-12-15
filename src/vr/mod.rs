@@ -6,10 +6,15 @@ pub mod messages;
 
 pub use self::vr_fsm::{
     VrCtx,
-    StartupState
+    StartupState,
+    VrHandler
 };
 
-pub use self::dispatcher::Dispatcher;
+pub use self::dispatcher::{
+    Dispatcher,
+    DispatcherState
+};
+
 pub use self::replica::{
     RawReplica,
     Replica
