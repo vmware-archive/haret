@@ -6,6 +6,7 @@ use fsm::Fsm;
 use membership::Member;
 use super::replica::{RawReplica, Replica, VersionedReplicas};
 use super::vr_fsm::{StartupState, VrCtx, VrHandler, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+use super::tenants::Tenants;
 use super::messages::*;
 
 /// Messages sent to the Dispatcher. They are sent to the local dispatcher from an FSM on the same
@@ -19,7 +20,7 @@ pub enum DispatchMsg {
 /// The Dispatcher is in charge of both starting VR FSMs and routing requests to them.
 pub struct Dispatcher {
     pub node: Member,
-    pub tenants: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>,
+    pub tenants: Tenants,
     pub local_replicas: HashMap<Replica, Fsm<VrHandler>>,
 
     /// Timeout configuration for VR Fsms
@@ -66,7 +67,7 @@ impl Dispatcher {
         let (dispatch_tx, dispatch_rx) = channel();
         Dispatcher {
             node: node,
-            tenants: HashMap::new(),
+            tenants: Tenants::new(),
             local_replicas: HashMap::new(),
             fsm_receiver: rx,
             fsm_sender: tx,
@@ -109,7 +110,7 @@ impl Dispatcher {
         new_replicas.sort();
         let old_config = VersionedReplicas::new();
         let new_config = VersionedReplicas {epoch: 1, op: 0, replicas: new_replicas};
-        self.tenants.insert(tenant, (old_config.clone(), new_config.clone()));
+        self.tenants.insert(tenant, old_config.clone(), new_config.clone());
         for r in new_config.replicas.iter().cloned() {
             if self.node == r.node {
                 self.register(r, new_config.clone());
@@ -139,7 +140,7 @@ impl Dispatcher {
 
     /// Should only be called outside this module during tests
     pub fn restart(&mut self, replica: Replica) {
-       if let Some(&(ref old_config, ref new_config)) = self.tenants.get(&replica.tenant) {
+       if let Some((old_config, new_config)) = self.tenants.get_config(&replica.tenant) {
            let mut ctx = VrCtx::new(replica.clone(),
                                     old_config.clone(),
                                     new_config.clone(),
@@ -183,38 +184,26 @@ impl Dispatcher {
     pub fn handle_dispatch_msg(&mut self, msg: DispatchMsg) {
         match msg {
             DispatchMsg::Reconfiguration {tenant, old_config, new_config} => {
-                if let Some(&mut(ref mut saved_old_config, ref mut saved_new_config)) =
-                    self.tenants.get_mut(&tenant) {
-
-                    // This is an old reconfig message
-                    if new_config.epoch <= saved_new_config.epoch {
-                        return;
-                    }
-                    let new_set = HashSet::<Replica>::from_iter(new_config.replicas.clone());
-                    // We want to use the actual running nodes here because we are trying to determine which
-                    // nodes to start locally
-                    let old_set = HashSet::<Replica>::from_iter(saved_new_config.replicas.clone());
-                    let to_start: Vec<Replica> = new_set.difference(&old_set).cloned().collect();
-                    *saved_old_config = old_config;
-                    *saved_new_config = new_config;
-                    for replica in to_start {
-                        if self.node == replica.node {
-                            let mut ctx = VrCtx::new(replica.clone(),
-                                                     saved_old_config.clone(),
-                                                     saved_new_config.clone(),
-                                                     StartupState::Reconfiguration,
-                                                     self.fsm_sender.clone(),
-                                                     self.client_reply_sender.clone(),
-                                                     self.dispatch_sender.clone());
-                            ctx.idle_timeout_ms = self.idle_timeout_ms;
-                            ctx.primary_tick_ms = self.primary_tick_ms;
-                            let fsm = Fsm::<VrHandler>::new(ctx);
-                            self.local_replicas.insert(replica, fsm);
-                        }
+                let to_start = self.tenants.reconfigure(&tenant,
+                                                        old_config.clone(),
+                                                        new_config.clone());
+                for replica in to_start {
+                    if self.node == replica.node {
+                        let mut ctx = VrCtx::new(replica.clone(),
+                                                 old_config.clone(),
+                                                 new_config.clone(),
+                                                 StartupState::Reconfiguration,
+                                                 self.fsm_sender.clone(),
+                                                 self.client_reply_sender.clone(),
+                                                 self.dispatch_sender.clone());
+                        ctx.idle_timeout_ms = self.idle_timeout_ms;
+                        ctx.primary_tick_ms = self.primary_tick_ms;
+                        let fsm = Fsm::<VrHandler>::new(ctx);
+                        self.local_replicas.insert(replica, fsm);
                     }
                 }
-            // TODO: We need to gossip this message around to the other node's dispatchers so that they
-            // can start their own new local replicas and reconfigure their state.
+            // TODO: We need to gossip this message around to the other node's dispatchers so that
+            // they can start their own new local replicas and reconfigure their state.
             },
             DispatchMsg::Stop(replica) => self.stop(&replica)
         }
@@ -316,7 +305,7 @@ impl Dispatcher {
 #[derive(Clone)]
 pub struct DispatcherState {
     pub node: Member,
-    pub tenants: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>,
+    pub tenants: Tenants,
     pub local_replicas: HashMap<Replica, Fsm<VrHandler>>
 }
 
