@@ -8,8 +8,7 @@ use std::io::{Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
 use v2r2::resp::{Writer, Reader, Format};
-use v2r2::vr_api::{Req, Rsp};
-use v2r2::element::{Version, ElementType};
+use v2r2::vr_api::{ElementType, VrApiReq, VrApiRsp};
 
 fn main() {
     let mut args = env::args();
@@ -64,7 +63,7 @@ fn prompt() {
     stdout.flush().unwrap();
 }
 
-fn parse(command: &str) -> Result<Req> {
+fn parse(command: &str) -> Result<VrApiReq> {
     let mut iter = command.split_whitespace();
     match iter.next() {
         Some("create") => parse_create(&mut iter),
@@ -77,14 +76,14 @@ fn parse(command: &str) -> Result<Req> {
     }
 }
 
-fn parse_create(iter: &mut SplitWhitespace) -> Result<Req> {
+fn parse_create(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     match iter.next() {
         Some(str_type) => match ElementType::from_str(str_type) {
             Ok(ty) => {
                 let args: Vec<_> = iter.collect();
                 if args.len() != 1 { return Err(help()); }
                 let path = args[0].to_string();
-                Ok(Req::Create {path: path, ty: ty})
+                Ok(VrApiReq::Create {path: path, ty: ty})
             },
             Err(_) => Err(help())
         },
@@ -92,72 +91,72 @@ fn parse_create(iter: &mut SplitWhitespace) -> Result<Req> {
     }
 }
 
-fn parse_put(iter: &mut SplitWhitespace) -> Result<Req> {
+fn parse_put(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     let path = try!(iter.next().ok_or(help()));
     let path = path.to_string();
     let data = try!(iter.next().ok_or(help()));
     let data = data.bytes().collect();
     match iter.next() {
         Some(str_tag) => {
-            match Version::from_str(str_tag) {
-                Ok(tag) => Ok(Req::Put {path: path, data: data, cas_tag: Some(tag)}),
+            match u64::from_str(str_tag) {
+                Ok(tag) => Ok(VrApiReq::Put {path: path, data: data, cas_tag: Some(tag)}),
                 Err(_) => {
-                    println!("Invalid Version for CAS. Must be of format Epoch:VSN:LSN");
+                    println!("Invalid Version for CAS. Must be an integer");
                     Err(help())
                 }
             }
         },
-        None => Ok(Req::Put {path: path, data: data, cas_tag: None})
+        None => Ok(VrApiReq::Put {path: path, data: data, cas_tag: None})
     }
 }
 
-fn parse_delete(iter: &mut SplitWhitespace) -> Result<Req> {
+fn parse_delete(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     let path = try!(iter.next().ok_or(help()));
     let path = path.to_string();
     match iter.next() {
         Some(str_tag) => {
-            match Version::from_str(str_tag) {
-                Ok(tag) => Ok(Req::Delete {path: path, cas_tag: Some(tag)}),
+            match u64::from_str(str_tag) {
+                Ok(tag) => Ok(VrApiReq::Delete {path: path, cas_tag: Some(tag)}),
                 Err(_) => {
-                    println!("Invalid Version for CAS. Must be of format Epoch:VSN:LSN");
+                    println!("Invalid Version for CAS. Must be an integer");
                     Err(help())
                 }
             }
         },
-        None => Ok(Req::Delete {path: path, cas_tag: None})
+        None => Ok(VrApiReq::Delete {path: path, cas_tag: None})
     }
 }
 
-fn parse_get(iter: &mut SplitWhitespace) -> Result<Req> {
+fn parse_get(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     let path = try!(iter.next().ok_or(help()));
     let path = path.to_string();
     let rv = match iter.next() {
-        Some("cas") => Ok(Req::Get {path: path, cas: true}),
+        Some("cas") => Ok(VrApiReq::Get {path: path, cas: true}),
         Some(_) => Err(help()),
-        None => Ok(Req::Get {path: path, cas: false})
+        None => Ok(VrApiReq::Get {path: path, cas: false})
     };
     if iter.count() != 0 { return Err(help()); }
     rv
 }
 
-fn parse_list(iter: &mut SplitWhitespace) -> Result<Req> {
+fn parse_list(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     let path = try!(iter.next().ok_or(help()));
     let path = path.to_string();
     if iter.count() != 0 { return Err(help()); }
-    Ok(Req::List {path: path})
+    Ok(VrApiReq::List {path: path})
 }
 
-fn exec(msg: Req, sock: &mut TcpStream) -> Result<String> {
+fn exec(msg: VrApiReq, sock: &mut TcpStream) -> Result<String> {
     let mut writer = Writer::new();
     writer.format(msg);
     try!(writer.write(sock));
-    let mut reader = Reader::<Rsp>::new();
+    let mut reader = Reader::<VrApiRsp>::new();
     loop {
         match reader.read(sock) {
             Ok(Some(response)) => {
                 return match response {
-                    Rsp::Ok => Ok("ok".to_string()),
-                    Rsp::Element {data, cas_tag} => {
+                    VrApiRsp::Ok => Ok("ok".to_string()),
+                    VrApiRsp::Element {data, cas_tag} => {
                         // TODO: The data may not always be utf8
                         let string = String::from_utf8(data).unwrap();
                         match cas_tag {
@@ -167,14 +166,21 @@ fn exec(msg: Req, sock: &mut TcpStream) -> Result<String> {
                             None => Ok(string)
                         }
                     },
-                    Rsp::KeyList {keys} => {
+                    VrApiRsp::KeyList {keys} => {
                         Ok(keys.iter().fold(String::new(), |mut acc, k| {
                             acc.push_str(k);
                             acc.push_str("\n");
                             acc
                         }))
                     },
-                    Rsp::Error {msg: s} => Ok(s)
+                    VrApiRsp::ParentNotFoundError => Ok("Parent path not found".to_string()),
+                    VrApiRsp::ElementAlreadyExistsError => Ok("Element already exists".to_string()),
+                    VrApiRsp::ElementNotFoundError(path) =>
+                        Ok(format!("Element {} Not found", path)),
+                    VrApiRsp::CasFailedError {path, expected, actual} =>
+                        Ok(format!("CAS on {} failed. Expected: {}, Actual: {}",
+                                   path, expected, actual)),
+                    VrApiRsp::Error {msg: s} => Ok(s)
                 }
             },
             Ok(None) => (),

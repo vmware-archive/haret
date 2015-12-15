@@ -2,3 +2,4 @@ target
 dev
 *.swp
 *.pid
+tests/output

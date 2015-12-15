@@ -10,6 +10,10 @@ serde_json = "*"
 libc = "0.1"
 rustc-serialize = "*"
 time = "*"
+uuid = "0.1"
+rand = "*"
+
+fsm = { path = "/Users/andrewstone/fsm" }
 
 [dependencies.mio]
 git = "https://github.com/carllerche/mio.git"
@@ -19,4 +23,3 @@ git = "https://github.com/mneumann/rust-msgpack.git"
 
 [dev-dependencies]
 quickcheck = "*"
-rand = "*"

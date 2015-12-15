@@ -1,18 +1,17 @@
 use std::sync::mpsc::{Sender, Receiver};
 use mio::Token;
-use super::messages::{Req, Rsp};
-use element::Version; // TODO: should this be in it's own file?
+use super::messages::{VrApiReq, VrApiRsp};
 use super::backend::VrBackend;
 
 pub enum VrReq {
-    Write(Token, Req),
-    Read(Token, Req)
+    Write(Token, VrApiReq),
+    Read(Token, VrApiReq)
 }
 
-pub struct VrResp(pub Token, pub Rsp);
+pub struct VrResp(pub Token, pub VrApiRsp);
 
 pub struct MockVr {
-    version: Version,
+    op: u64,
     backend: VrBackend,
     tx: Sender<VrResp>,
     rx: Receiver<VrReq>
@@ -22,7 +21,7 @@ impl MockVr {
     pub fn new(tx: Sender<VrResp>, rx: Receiver<VrReq>) -> MockVr {
         MockVr {
             backend: VrBackend::new(),
-            version: Version::new(),
+            op: 0,
             tx: tx,
             rx: rx
         }
@@ -37,15 +36,14 @@ impl MockVr {
         }
     }
 
-    fn handle_write(&mut self, token: Token, msg: Req) {
-        let version = self.version.inc();
-        let resp = self.backend.call(version, msg);
+    fn handle_write(&mut self, token: Token, msg: VrApiReq) {
+        self.op += 1;
+        let resp = self.backend.call(self.op, msg);
         self.tx.send(VrResp(token, resp)).unwrap();
     }
 
-    fn handle_read(&mut self, token: Token, msg: Req) {
-        let version = self.version.clone();
-        let resp = self.backend.call(version, msg);
+    fn handle_read(&mut self, token: Token, msg: VrApiReq) {
+        let resp = self.backend.call(self.op, msg);
         self.tx.send(VrResp(token, resp)).unwrap();
     }
 }
