@@ -13,7 +13,7 @@ time = "*"
 uuid = "0.1"
 rand = "*"
 
-fsm = { path = "/Users/andrewstone/fsm" }
+fsm = { path = "../fsm" }
 
 [dependencies.mio]
 git = "https://github.com/carllerche/mio.git"
