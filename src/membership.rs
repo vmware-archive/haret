@@ -96,6 +96,7 @@ impl Members {
     }
 
     // TODO: Only allow adding member if it doesn't exist
+    #[allow(dead_code)]
     pub fn add(&mut self, element: Member) -> Result<()> {
         let mut orset = self.orset.write().unwrap();
         (*orset).add(element);

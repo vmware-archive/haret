@@ -2,7 +2,6 @@
 #![plugin(serde_macros)]
 #![feature(mpsc_select)]
 #![feature(btree_range, collections_bound)]
-#![feature(drain)]
 
 #[cfg(test)]
 extern crate quickcheck;

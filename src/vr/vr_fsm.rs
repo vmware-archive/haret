@@ -402,7 +402,7 @@ pub fn transitioning_to_replace(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandle
 
 /// This replica has already told the dispatcher to shut it down. It just waits in this state and
 /// doesn't respond to any messages from this point out.
-pub fn shutdown(ctx: &mut VrCtx, _: VrMsg) -> StateFn<VrHandler> {
+pub fn shutdown(_ctx: &mut VrCtx, _: VrMsg) -> StateFn<VrHandler> {
     next!(shutdown)
 }
 
@@ -468,7 +468,7 @@ pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
     check_epoch!(ctx, msg, state_transfer);
     check_view!(ctx, msg, state_transfer);
     match msg {
-        VrMsg::NewState {view, ..} => {
+        VrMsg::NewState {..} => {
             set_state(ctx, msg);
             next!(backup)
         },
@@ -487,7 +487,7 @@ fn reset_and_start_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
     start_view_change(ctx)
 }
 
-fn learn_config(ctx: &mut VrCtx, epoch: u64) -> StateFn<VrHandler> {
+fn learn_config(_ctx: &mut VrCtx, _epoch: u64) -> StateFn<VrHandler> {
     unimplemented!();
 }
 
@@ -495,7 +495,7 @@ fn learn_config(ctx: &mut VrCtx, epoch: u64) -> StateFn<VrHandler> {
 // only be a reconfig or client request in the log.
 fn rebroadcast_reconfig(ctx: &mut VrCtx) {
     let reconfig = ctx.log[(ctx.op - 1) as usize].clone();
-    if let VrMsg::Reconfiguration {client_id, client_req_num, replicas, ..} = reconfig {
+    if let VrMsg::Reconfiguration {client_id, client_req_num, ..} = reconfig {
         let prepare = VrMsg::Prepare {
             epoch: ctx.epoch,
             view: ctx.view,
@@ -906,7 +906,7 @@ fn primary_commit_known_committed_ops(ctx: &mut VrCtx, last_commit_num: u64) {
             ctx.client_table.insert(client_id.clone(), (request_num, Some(reply.clone())));
             send_client_reply(ctx, client_id, reply);
         }
-        if let VrMsg::Reconfiguration {client_id, client_req_num, epoch, replicas} = msg {
+        if let VrMsg::Reconfiguration {client_id, client_req_num, epoch, ..} = msg {
             let rsp = ctx.backend.call(i+1, VrApiReq::Null);
             let reply = VrMsg::ClientReply {
                 epoch: epoch,

@@ -71,7 +71,7 @@ impl VrBackend {
         Ok(VrApiRsp::KeyList {keys: keys})
     }
 
-    fn delete(&mut self, op: u64, path: String, cas_tag: Option<u64>)
+    fn delete(&mut self, _op: u64, path: String, cas_tag: Option<u64>)
         -> Result<VrApiRsp, VrApiRsp> {
 
         if let Some(element) = self.tree.remove(&path) {

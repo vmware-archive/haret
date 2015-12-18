@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::iter::FromIterator;
 use uuid::Uuid;
-use fsm::{Fsm, Msg, StateFn};
+use fsm::{Fsm, Msg};
 use membership::Member;
 use super::replica::{RawReplica, Replica, VersionedReplicas};
 use super::vr_fsm::{StartupState, VrCtx, VrHandler, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
@@ -176,7 +176,7 @@ impl Dispatcher {
         }
     }
 
-    pub fn send_remote(&mut self, to: &Replica, msg: Msg) {
+    pub fn send_remote(&mut self, _to: &Replica, _msg: Msg) {
         unimplemented!();
     }
 
@@ -187,7 +187,9 @@ impl Dispatcher {
                     self.tenants.get_mut(&tenant) {
 
                     // This is an old reconfig message
-                    if (new_config.epoch <= saved_new_config.epoch) { return; }
+                    if new_config.epoch <= saved_new_config.epoch { 
+                        return; 
+                    }
                     let new_set = HashSet::<Replica>::from_iter(new_config.replicas.clone());
                     // We want to use the actual running nodes here because we are trying to determine which
                     // nodes to start locally
@@ -280,7 +282,7 @@ impl Dispatcher {
     //  new primary replays any uncommitted client operations. This allows us to just drop them and
     // get a response to the latest client request.
     pub fn drop_all_client_replies(&self) {
-        while let Ok(envelope) = self.client_reply_receiver.try_recv() {};
+        while let Ok(_envelope) = self.client_reply_receiver.try_recv() {};
     }
 
     #[cfg(debug_assertions)]
