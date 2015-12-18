@@ -26,9 +26,9 @@ pub mod state;
 pub mod resp;
 pub mod vr_api;
 pub mod vr;
+pub mod orset;
 
 mod event;
-mod orset;
 mod tcphandler;
 mod membership;
 
