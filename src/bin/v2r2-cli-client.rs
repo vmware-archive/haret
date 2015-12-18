@@ -1,4 +1,6 @@
 extern crate v2r2;
+extern crate uuid;
+extern crate msgpack;
 
 use std::env;
 use std::env::Args;
@@ -7,40 +9,48 @@ use std::process::exit;
 use std::io::{Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
-use v2r2::resp::{Writer, Reader, Format};
-use v2r2::vr_api::{ElementType, VrApiReq, VrApiRsp};
+use uuid::Uuid;
+use v2r2::vr::{VrMsg, Replica, ElementType, VrApiReq, VrApiRsp, ClientEnvelope};
+use v2r2::vr::frame::{ReadState, WriteState};
+use msgpack::{Encoder, from_msgpack};
+
+// TODO: Don't hardcode this
+const CLIENT_ID: &'static str = "F378DC44-F58B-4A6D-AF63-C8791C44043C";
+
+static mut req_num: u64 = 0;
 
 fn main() {
     let mut args = env::args();
-    let addr = args.nth(1).unwrap();
+    let replica: Replica = args.nth(1).unwrap().parse().unwrap();
+    let addr = args.next().unwrap();
     let sock = TcpStream::connect(&addr[..]).unwrap();
     if let Some(flag) = args.next() {
-        run_script(&flag, args, sock);
+        run_script(&flag, args, sock, &replica);
     } else {
-        run_interactive(sock);
+        run_interactive(sock, &replica);
     }
 }
 
-fn run_interactive(mut sock: TcpStream) {
+fn run_interactive(mut sock: TcpStream, replica: &Replica) {
     loop {
         prompt();
         let mut command = String::new();
         io::stdin().read_line(&mut command).unwrap();
-        match run(&command, &mut sock) {
+        match run(&command, &mut sock, replica) {
             Ok(result) => println!("{}", result),
             Err(err) => println!("{}", err)
         }
     }
 }
 
-fn run_script(flag: &str, mut args: Args, mut sock: TcpStream) {
+fn run_script(flag: &str, mut args: Args, mut sock: TcpStream, replica: &Replica) {
     if flag != "-e" {
         println!("Invalid Flag");
         println!("{}", help());
         exit(-1);
     }
     let command = args.next().unwrap_or(String::new());
-    match run(&command, &mut sock) {
+    match run(&command, &mut sock, replica) {
         Ok(result) => {
             println!("{}", result);
             exit(0);
@@ -52,9 +62,9 @@ fn run_script(flag: &str, mut args: Args, mut sock: TcpStream) {
     }
 }
 
-fn run(command: &str, sock: &mut TcpStream) -> Result<String> {
+fn run(command: &str, sock: &mut TcpStream, replica: &Replica) -> Result<String> {
     let req = try!(parse(&command));
-    exec(req, sock)
+    exec(req, sock, replica)
 }
 
 fn prompt() {
@@ -146,45 +156,76 @@ fn parse_list(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     Ok(VrApiReq::List {path: path})
 }
 
-fn exec(msg: VrApiReq, sock: &mut TcpStream) -> Result<String> {
-    let mut writer = Writer::new();
-    writer.format(msg);
-    try!(writer.write(sock));
-    let mut reader = Reader::<VrApiRsp>::new();
+fn exec(msg: VrApiReq, sock: &mut TcpStream, replica: &Replica) -> Result<String> {
+    unsafe {
+        req_num += 1;
+    }
+
+    let req = VrMsg::ClientRequest {
+        op: msg,
+        client_id: Uuid::parse_str(CLIENT_ID).unwrap(),
+        request_num: unsafe { req_num }
+    };
+
+    let envelope = ClientEnvelope {
+        to: replica.clone(),
+        msg: req
+    };
+
+    let mut writer = WriteState::new();
+    writer = writer.push(Encoder::to_msgpack(&envelope).unwrap());
+    loop {
+        if let Ok((more_to_write, new_writer)) = writer.write(sock) {
+            if !more_to_write { break; }
+            writer = new_writer;
+        } else {
+            return Err(Error::new(ErrorKind::Other, "Failed to send request to server"))
+        }
+    }
+
+    let mut reader = ReadState::new();
     loop {
         match reader.read(sock) {
-            Ok(Some(response)) => {
-                return match response {
-                    VrApiRsp::Ok => Ok("ok".to_string()),
-                    VrApiRsp::Element {data, cas_tag} => {
-                        // TODO: The data may not always be utf8
-                        let string = String::from_utf8(data).unwrap();
-                        match cas_tag {
-                            Some(tag) => {
-                                Ok(format!("CAS: {}\n{}", tag.to_string(), string))
-                            },
-                            None => Ok(string)
-                        }
-                    },
-                    VrApiRsp::KeyList {keys} => {
-                        Ok(keys.iter().fold(String::new(), |mut acc, k| {
-                            acc.push_str(k);
-                            acc.push_str("\n");
-                            acc
-                        }))
-                    },
-                    VrApiRsp::ParentNotFoundError => Ok("Parent path not found".to_string()),
-                    VrApiRsp::ElementAlreadyExistsError => Ok("Element already exists".to_string()),
-                    VrApiRsp::ElementNotFoundError(path) =>
-                        Ok(format!("Element {} Not found", path)),
-                    VrApiRsp::CasFailedError {path, expected, actual} =>
-                        Ok(format!("CAS on {} failed. Expected: {}, Actual: {}",
-                                   path, expected, actual)),
-                    VrApiRsp::Error {msg: s} => Ok(s)
+            (_, Ok(Some(data))) => {
+                if let VrMsg::ClientReply {value, ..} = from_msgpack(&data).unwrap() {
+                    return match value{
+                        VrApiRsp::Ok => Ok("ok".to_string()),
+                        VrApiRsp::Timeout => Ok("Timeout".to_string()),
+                        VrApiRsp::Element {data, cas_tag} => {
+                            // TODO: The data may not always be utf8
+                            let string = String::from_utf8(data).unwrap();
+                            match cas_tag {
+                                Some(tag) => {
+                                    Ok(format!("CAS: {}\n{}", tag.to_string(), string))
+                                },
+                                None => Ok(string)
+                            }
+                        },
+                        VrApiRsp::KeyList {keys} => {
+                            Ok(keys.iter().fold(String::new(), |mut acc, k| {
+                                acc.push_str(k);
+                                acc.push_str("\n");
+                                acc
+                            }))
+                        },
+                        VrApiRsp::ParentNotFoundError => Ok("Parent path not found".to_string()),
+                        VrApiRsp::ElementAlreadyExistsError => Ok("Element already exists".to_string()),
+                        VrApiRsp::ElementNotFoundError(path) =>
+                            Ok(format!("Element {} Not found", path)),
+                        VrApiRsp::CasFailedError {path, expected, actual} =>
+                            Ok(format!("CAS on {} failed. Expected: {}, Actual: {}",
+                                       path, expected, actual)),
+                        VrApiRsp::Error {msg: s} => Ok(s)
+                    }
+                } else {
+                    unreachable!()
                 }
             },
-            Ok(None) => (),
-            Err(e) => return Err(e)
+            (new_reader, Ok(None)) =>  {
+                reader = new_reader;
+            },
+            (_, Err(_)) =>
+                return Err(Error::new(ErrorKind::Other, "Failed to read response from server"))
         }
     }
 }

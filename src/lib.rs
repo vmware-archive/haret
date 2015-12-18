@@ -3,6 +3,7 @@
 #![feature(mpsc_select)]
 #![feature(btree_range, collections_bound)]
 
+// Crates we don't manage
 extern crate rand;
 extern crate libc;
 extern crate serde;
@@ -12,6 +13,9 @@ extern crate msgpack;
 extern crate rustc_serialize;
 extern crate time;
 extern crate uuid;
+extern crate stats;
+
+// Crates we manage
 #[macro_use]
 extern crate fsm;
 extern crate orset;
@@ -22,11 +26,13 @@ pub mod admin;
 pub mod cluster;
 pub mod state;
 pub mod resp;
-pub mod vr_api;
 pub mod vr;
 
 mod event;
 mod tcphandler;
 mod membership;
+mod debug_sender;
+mod timer_wheel;
+mod requests;
 
 pub use self::membership::Member;

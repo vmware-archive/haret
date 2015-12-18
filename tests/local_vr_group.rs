@@ -12,8 +12,8 @@ extern crate fsm;
 
 use uuid::Uuid;
 use v2r2::vr::{Dispatcher, Replica, RawReplica, VrMsg, Envelope, ClientReplyEnvelope};
-use v2r2::vr_api::{ElementType, VrApiReq, VrApiRsp};
-use v2r2::Member;
+use v2r2::vr::{ElementType, VrApiReq, VrApiRsp};
+use v2r2::state::State;
 
 #[test]
 fn initial_view_change() {
@@ -55,10 +55,6 @@ fn basic_ops() {
     // Force a tick timeout at a backup and result in a view change
     assert_second_view_change(&replicas, &mut dispatcher);
 
-    // Ensure we can get the last committed value from the new primary
-    // We don't even need to dispatch received messages since this should be served directly from
-    // the primary, since it's the last committed request.
-    assert_new_primary_returns_last_committed_result(&replicas[2], &client_id, &mut dispatcher);
 }
 
 #[test]
@@ -152,14 +148,9 @@ fn reconfiguration() {
 
     assert_eq!(dispatcher.local_replicas.len(), 3);
 
-    let node = Member {
-        name: "node1".to_string(),
-        cluster: "test".to_string(),
-        ip: "127.0.0.1:5000".to_string()
-    };
     let new_replica = Replica {tenant: replicas[0].tenant.clone(),
                                name: "r4".to_string(),
-                               node: node.clone() };
+                               node: dispatcher.node.clone() };
     replicas.push(new_replica);
     let client_id = Uuid::new_v4();
     let msg = VrMsg::Reconfiguration{client_id: client_id,
@@ -230,32 +221,6 @@ fn dispatch_with_drop(dispatcher: &mut Dispatcher, drop_replica: &Replica) {
         if to != *drop_replica {
             dispatcher.send(&to, msg);
         }
-    }
-}
-
-fn assert_new_primary_returns_last_committed_result(primary: &Replica,
-                                                    client_id: &Uuid,
-                                                    dispatcher: &mut Dispatcher) {
-    let get_op = VrApiReq::Get { path: "/test_root".to_string(), cas: false };
-    let get_msg = VrMsg::ClientRequest {op: get_op, client_id: client_id.clone(), request_num: 3};
-    dispatcher.send(primary, get_msg);
-
-    // Ensure we get back the correct response. Note that since we didn't call
-    // dispatcher.dispatch_all_received_messsages() we ensure that this response was stored in the
-    // client table and sent directly from the primary without contacting other replicas.
-    let ClientReplyEnvelope{to, msg} = dispatcher.try_recv_client_reply().unwrap();
-    assert_eq!(to, *client_id);
-    if let VrMsg::ClientReply{epoch, view, request_num, value} = msg {
-        assert_eq!(epoch, 1);
-        assert_eq!(view, 2);
-        assert_eq!(request_num, 3);
-        if let VrApiRsp::Element {data, ..} = value {
-            assert_eq!(data, b"hello".to_vec());
-        } else {
-            assert!(false);
-        }
-    } else {
-        assert!(false);
     }
 }
 
@@ -386,12 +351,9 @@ fn elect_initial_leader(dispatcher: &mut Dispatcher, replicas: &Vec<Replica>) {
 
 
 fn init_tenant() -> (Dispatcher, Vec<Replica>) {
-    let node = Member {
-        name: "node1".to_string(),
-        cluster: "test".to_string(),
-        ip: "127.0.0.1:5000".to_string()
-    };
-    let mut dispatcher = Dispatcher::new(node.clone());
+    let state = State::new();
+    let node = state.members.me.clone();
+    let mut dispatcher = Dispatcher::new(&state);
     // Set the timeouts to zero to preclude the need for sleeps
     dispatcher.set_idle_timeout_ms(0);
 

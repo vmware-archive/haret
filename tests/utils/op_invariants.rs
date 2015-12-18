@@ -3,8 +3,7 @@
 
 use uuid::Uuid;
 use std::path::Path;
-use v2r2::vr::{Dispatcher, Replica, VrMsg, VrCtx, ClientReplyEnvelope};
-use v2r2::vr_api::{VrApiReq, VrApiRsp};
+use v2r2::vr::{Dispatcher, Replica, VrMsg, VrCtx, ClientReplyEnvelope, VrApiReq, VrApiRsp};
 
 pub fn assert_create_response(replicas: &Vec<Replica>,
                               dispatcher: &Dispatcher,

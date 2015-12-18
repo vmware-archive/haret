@@ -1,12 +1,13 @@
 use uuid::Uuid;
 use rustc_serialize::Encodable;
 use super::replica::{Replica, VersionedReplicas};
-use vr_api::{VrApiReq, VrApiRsp};
+use super::ElementType;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum VrMsg {
     /// A message that drives the state of the fsm during periods of inactivity
     Tick,
+    SessionClosed(Uuid),
     ClientRequest {
         /// The opaque api operation
         op: VrApiReq,
@@ -71,6 +72,7 @@ pub enum VrMsg {
         epoch: u64,
         view: u64,
         op: u64,
+        primary: Option<Replica>,
         commit_num: u64,
         log_tail: Vec<VrMsg>,
     },
@@ -106,7 +108,7 @@ pub enum VrMsg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Envelope {
     pub to: Replica,
     pub from: Replica,
@@ -123,7 +125,7 @@ impl Envelope {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct ClientReplyEnvelope {
     pub to: Uuid,
     pub msg: VrMsg
@@ -136,4 +138,49 @@ impl ClientReplyEnvelope {
             msg: msg
         }
     }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+pub struct ClientEnvelope {
+    pub to: Replica,
+
+    // Note that VrMsg's that aren't of the ClientRequest variety will be dropped on receipt and the
+    // connection closed.
+    pub msg: VrMsg
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+pub enum VrApiReq {
+    Create {path: String, ty: ElementType},
+    Put {path: String, data: Vec<u8>, cas_tag: Option<u64>},
+    Get {path: String, cas: bool},
+    Delete {path: String, cas_tag: Option<u64>},
+    List {path: String},
+    Null // used during reconfiguration
+}
+
+impl VrApiReq {
+    pub fn get_path(&self) -> String {
+        match *self {
+            VrApiReq::Create {ref path, ..} => path.clone(),
+            VrApiReq::Put {ref path, ..} => path.clone(),
+            VrApiReq::Get {ref path, ..} => path.clone(),
+            VrApiReq::Delete {ref path, ..} => path.clone(),
+            VrApiReq::List {ref path, ..} => path.clone(),
+            VrApiReq::Null => unreachable!()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+pub enum VrApiRsp {
+    Element {data: Vec<u8>, cas_tag: Option<u64>},
+    KeyList {keys: Vec<String>},
+    Ok,
+    Error {msg: String},
+    Timeout,
+    ParentNotFoundError,
+    ElementAlreadyExistsError,
+    ElementNotFoundError(String),
+    CasFailedError {path: String, expected: u64, actual: u64},
 }

@@ -3,9 +3,9 @@ use std::iter::FromIterator;
 use uuid::Uuid;
 use super::replica::{Replica, VersionedReplicas};
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Tenants {
-    map: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>
+    pub map: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>
 }
 
 impl Tenants {
@@ -17,6 +17,10 @@ impl Tenants {
 
     pub fn insert(&mut self, tenant: Uuid, old: VersionedReplicas, new: VersionedReplicas) {
         self.map.insert(tenant, (old, new));
+    }
+
+    pub fn exists(&self, tenant: &Uuid) -> bool {
+        self.map.contains_key(tenant)
     }
 
     pub fn get_config(&self, tenant: &Uuid) -> Option<(VersionedReplicas, VersionedReplicas)> {
@@ -36,7 +40,7 @@ impl Tenants {
             self.map.get_mut(&tenant)
         {
             // This is an old reconfig message, nothing to start
-            if (new.epoch <= saved_new_config.epoch) { return Vec::new() }
+            if new.epoch <= saved_new_config.epoch { return Vec::new() }
             let new_set = HashSet::<Replica>::from_iter(new.replicas.clone());
             // We want to use the actual running nodes here because we are trying to determine which
             // nodes to start locally

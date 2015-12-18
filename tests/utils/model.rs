@@ -8,8 +8,7 @@ use std::collections::{HashMap};
 use rand::{thread_rng};
 use rand::distributions::{IndependentSample, Range};
 use uuid::Uuid;
-use v2r2::vr::{Dispatcher, Replica, VrMsg};
-use v2r2::vr_api::{VrBackend, VrApiReq};
+use v2r2::vr::{Dispatcher, Replica, VrMsg, VrBackend, VrApiReq};
 use super::TestMsg;
 
 #[derive(Debug, Clone)]
@@ -104,11 +103,9 @@ impl Model {
                         if self.primary.is_none() {
                             // The restarted replica is the current primary. In this case the backups
                             // will start a view change when they see the recovery message
-                            // TODO: FIXME FIXME UNCOMMENT - this is just to test shrinking
-/*                            if *replica == compute_primary(self.view, &self.replicas) {
+                            if *replica == compute_primary(self.view, &self.replicas) {
                                 self.do_view_change();
                             }
-                            */
                             restarted.view = 0;
                             restarted.op = 0;
                             restarted.state = "recovery";

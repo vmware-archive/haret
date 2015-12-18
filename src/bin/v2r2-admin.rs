@@ -1,14 +1,18 @@
 extern crate v2r2;
+extern crate uuid;
+extern crate msgpack;
 
 use std::env;
 use std::env::Args;
 use std::io;
 use std::process::exit;
 use std::io::{Result, Error, ErrorKind, Write};
-use std::str::SplitWhitespace;
+use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
-use v2r2::resp::{Writer, Reader, Format};
-use v2r2::admin::{Req, Res, Msg};
+use v2r2::admin::{AdminClientReq, AdminClientRpy};
+use v2r2::vr::frame::{ReadState, WriteState};
+use v2r2::vr::{Replica};
+use msgpack::{Encoder, from_msgpack};
 
 fn main() {
     let mut args = env::args();
@@ -69,76 +73,142 @@ fn prompt() {
     stdout.flush().unwrap();
 }
 
-fn parse(command: &str) -> Result<Req> {
+fn parse(command: &str) -> Result<AdminClientReq> {
     let mut iter = command.split_whitespace();
     match iter.next() {
         Some("config") => parse_config(&mut iter),
         Some("cluster") => parse_cluster(&mut iter),
+        Some("vr") => parse_vr(&mut iter),
         Some(_) => Err(help()),
         None => Err(help())
     }
 }
 
-fn parse_config(iter: &mut SplitWhitespace) -> Result<Req> {
+fn parse_config(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
     match iter.next() {
         Some("set") => {
             let args: Vec<_> = iter.collect();
             if args.len() != 2 { return Err(help()); }
             let key = args[0].to_string();
             let val = args[1].to_string();
-            Ok(Req::ConfigSet(key, val))
+            Ok(AdminClientReq::ConfigSet(key, val))
         },
         Some("get") => {
             let args: Vec<_> = iter.collect();
             if args.len() != 1 { return Err(help()); }
             let key = args[0].to_string();
-            Ok(Req::ConfigGet(key))
+            Ok(AdminClientReq::ConfigGet(key))
         },
         Some(_) => Err(help()),
         None => Err(help())
     }
 }
 
-fn parse_cluster(iter: &mut SplitWhitespace) -> Result<Req> {
+fn parse_cluster(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
     match iter.next() {
         Some("join") => {
             let args: Vec<_> = iter.collect();
             if args.len() != 1 { return Err(help()); }
             let ipstr = args[0].to_string();
-            Ok(Req::ClusterJoin(ipstr))
+            Ok(AdminClientReq::ClusterJoin(ipstr))
         },
         Some("members") => {
             if iter.count() != 0 { return Err(help()); }
-            Ok(Req::ClusterMembers)
+            Ok(AdminClientReq::ClusterMembers)
         },
         Some("status") => {
             if iter.count() != 0 { return Err(help()); }
-            Ok(Req::ClusterStatus)
+            Ok(AdminClientReq::ClusterStatus)
         },
         Some(_) => Err(help()),
         None => Err(help())
     }
 }
 
-fn exec(req: Req, sock: &mut TcpStream) -> Result<String> {
-    let mut writer = Writer::new();
-    writer.format(Msg::Req(req));
-    try!(writer.write(sock));
-    let mut reader = Reader::<Msg>::new();
-    match reader.read(sock) {
-        Ok(Some(Msg::Res(response))) => {
-            match response {
-                Res::Ok => Ok("ok".to_string()),
-                Res::Simple(s) => Ok(s),
-                Res::Err(s) => Ok(s)
+fn parse_vr(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+    match iter.next() {
+        Some("create") => parse_vr_create(iter),
+        Some("tenants") => Ok(AdminClientReq::VrTenants),
+        Some("replica") => parse_vr_replica(iter),
+        Some("stats") => Ok(AdminClientReq::VrStats),
+        _ => Err(help())
+    }
+}
+
+fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+    match iter.next() {
+        Some(string) => {
+            match Replica::from_str(&string) {
+                Ok(replica) => Ok(AdminClientReq::VrReplica(replica)),
+                Err(_) => {
+                    println!("Error: Couldn't parse replica");
+                    Err(help())
+                }
             }
         },
-        Ok(_) => {
-            // We shouldn't ever get here since we are using blocking sockets
-            Err(Error::new(ErrorKind::InvalidData, "Failed to read response from server"))
-        },
-        Err(e) => Err(e)
+        None => Err(help())
     }
+}
+
+fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+    match iter.next() {
+        Some("tenant") => {
+            let args: Vec<&str> = iter.collect();
+            if args.len() != 1 {
+                println!("No spaces allowed in RawReplica list");
+                return Err(help());
+            }
+            Ok(AdminClientReq::VrCreateTenant(args[0].to_string()))
+        },
+        _ => Err(help())
+    }
+}
+
+fn exec(req: AdminClientReq, sock: &mut TcpStream) -> Result<String> {
+    let mut writer = WriteState::new();
+    writer = writer.push(Encoder::to_msgpack(&req).unwrap());
+    loop {
+        if let Ok((more_to_write, new_writer)) = writer.write(sock) {
+            if !more_to_write { break; }
+            writer = new_writer;
+        } else {
+            return Err(Error::new(ErrorKind::Other, "Failed to send request to server"))
+        }
+    }
+
+    let mut reader = ReadState::new();
+    loop {
+        match reader.read(sock) {
+            (_, Ok(Some(data))) => {
+                let reply = match from_msgpack(&data).unwrap() {
+                    AdminClientRpy::Ok => Ok("ok".to_string()),
+                    AdminClientRpy::Error(string) => Err(Error::new(ErrorKind::Other, &string[..])),
+                    AdminClientRpy::Timeout => Ok("timeout".to_string()),
+                    AdminClientRpy::Config(_, val) => Ok(val),
+                    AdminClientRpy::Members(string) => Ok(string),
+                    AdminClientRpy::MemberStatus(status) => Ok(status),
+                    AdminClientRpy::VrTenantId(uuid) => Ok(uuid.to_string()),
+                    AdminClientRpy::VrTenants(tenants) => Ok(format!("{:#?}", tenants)),
+                    AdminClientRpy::VrReplica(state, ctx) => Ok(format_replica_state(state, ctx)),
+                    AdminClientRpy::VrStats(stats) => Ok(stats)
+                };
+                return reply;
+            },
+            (new_reader, Ok(None)) =>  {
+                reader = new_reader;
+            },
+            (_, Err(_)) =>
+                return Err(Error::new(ErrorKind::Other, "Failed to read response from server"))
+        }
+    }
+}
+
+fn format_replica_state(state: String, ctx: String) -> String {
+    let mut s = "state: ".to_string();
+    s.push_str(&state);
+    s.push_str("\n");
+    s.push_str(&ctx);
+    s
 }
 
 fn help() -> Error {
@@ -148,9 +218,13 @@ fn help() -> Error {
     Commands:
         config set <Key> <Val>
         config get <Key>
-        cluster join <ip:port>
+        cluster join <Ip:Port>
         cluster members
         cluster status
+        vr create tenant <RawReplica1,RawReplica2,..,RawReplicaN>
+        vr tenants
+        vr replica <Replica>
+        vr stats
 
     Flags:
         -e <Command>   Non-interactive mode
@@ -160,6 +234,12 @@ fn help() -> Error {
         cluster        The name of the cluster the node is a member of
         cluster-host   The ip:port of the cluster server listener
         admin-host     The ip:port of the admin server listener
+        vr-host        The ip:port of the viewstamped replication protocol server
+
+    Argument formats:
+        Uuid           see: https://doc.rust-lang.org/uuid/uuid/index.html
+        RawReplica     replica_name::node_name
+        Replica        tenant_uuid::replica_name::node_name
 
     Examples:
         Get the name of the current node in non-interactive mode:

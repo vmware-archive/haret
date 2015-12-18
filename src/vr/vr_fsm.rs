@@ -1,18 +1,18 @@
 use std::collections::{HashMap, BTreeMap, HashSet};
 use std::sync::mpsc::Sender;
-use std::fmt;
 use std::iter::FromIterator;
 use uuid::Uuid;
+use time::{SteadyTime, Duration};
+use rand::{thread_rng, Rng};
 use fsm::{FsmHandler, StateFn};
 use super::replica::{Replica, VersionedReplicas};
 use super::messages::*;
 use super::dispatcher::DispatchMsg;
-use vr_api::{VrBackend, VrApiReq, VrApiRsp};
-use time::{SteadyTime, Duration};
-use rand::{thread_rng, Rng};
+use super::VrBackend;
+use debug_sender::DebugSender;
 
-pub const DEFAULT_IDLE_TIMEOUT_MS: i64 = 300;
-pub const DEFAULT_PRIMARY_TICK_MS: i64 = 75;
+pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
+pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupState {
@@ -23,7 +23,8 @@ pub enum StartupState {
 
 /// The internal state of the VR FSM. Note that fields are only made public for visibility,
 /// debugging and testing purposes.
-#[derive(Debug, Clone)]
+//#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VrCtx {
     pub me: Replica,
     pub primary: Option<Replica>,
@@ -53,6 +54,9 @@ pub struct VrCtx {
     pub backend: VrBackend,
     pub old_config: VersionedReplicas,
     pub new_config: VersionedReplicas,
+
+    /// As opposed to the Viewstamped replication revisited paper, we only use the client table on
+    /// the current primary and do not replicate it.
     pub client_table: HashMap<Uuid, (u64, Option<VrMsg>)>,
 
     /// The nonce of the last sent recovery message
@@ -65,40 +69,15 @@ pub struct VrCtx {
 
     /// Backups wait `idle_timeout_ms` between messages from the primary before initiating a view
     /// change.
-    pub idle_timeout_ms: i64,
+    pub idle_timeout_ms: u64,
 
     /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
     /// message to the backups. `idle_timeout_ms` should be at least twice as large as this value.
-    pub primary_tick_ms: i64,
+    pub primary_tick_ms: u64,
 
     sender: DebugSender<Envelope>,
     client_reply_sender: DebugSender<ClientReplyEnvelope>,
     dispatch_sender: DebugSender<DispatchMsg>
-}
-
-// Sender<T> is not Debug. Implement a wrapper where we can impl Debug so that we don't have to do
-// it for the entire VrCtx.
-#[derive(Clone)]
-struct DebugSender<T> {
-    sender: Sender<T>
-}
-
-impl<T> DebugSender<T> {
-    pub fn new(sender: Sender<T>) -> DebugSender<T> {
-        DebugSender {
-            sender: sender
-        }
-    }
-
-    pub fn send(&self, msg: T) {
-        self.sender.send(msg).unwrap();
-    }
-}
-
-impl<T> fmt::Debug for DebugSender<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Sender<T>")
-    }
 }
 
 impl VrCtx {
@@ -153,6 +132,10 @@ impl FsmHandler for VrHandler {
 macro_rules! check_epoch {
     ($ctx:ident, $msg:ident, $state:ident) => {
         match $msg {
+            VrMsg::SessionClosed(client_id) => {
+                $ctx.client_table.remove(&client_id);
+                return next!($state);
+            },
             VrMsg::StartViewChange {epoch, ..} if epoch < $ctx.epoch => return next!($state),
             VrMsg::StartViewChange {epoch, ..} if epoch > $ctx.epoch => {
                 return learn_config($ctx, epoch)
@@ -269,6 +252,7 @@ pub fn startup(ctx: &mut VrCtx, _msg: VrMsg) -> StateFn<VrHandler> {
 pub fn primary(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
     check_epoch!(ctx, msg, primary);
     check_view!(ctx, msg, primary);
+    ctx.primary = Some(ctx.me.clone());
     let msg2 = msg.clone();
     match msg {
         VrMsg::ClientRequest {op, client_id, request_num} => {
@@ -328,7 +312,10 @@ pub fn backup(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
         VrMsg::Recovery{..} => {
             maybe_send_recovery_response(ctx, msg)
         },
-        _ => next!(backup)
+        _ => {
+            println!("Re-entering backup state {:?}", ctx.me.name);
+            next!(backup)
+        }
     }
 }
 
@@ -481,6 +468,7 @@ pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 fn reset_and_start_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
+    ctx.last_received_time = SteadyTime::now();
     ctx.view += 1;
     ctx.commit_quorum = HashMap::new();
     ctx.quorum_messages = HashMap::new();
@@ -614,6 +602,7 @@ fn send_new_state(ctx: &mut VrCtx, msg: VrMsg) {
             epoch: ctx.epoch,
             view: ctx.view,
             op: ctx.op,
+            primary: ctx.primary.clone(),
             commit_num: ctx.commit_num,
             log_tail: log_tail
         };
@@ -622,7 +611,8 @@ fn send_new_state(ctx: &mut VrCtx, msg: VrMsg) {
 }
 
 fn set_state(ctx: &mut VrCtx, msg: VrMsg) {
-    if let VrMsg::NewState {view, op, commit_num, log_tail, ..} = msg {
+    if let VrMsg::NewState {view, op, commit_num, log_tail, primary, ..} = msg {
+        ctx.primary = primary;
         ctx.view = view;
         ctx.op = op;
         for m in log_tail {
@@ -738,6 +728,7 @@ fn start_state_transfer_new_view(ctx: &mut VrCtx, view: u64) -> StateFn<VrHandle
 }
 
 fn handle_normal_prepare(ctx: &mut VrCtx, msg: VrMsg) {
+    assert!(ctx.primary.is_some());
     if let VrMsg::Prepare { client_op, commit_num, client_id, client_request_num, ..} = msg {
         ctx.last_received_time = SteadyTime::now();
         ctx.op += 1;
@@ -746,7 +737,6 @@ fn handle_normal_prepare(ctx: &mut VrCtx, msg: VrMsg) {
                                                 client_id: client_id,
                                                 request_num: client_request_num};
         ctx.log.push(client_req);
-        ctx.client_table.insert(client_id, (client_request_num, None));
         let prepare_ok = VrMsg::PrepareOk { epoch: ctx.epoch,
                                             view: ctx.view,
                                             op: ctx.op,
@@ -857,38 +847,31 @@ fn become_backup(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
         ctx.view = view;
         ctx.op = op;
         ctx.log = log;
+        ctx.primary = Some(compute_primary(ctx));
         ctx.commit_quorum = HashMap::new();
         ctx.quorum_messages = HashMap::new();
         send_prepare_ok_for_uncommitted_ops(ctx);
         backup_commit_known_committed_ops(ctx, commit_num);
         ctx.last_normal_view = ctx.view;
+        next!(backup)
+    } else {
+        unreachable!()
     }
-    next!(backup)
 }
 
 fn backup_commit_known_committed_ops(ctx: &mut VrCtx, new_commit_num: u64) {
     for i in ctx.commit_num..new_commit_num {
         let msg = ctx.log[i as usize].clone();
-        if let VrMsg::ClientRequest {op, client_id, request_num} = msg.clone() {
-            let rsp = ctx.backend.call(i+1, op);
-            let reply = VrMsg::ClientReply {epoch: ctx.epoch,
-                                            view: ctx.view,
-                                            request_num: request_num,
-                                            value: rsp};
-            ctx.client_table.insert(client_id, (request_num, Some(reply.clone())));
-        }
-        // We have already set the correct epoch in our context at this point
-        if let VrMsg::Reconfiguration {client_id, client_req_num, replicas, ..} = msg {
-            ctx.old_config = ctx.new_config.clone();
-            ctx.new_config = VersionedReplicas {epoch: ctx.epoch, op: i+1, replicas: replicas};
-            let rsp = ctx.backend.call(i+1, VrApiReq::Null);
-            let reply = VrMsg::ClientReply {
-                epoch: ctx.epoch,
-                view: 0,
-                request_num: client_req_num,
-                value: rsp
-            };
-            ctx.client_table.insert(client_id, (client_req_num, Some(reply.clone())));
+        match msg {
+            VrMsg::ClientRequest {op, ..} => {
+                ctx.backend.call(i+1, op);
+            },
+            VrMsg::Reconfiguration {replicas, ..} => {
+                ctx.old_config = ctx.new_config.clone();
+                ctx.new_config = VersionedReplicas {epoch: ctx.epoch, op: i+1, replicas: replicas};
+                ctx.backend.call(i+1, VrApiReq::Null);
+            },
+            _ => ()
         }
     }
     ctx.commit_num = new_commit_num;
@@ -928,6 +911,7 @@ fn send_prepare_ok_for_uncommitted_ops(ctx: &VrCtx) {
 }
 
 fn reset_quorum(ctx: &mut VrCtx, msg: VrMsg, view: u64, from: Replica) {
+    ctx.last_received_time = SteadyTime::now();
     ctx.view = view;
     ctx.commit_quorum = HashMap::new();
     ctx.quorum_messages = HashMap::new();
@@ -944,7 +928,7 @@ fn maybe_commit(ctx: &mut VrCtx, op: u64, from: Replica) {
 }
 
 fn maybe_start_view(ctx: &mut VrCtx, msg: VrMsg, from: Replica) -> StateFn<VrHandler> {
-    ctx.quorum_messages.insert(from, msg);
+    ctx.quorum_messages.insert(from.clone(), msg.clone());
     if quorum(&ctx) {
         let last_commit_num = ctx.commit_num;
         set_latest_state(ctx);
@@ -954,6 +938,9 @@ fn maybe_start_view(ctx: &mut VrCtx, msg: VrMsg, from: Replica) -> StateFn<VrHan
         // from the clients to the new primary. Regardless, that's outside the scope of this FSM,
         // and should be handled in a higher layer.
         primary_commit_known_committed_ops(ctx, last_commit_num);
+        let view = ctx.view;
+        println!("Elected {:?} as primary of view {} !!!", ctx.me, ctx.view);
+        reset_quorum(ctx, msg, view, from.clone());
         next!(primary)
     } else {
         next!(do_view_change)
@@ -1155,11 +1142,15 @@ fn broadcast(ctx: &VrCtx, msg: VrMsg) {
 }
 
 #[inline]
+/// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
+/// here since the values are so small.
 fn idle_timeout(ctx: &VrCtx) -> bool {
-    SteadyTime::now() - ctx.last_received_time > Duration::milliseconds(ctx.idle_timeout_ms)
+    SteadyTime::now() - ctx.last_received_time > Duration::milliseconds(ctx.idle_timeout_ms as i64)
 }
 
 #[inline]
+/// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
+/// here since the values are so small.
 fn primary_idle_timeout(ctx: &VrCtx) -> bool {
-    SteadyTime::now() - ctx.last_received_time > Duration::milliseconds(ctx.primary_tick_ms)
+    SteadyTime::now() - ctx.last_received_time > Duration::milliseconds(ctx.primary_tick_ms as i64)
 }

@@ -107,11 +107,10 @@ impl<T: TcpHandler> Context<T> {
             Ok(Some((sock, addr))) => {
                 // TODO: Should probably not unwrap here, since the connection could close
                 // immediately
-                println!("Connection Accepted for {} from {:?}", self.node, addr);
                 let token = self.state.next_token();
                 self.register(event_loop, token, sock, addr);
             },
-            Err(err) => println!("Error accepting connection for node {}: {}", self.node, err)
+            Err(err) => println!("Error accepting cluster connection for node {}: {}", self.node, err)
         }
     }
 }
@@ -126,11 +125,10 @@ impl<T: TcpHandler> Handler for Context<T> {
             match token {
                 ACCEPTOR => { self.accept(event_loop); }
                 _ => {
-                    println!("Got Readable for {}", self.node);
                     match self.read(event_loop, token) {
                         Ok(()) => (),
                         Err(e) => {
-                            println!("Error reading from clsuter socket for {} with token: {:?}: {}",
+                            println!("Error reading from cluster socket for {} with token: {:?}: {}",
                                      self.node, token, e);
                             self.deregister(event_loop, token, e);
                         }
@@ -141,7 +139,6 @@ impl<T: TcpHandler> Handler for Context<T> {
         }
 
         if event.is_writable() {
-            println!("Got Writable for {}", self.node);
             if let Err(err) = self.writer_ready(event_loop, token) {
                 println!("Got a write error: {} for token {:?} on {}", err, token, self.node);
                 self.deregister(event_loop, token, err);
@@ -151,7 +148,6 @@ impl<T: TcpHandler> Handler for Context<T> {
     }
 
     fn notify(&mut self, event_loop: &mut mio::EventLoop<Context<T>>, msg: Notification) {
-        println!("Event loop got notification {:?} for {}", msg, self.node);
         match msg {
             Notification::Deregister(token, err) => self.deregister(event_loop, token, err),
             Notification::WireMsg(token, msg) => if let Err(err) = self.push_outgoing(event_loop,

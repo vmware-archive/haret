@@ -252,16 +252,17 @@ impl Debugger {
         let ref dispatcher_state = self.current_state();
         let mut names = Vec::new();
         for (r, _)  in dispatcher_state.local_replicas.iter() {
-            let mut s = r.node.name.clone();
-            s.push_str(":");
-            s.push_str(&r.name);
+            let mut s = r.name.clone();
+            s.push_str("::");
+            s.push_str(&r.node.name);
             names.push(s);
         }
         names
     }
 
     pub fn replica_state(&self, replica: &Replica) -> Option<(&'static str, &VrCtx)> {
-        let ref dispatcher_state = self.history[self.frame_count].step_state;
+        println!("Checking replica state for {:?}", replica);
+        let ref dispatcher_state = self.current_state();
         match dispatcher_state.local_replicas.get(replica) {
             None => None,
             Some(fsm) => Some((fsm.state.0, &fsm.ctx))
