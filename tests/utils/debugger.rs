@@ -1,15 +1,13 @@
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::io;
 use std::io::Read;
 use std::fs::File;
 use std::fmt::Write;
-use rustc_serialize::Encodable;
-use msgpack::{Encoder, from_msgpack};
+use msgpack::{from_msgpack};
 use fsm::{Fsm};
-use v2r2::vr::{Dispatcher, DispatcherState, Replica, VrMsg, VrCtx, VrHandler, Envelope};
-use super::{Scheduler, TestMsg, Frame, Action};
+use v2r2::vr::{DispatcherState, Replica, VrCtx, VrHandler, Envelope};
+use super::{Scheduler, Frame};
 
 // Tracks the state of the replicas and dispatchers between Frames
 // Note that frame_state is only set once during the call to initial run.
@@ -142,7 +140,6 @@ impl Debugger {
                     self.step_forward_same_frame(envelope);
                 },
                 None => {
-                    let step_count = self.history[self.frame_count].step_count;
                     // We have dispatched all messages within this frame
                     // Reset the last frame's state and step into the next one
                     self.reset_step_state();
@@ -296,73 +293,73 @@ impl Debugger {
 fn diff_replicas(old: &Fsm<VrHandler>, new: &Fsm<VrHandler>) -> String {
     let mut diff = String::new();
     if old.state.0 != new.state.0 {
-        writeln!(&mut diff, "State changed from {} to {}", old.state.0, new.state.0);
+        let _ = writeln!(&mut diff, "State changed from {} to {}", old.state.0, new.state.0);
     }
     if old.ctx.primary != new.ctx.primary {
-        write!(&mut diff, "Primary changed:\n    Old: {:?}\n    New: {:?}\n",
+        let _ = write!(&mut diff, "Primary changed:\n    Old: {:?}\n    New: {:?}\n",
                old.ctx.primary, new.ctx.primary);
     }
     if old.ctx.epoch != new.ctx.epoch {
-        writeln!(&mut diff, "Epoch changed from {} to {}", old.ctx.epoch, new.ctx.epoch);
+        let _ = writeln!(&mut diff, "Epoch changed from {} to {}", old.ctx.epoch, new.ctx.epoch);
     }
     if old.ctx.view != new.ctx.view {
-        writeln!(&mut diff, "View changed from {} to {}", old.ctx.view, new.ctx.view);
+        let _ = writeln!(&mut diff, "View changed from {} to {}", old.ctx.view, new.ctx.view);
     }
     if old.ctx.op != new.ctx.op {
-        writeln!(&mut diff, "Op Number changed from {} to {}", old.ctx.op, new.ctx.op);
+        let _ = writeln!(&mut diff, "Op Number changed from {} to {}", old.ctx.op, new.ctx.op);
     }
     if old.ctx.commit_num != new.ctx.commit_num {
-        writeln!(&mut diff, "Commit Number changed from {} to {}",
+        let _ = writeln!(&mut diff, "Commit Number changed from {} to {}",
                  old.ctx.commit_num, new.ctx.commit_num);
     }
     if old.ctx.startup_state != new.ctx.startup_state {
-        writeln!(&mut diff, "Startup State changed from {:?} to {:?}",
+        let _ = writeln!(&mut diff, "Startup State changed from {:?} to {:?}",
                  old.ctx.startup_state, new.ctx.startup_state);
     }
     if old.ctx.last_received_time != new.ctx.last_received_time {
-        writeln!(&mut diff, "Last received time changed");
+        let _ = writeln!(&mut diff, "Last received time changed");
     }
     if old.ctx.last_normal_view != new.ctx.last_normal_view {
-        writeln!(&mut diff, "Last normal view changed from {} to {}",
+        let _ = writeln!(&mut diff, "Last normal view changed from {} to {}",
                  old.ctx.last_normal_view, new.ctx.last_normal_view);
     }
     if old.ctx.quorum != new.ctx.quorum {
-        writeln!(&mut diff, "Quorum requirements changed from {} replicas to {} replicas",
+        let _ = writeln!(&mut diff, "Quorum requirements changed from {} replicas to {} replicas",
                  old.ctx.quorum, new.ctx.quorum);
     }
     if old.ctx.quorum_messages != new.ctx.quorum_messages {
-        writeln!(&mut diff, "Quorum messages have changed. There were {} messages stored. Now {}",
+        let _ = writeln!(&mut diff, "Quorum messages have changed. There were {} messages stored. Now {}",
                  old.ctx.quorum_messages.len(), new.ctx.quorum_messages.len());
     }
     if old.ctx.commit_quorum != new.ctx.commit_quorum {
         // TODO: A better message here?
-        writeln!(&mut diff, "Commit Quorum has changed");
+        let _ = writeln!(&mut diff, "Commit Quorum has changed");
     }
     if old.ctx.log != new.ctx.log {
         // TODO: Show differing entries
-        writeln!(&mut diff, "The log has changed");
+        let _ = writeln!(&mut diff, "The log has changed");
     }
     if old.ctx.backend != new.ctx.backend {
         // TODO: Show added, removed, changed nodes
-        writeln!(&mut diff, "The backend has changed");
+        let _ = writeln!(&mut diff, "The backend has changed");
     }
     if old.ctx.old_config != new.ctx.old_config {
         // TODO: show differences
-        writeln!(&mut diff, "Old configuration has changed");
+        let _ = writeln!(&mut diff, "Old configuration has changed");
     }
     if old.ctx.new_config != new.ctx.new_config {
         // TODO: show differences
-        writeln!(&mut diff, "New configuration has changed");
+        let _ = writeln!(&mut diff, "New configuration has changed");
     }
     if old.ctx.client_table != new.ctx.client_table {
-        writeln!(&mut diff, "Client table has changed");
+        let _ = writeln!(&mut diff, "Client table has changed");
     }
     if old.ctx.recovery_nonce != new.ctx.recovery_nonce {
-        writeln!(&mut diff, "Recovery nonce has changed from {:?} to {:?}",
+        let _ = writeln!(&mut diff, "Recovery nonce has changed from {:?} to {:?}",
                  old.ctx.recovery_nonce, new.ctx.recovery_nonce);
     }
     if old.ctx.recovery_primary != new.ctx.recovery_primary {
-        write!(&mut diff, "Recovery primary changed:\n    Old: {:?}\n    New: {:?}\n",
+        let _ = write!(&mut diff, "Recovery primary changed:\n    Old: {:?}\n    New: {:?}\n",
                old.ctx.recovery_primary, new.ctx.recovery_primary);
     }
     if diff.len() == 0 { return "No difference found".to_string(); }

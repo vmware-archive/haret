@@ -4,12 +4,12 @@
 //! maintains a history of operations to allow for even more checks against the current replica
 //! states to ensure consistent operation.
 
-use std::collections::{HashMap, HashSet};
-use rand::{thread_rng, ThreadRng};
+use std::collections::{HashMap};
+use rand::{thread_rng};
 use rand::distributions::{IndependentSample, Range};
 use uuid::Uuid;
-use v2r2::vr::{Dispatcher, Replica, VrMsg, ClientReplyEnvelope};
-use v2r2::vr_api::{Element, VrBackend, VrApiReq};
+use v2r2::vr::{Dispatcher, Replica, VrMsg};
+use v2r2::vr_api::{VrBackend, VrApiReq};
 use super::TestMsg;
 
 #[derive(Debug, Clone)]
