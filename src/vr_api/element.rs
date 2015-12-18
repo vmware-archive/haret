@@ -1,5 +1,4 @@
 use std::str::FromStr;
-use std::string::ToString;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum ElementType {

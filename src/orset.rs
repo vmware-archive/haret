@@ -41,7 +41,8 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
             removes: HashMap::new()
         }
     }
-
+    
+    #[allow(dead_code)]
     fn seen(&self, element: &T) -> Option<Vec<Dot>> {
         match self.adds.get(element) {
             None => None,
@@ -65,6 +66,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
     }
 
     /// Invariant: seen can never be empty
+    #[allow(dead_code)]
     pub fn remove(&mut self, element: T, seen: Vec<Dot>) -> Delta<T> {
         assert!(seen.len() != 0);
         let mut removes = self.removes.entry(element.clone()).or_insert(Vec::new());
@@ -99,6 +101,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
     }
 
     /// Returns true if the state was mutated, false otherwise
+    #[allow(dead_code)]
     pub fn join(&mut self, delta: Delta<T>) -> bool {
         match delta {
             Delta::Add {element, dot} => self.join_add(element, dot),
@@ -141,6 +144,7 @@ impl<T: Eq + Hash + Clone> ORSet<T> {
         return mutated
     }
 
+    #[allow(dead_code)]
     pub fn contains(&self, element: &T) -> bool {
         if let Some(adds) = self.adds.get(element) {
             if adds.is_empty() {

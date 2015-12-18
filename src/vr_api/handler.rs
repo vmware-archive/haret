@@ -4,16 +4,13 @@ use mio;
 use mio::Token;
 use state::State;
 use tcphandler::TcpHandler;
-use super::messages::{VrApiReq, VrApiRsp};
+use super::messages::{VrApiReq};
 use event::Event;
-use std::error;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use rustc_serialize::Encodable;
 use super::mock_vr::{VrReq, VrResp};
 
 pub struct VrApiHandler {
-    node: String,
-    state: State,
     vr_tx: Sender<VrReq>,
     vr_rx: Option<Receiver<VrResp>>,
     event_loop_tx: Option<mio::Sender<Notification>>,
@@ -52,11 +49,9 @@ impl TcpHandler for VrApiHandler {
 }
 
 impl VrApiHandler {
-    pub fn new(state: State, vr_tx: Sender<VrReq>, vr_rx: Receiver<VrResp> ) -> VrApiHandler {
+    pub fn new(_state: State, vr_tx: Sender<VrReq>, vr_rx: Receiver<VrResp> ) -> VrApiHandler {
         let (tx, rx) = channel();
         VrApiHandler {
-            node: state.members.local_name(),
-            state: state,
             vr_tx: vr_tx,
             vr_rx: Some(vr_rx),
             event_loop_tx: None,

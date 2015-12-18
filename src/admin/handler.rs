@@ -13,7 +13,6 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 /// Handle all events from the event loop
 /// Maintain the internal state of the admin server
 pub struct AdminHandler {
-    node: String,
     state: State,
     cluster_tx: Sender<AdminMsg>,
     cluster_rx: Option<Receiver<AdminMsg>>,
@@ -58,7 +57,6 @@ impl AdminHandler {
 
         let (tx, rx) = channel();
         AdminHandler {
-            node: state.members.local_name(),
             state: state,
             cluster_tx: cluster_tx,
             cluster_rx: Some(cluster_rx),
