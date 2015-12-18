@@ -6,7 +6,7 @@ dependencies = [
  "libc 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.5.0 (git+https://github.com/carllerche/mio.git)",
  "msgpack 0.1.0 (git+https://github.com/mneumann/rust-msgpack.git)",
- "quickcheck 0.2.24 (registry+https://github.com/rust-lang/crates.io-index)",
+ "orset 0.1.0",
  "rand 0.3.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -53,9 +53,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "fsm"
 version = "0.1.0"
-dependencies = [
- "mio 0.5.0 (git+https://github.com/carllerche/mio.git)",
-]
 
 [[package]]
 name = "kernel32-sys"
@@ -73,7 +70,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "libc"
-version = "0.2.2"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -81,7 +78,7 @@ name = "log"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "libc 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -106,7 +103,7 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "kernel32-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "net2 0.2.19 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "ws2_32-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -128,7 +125,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "cfg-if 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "kernel32-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "ws2_32-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -144,10 +141,17 @@ dependencies = [
 
 [[package]]
 name = "num"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "rand 0.3.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc-serialize 0.3.16 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "orset"
+version = "0.1.0"
+dependencies = [
  "rustc-serialize 0.3.16 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -173,21 +177,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "quickcheck"
-version = "0.2.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "log 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "rand 0.3.12 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "rand"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "advapi32-sys 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -201,7 +196,7 @@ name = "serde"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num 0.1.28 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -219,7 +214,7 @@ name = "serde_json"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num 0.1.28 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -242,7 +237,7 @@ version = "0.1.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "kernel32-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

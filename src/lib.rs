@@ -3,9 +3,6 @@
 #![feature(mpsc_select)]
 #![feature(btree_range, collections_bound)]
 
-#[cfg(test)]
-extern crate quickcheck;
-
 extern crate rand;
 extern crate libc;
 extern crate serde;
@@ -17,6 +14,7 @@ extern crate time;
 extern crate uuid;
 #[macro_use]
 extern crate fsm;
+extern crate orset;
 
 pub mod config;
 pub mod event_loop;
@@ -28,7 +26,6 @@ pub mod vr_api;
 pub mod vr;
 
 mod event;
-mod orset;
 mod tcphandler;
 mod membership;
 

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::iter::FromIterator;
 use uuid::Uuid;
-use fsm::{Fsm, Msg};
+use fsm::Fsm;
 use membership::Member;
 use super::replica::{RawReplica, Replica, VersionedReplicas};
 use super::vr_fsm::{StartupState, VrCtx, VrHandler, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
@@ -166,7 +166,7 @@ impl Dispatcher {
         if self.node == to.node {
             self.send_local(to, msg);
         } else {
-            self.send_remote(to, Box::new(msg) as Msg);
+            self.send_remote(to, msg);
         }
     }
 
@@ -176,7 +176,7 @@ impl Dispatcher {
         }
     }
 
-    pub fn send_remote(&mut self, _to: &Replica, _msg: Msg) {
+    pub fn send_remote(&mut self, _to: &Replica, _msg: VrMsg) {
         unimplemented!();
     }
 
@@ -187,8 +187,8 @@ impl Dispatcher {
                     self.tenants.get_mut(&tenant) {
 
                     // This is an old reconfig message
-                    if new_config.epoch <= saved_new_config.epoch { 
-                        return; 
+                    if new_config.epoch <= saved_new_config.epoch {
+                        return;
                     }
                     let new_set = HashSet::<Replica>::from_iter(new_config.replicas.clone());
                     // We want to use the actual running nodes here because we are trying to determine which

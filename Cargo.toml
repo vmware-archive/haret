@@ -14,12 +14,10 @@ uuid = "0.1"
 rand = "*"
 
 fsm = { path = "../fsm" }
+orset = { path = "../orset"}
 
 [dependencies.mio]
 git = "https://github.com/carllerche/mio.git"
 
 [dependencies.msgpack]
 git = "https://github.com/mneumann/rust-msgpack.git"
-
-[dev-dependencies]
-quickcheck = "*"
