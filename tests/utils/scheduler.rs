@@ -7,10 +7,9 @@
 //! stepping will be as fine grained as triggering individual sends of VRMsgs and inspecting state
 //! of the FSM.
 
-use std::collections::HashMap;
 use rustc_serialize::Encodable;
-use msgpack::{Encoder, from_msgpack};
-use v2r2::vr::{Dispatcher, DispatcherState, Replica, VrMsg, VrCtx, Envelope};
+use msgpack::{Encoder};
+use v2r2::vr::{Dispatcher, DispatcherState, Replica, VrMsg, Envelope};
 use super::TestMsg;
 
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable)]

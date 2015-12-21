@@ -1,5 +1,3 @@
-#![feature(vec_push_all)]
-
 extern crate uuid;
 extern crate rand;
 extern crate v2r2;
@@ -11,17 +9,13 @@ extern crate rustc_serialize;
 #[macro_use]
 mod utils;
 
-use std::path::{Path, PathBuf};
-use std::fs;
-use std::fs::File;
-use std::io::Write;
 use rand::{thread_rng, ThreadRng};
 use rand::distributions::{IndependentSample, Range};
 use uuid::Uuid;
 use utils::fuzzer::{Test, Fuzzer};
 use utils::{vr_invariants, op_invariants, test_setup, Model, TestMsg, Scheduler};
 use utils::generators::{oneof, paths, clients};
-use v2r2::vr::{Dispatcher, Replica, VrMsg};
+use v2r2::vr::{VrMsg};
 use v2r2::vr_api::{ElementType, VrApiReq};
 
 // These constants should all add up to 100%
@@ -89,7 +83,7 @@ impl VrTest {
     }
 
     /// We can only send ticks to a backup or restart a crashed replica when there is no primary
-    fn choose_request_no_primary(&mut self, n: u64) -> TestMsg{
+    fn choose_request_no_primary(&mut self) -> TestMsg{
         let range = Range::new(0, 2);
         match range.ind_sample(&mut self.rng) {
             0 => TestMsg::ViewChange(self.model.choose_live_backup()),
@@ -117,7 +111,7 @@ impl Test for VrTest {
 
     fn gen_request(&mut self, n: u64) -> TestMsg {
         match self.model.primary {
-            None => self.choose_request_no_primary(n),
+            None => self.choose_request_no_primary(),
             Some(_) => {
                 let mut range = Range::new(0, 100);
                 loop {

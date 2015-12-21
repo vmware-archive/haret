@@ -195,7 +195,7 @@ impl Model {
         -> Result<(), String>
     {
         let backup_state = self.backup_states.get(&replica).clone().unwrap();
-        let (state, ctx) = dispatcher.get_state(replica).unwrap();
+        let (state, _ctx) = dispatcher.get_state(replica).unwrap();
         safe_assert_eq!(backup_state.state, state)
     }
 
@@ -207,7 +207,7 @@ impl Model {
             }
             let _ = safe_assert_eq!(state, backup_state.state, ctx.me.name);
             let _ = safe_assert_eq!(ctx.view, backup_state.view, ctx.me.name);
-            safe_assert_eq!(ctx.op, backup_state.op);
+            let _ = safe_assert_eq!(ctx.op, backup_state.op);
         }
         Ok(())
     }
@@ -215,7 +215,7 @@ impl Model {
     /// Assume no dropped messages for now (all messages commit)
     fn do_backup_prepare(&mut self) {
         for (_, state) in self.backup_states.iter_mut() {
-            if (state.state != "recovery") {
+            if state.state != "recovery" {
                 state.op += 1;
             }
         }
@@ -223,7 +223,7 @@ impl Model {
 
     /// Assume no dropped messages for now (all messages commit)
     fn do_backup_view_change(&mut self, primary: Option<&Replica>) {
-        for (replica, state) in self.backup_states.iter_mut() {
+        for (_replica, state) in self.backup_states.iter_mut() {
             if state.state != "recovery" {
                 state.view += 1;
             }
@@ -258,7 +258,7 @@ impl Model {
             let range = Range::new(0, self.backup_states.len());
             let index = range.ind_sample(&mut thread_rng());
             let v: Vec<_> = self.backup_states.iter().collect();
-            if (v[index].1.state != "recovery") {
+            if v[index].1.state != "recovery" {
                 return v[index].0.clone();
             }
         }
