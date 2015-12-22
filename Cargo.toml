@@ -21,3 +21,8 @@ git = "https://github.com/carllerche/mio.git"
 
 [dependencies.msgpack]
 git = "https://github.com/mneumann/rust-msgpack.git"
+
+[[bin]]
+name = "debugger_cli"
+path = "tests/debugger_cli.rs"
+

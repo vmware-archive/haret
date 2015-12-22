@@ -1,6 +1,5 @@
 //! Fuzz testing driver used specifically to drive the testing of VR.
 
-use std::env;
 use std::fmt::Debug;
 use std::fs;
 use std::fs::File;
@@ -68,8 +67,8 @@ pub trait Test {
     fn run(&mut self, Self::Msg) -> Result<(), String>;
 
     // Optional functions
-    fn update_model(&mut self, request: Self::Msg) {}
-    fn drop_msg(&self, request: &Self::Msg) -> bool { false }
+    fn update_model(&mut self, _request: Self::Msg) {}
+    fn drop_msg(&self, _request: &Self::Msg) -> bool { false }
     fn get_states(&self) -> Option<Vec<String>> { None }
     fn get_model(&self) -> Option<String> { None }
     // The schedule is most useful in a machine readable format
@@ -103,7 +102,7 @@ impl<T: Test> Fuzzer<T> {
     /// Send `n` messages to the VR group and run the assertions.
     pub fn run(&mut self, n: u64) {
         let dir_root = Path::new("tests/output").join(self.test_name);
-        fs::create_dir_all(&dir_root);
+        let _ = fs::create_dir_all(&dir_root);
         for i in 1..n+1 {
             let req = self.test.gen_request(i);
             self.history.push(req.clone());
@@ -179,7 +178,7 @@ impl<T: Test> Fuzzer<T> {
                 let removed = &self.smallest_history[start..start+size];
                 self.causal_ids(removed)
             };
-            candidate.push_all(&self.smallest_history[start+size..]);
+            candidate.extend_from_slice(&self.smallest_history[start+size..]);
             if self.try_candidate(candidate, causal_ids) { return true; }
             start += size;
         }
@@ -241,7 +240,7 @@ impl<T: Test> Fuzzer<T> {
         for i in 0..self.smallest_history.len() {
             let msg = self.smallest_history[i].clone();
             self.test.update_model(msg.clone());
-            self.test.run(msg);
+            let _ = self.test.run(msg);
         }
     }
 
@@ -259,17 +258,17 @@ impl<T: Test> Fuzzer<T> {
     fn log_replica_states(&self, dir_name: &Path) {
         if let Some(states) = self.test.get_states() {
             let mut file = File::create(dir_name.join("replica_states.txt")).unwrap();
-            file.write_all("Replica States: \n".as_bytes());
+            let _ = file.write_all("Replica States: \n".as_bytes());
             for s in states {
-                file.write_all(s.as_bytes());
-                file.write_all("\n".as_bytes());
+                let _ = file.write_all(s.as_bytes());
+                let _ = file.write_all("\n".as_bytes());
             }
         }
     }
 
     fn log_history(&self, dir_name: &Path) {
         let mut file = File::create(dir_name.join("history.txt")).unwrap();
-        file.write_all((format!("History: \n{:#?}\n", self.history).as_bytes()));
+        let _ = file.write_all((format!("History: \n{:#?}\n", self.history).as_bytes()));
     }
 
 }
@@ -281,7 +280,7 @@ fn make_summary(request_num: u64, msg: String) -> String {
 fn log(filename: &str, dir_name: &Path, data: &[u8]) {
     if data.len() == 0 { return; }
     let mut file = File::create(dir_name.join(filename)).unwrap();
-    file.write_all(data);
+    let _ = file.write_all(data);
 }
 
 fn make_output_dir(dir_root: &Path) -> PathBuf {
@@ -289,7 +288,7 @@ fn make_output_dir(dir_root: &Path) -> PathBuf {
     let dir_name = dir_root.join(&date);
     fs::create_dir(&dir_name).unwrap();
     let current = dir_root.join("current");
-    fs::remove_file(&current);
+    let _ = fs::remove_file(&current);
     symlink(&date, current).unwrap();
     dir_name
 }

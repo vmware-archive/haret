@@ -1,5 +1,3 @@
-#![feature(vec_push_all)]
-
 extern crate uuid;
 extern crate rand;
 extern crate v2r2;
@@ -9,7 +7,7 @@ extern crate msgpack;
 extern crate rustc_serialize;
 
 #[macro_use]
-#[path = "../../tests/utils/mod.rs"]
+#[path = "utils/mod.rs"]
 mod utils;
 
 use std::env;
