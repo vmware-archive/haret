@@ -34,7 +34,8 @@ impl FromStr for RawReplica {
             node: Member {
                 name: v[1].to_string(),
                 cluster_host: "".to_string(),
-                vr_host: "".to_string()
+                vr_host: "".to_string(),
+                vr_api_host: "".to_string()
             }
         })
     }
@@ -72,7 +73,8 @@ impl FromStr for Replica {
                     node: Member {
                         name: v[2].to_string(),
                         cluster_host: "".to_string(),
-                        vr_host: "".to_string()
+                        vr_host: "".to_string(),
+                        vr_api_host: "".to_string()
                     }
                 })
             },

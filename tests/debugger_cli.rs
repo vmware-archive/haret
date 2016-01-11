@@ -165,7 +165,8 @@ fn parse_replica(replica_str: &str) -> Option<Replica> {
     let member = Member {
         name: node_name,
         cluster_host: "".to_string(),
-        vr_host: "".to_string()
+        vr_host: "".to_string(),
+        vr_api_host: "".to_string()
     };
 
     let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
