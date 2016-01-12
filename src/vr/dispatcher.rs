@@ -11,7 +11,7 @@ use admin::{AdminReq, AdminRpy};
 use state::State;
 use super::replica::{RawReplica, Replica, VersionedReplicas};
 use super::vr_fsm::{StartupState, VrCtx, VrHandler, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
-use super::event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
+use event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
 use super::tenants::Tenants;
 use super::messages::*;
 use requests::Requests;

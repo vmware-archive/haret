@@ -3,7 +3,7 @@ extern crate v2r2;
 use std::sync::mpsc::channel;
 use v2r2::state::State;
 use v2r2::admin::{AdminReq, AdminServer};
-use v2r2::cluster;
+use v2r2::cluster::ClusterServer;
 use v2r2::vr::Dispatcher;
 
 fn main() {
@@ -15,7 +15,8 @@ fn main() {
     let dispatcher = Dispatcher::new(&state);
     let dispatch_tx = dispatcher.dispatch_tx.clone();
     let handles1 = dispatcher.run();
-    let handles2 = cluster::server::run(state.clone(), cluster_rx);
+    let cluster_server = ClusterServer::new(state.clone());
+    let handles2 = cluster_server.run(cluster_rx);
     let admin_server = AdminServer::new(state.clone(), dispatch_tx.clone(), cluster_tx);
     let handles3 = admin_server.run();
 

@@ -10,7 +10,7 @@ use std::io::{Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
 use v2r2::admin::{AdminClientReq, AdminClientRpy};
-use v2r2::vr::frame::{ReadState, WriteState};
+use v2r2::frame::{ReadState, WriteState};
 use v2r2::vr::{Replica};
 use msgpack::{Encoder, from_msgpack};
 

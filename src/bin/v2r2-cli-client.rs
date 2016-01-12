@@ -11,7 +11,7 @@ use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
 use uuid::Uuid;
 use v2r2::vr::{VrMsg, Replica, ElementType, VrApiReq, VrApiRsp, ClientEnvelope};
-use v2r2::vr::frame::{ReadState, WriteState};
+use v2r2::frame::{ReadState, WriteState};
 use msgpack::{Encoder, from_msgpack};
 
 // TODO: Don't hardcode this

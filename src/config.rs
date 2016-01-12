@@ -1,4 +1,3 @@
-use std::env;
 use std::fs::File;
 use std::io::{Result, Read, Write, Error, ErrorKind};
 use serde_json;
@@ -16,7 +15,6 @@ pub struct Config {
 
 impl Config {
     pub fn read() -> Config {
-        println!("CurDir = {:?}", env::current_dir().unwrap());
         Config::read_path("config.json")
     }
 

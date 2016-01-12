@@ -9,7 +9,7 @@ use time::{SteadyTime, Duration};
 use uuid::Uuid;
 use state::State;
 use super::{AdminClientReq, AdminClientRpy, AdminReq, AdminRpy};
-use vr::event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
+use event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
 use vr::{DispatchMsg, RawReplica, Replica};
 use debug_sender::DebugSender;
 
