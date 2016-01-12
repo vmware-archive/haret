@@ -38,6 +38,7 @@ pub enum DispatchMsg {
     Reconfiguration {tenant: Uuid, old_config: VersionedReplicas, new_config: VersionedReplicas},
     Stop(Replica),
     Admin(AdminReq),
+    NewPrimary(Replica)
 }
 
 struct Client {
@@ -447,6 +448,13 @@ impl Dispatcher {
             AdminReq::GetVrStats {token, reply_tx} => {
                 reply_tx.send(AdminRpy::VrStats {token: token, stats: self.stats.to_string()});
             },
+            AdminReq::GetPrimary {token, tenant_id, reply_tx} => {
+                let val = match self.tenants.primaries.get(&tenant_id) {
+                    Some(replica) => Some(replica.clone()),
+                    None => None
+                };
+                reply_tx.send(AdminRpy::Primary {token: token, replica: val});
+            },
             _ => println!("Received unknown AdminReq in dispatcher: {:?}", req)
         }
     }
@@ -595,7 +603,10 @@ impl Dispatcher {
             DispatchMsg::Reconfiguration {tenant, old_config, new_config} =>
                 self.reconfigure(tenant, old_config, new_config),
             DispatchMsg::Stop(replica) => self.stop(&replica),
-            DispatchMsg::Admin(admin_req) => self.handle_admin_request(admin_req)
+            DispatchMsg::Admin(admin_req) => self.handle_admin_request(admin_req),
+            DispatchMsg::NewPrimary(replica) => {
+                self.tenants.primaries.insert(replica.tenant.clone(), replica);
+            }
         }
     }
 

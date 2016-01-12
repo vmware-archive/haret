@@ -252,7 +252,6 @@ pub fn startup(ctx: &mut VrCtx, _msg: VrMsg) -> StateFn<VrHandler> {
 pub fn primary(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
     check_epoch!(ctx, msg, primary);
     check_view!(ctx, msg, primary);
-    ctx.primary = Some(ctx.me.clone());
     let msg2 = msg.clone();
     match msg {
         VrMsg::ClientRequest {op, client_id, request_num} => {
@@ -611,10 +610,10 @@ fn send_new_state(ctx: &mut VrCtx, msg: VrMsg) {
 }
 
 fn set_state(ctx: &mut VrCtx, msg: VrMsg) {
-    if let VrMsg::NewState {view, op, commit_num, log_tail, primary, ..} = msg {
-        ctx.primary = primary;
+    if let VrMsg::NewState {view, op, commit_num, log_tail, ..} = msg {
         ctx.view = view;
         ctx.op = op;
+        set_primary(ctx);
         for m in log_tail {
             ctx.log.push(m);
         }
@@ -847,9 +846,9 @@ fn become_backup(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
         ctx.view = view;
         ctx.op = op;
         ctx.log = log;
-        ctx.primary = Some(compute_primary(ctx));
         ctx.commit_quorum = HashMap::new();
         ctx.quorum_messages = HashMap::new();
+        set_primary(ctx);
         send_prepare_ok_for_uncommitted_ops(ctx);
         backup_commit_known_committed_ops(ctx, commit_num);
         ctx.last_normal_view = ctx.view;
@@ -933,18 +932,22 @@ fn maybe_start_view(ctx: &mut VrCtx, msg: VrMsg, from: Replica) -> StateFn<VrHan
         let last_commit_num = ctx.commit_num;
         set_latest_state(ctx);
         broadcast_start_view_msg(&ctx);
-        // During a view change these ops are present, but an actual TCP client won't be connected.
-        // It's likely they will need to be collected in buffers for resending on connection
-        // from the clients to the new primary. Regardless, that's outside the scope of this FSM,
-        // and should be handled in a higher layer.
         primary_commit_known_committed_ops(ctx, last_commit_num);
         let view = ctx.view;
-        println!("Elected {:?} as primary of view {} !!!", ctx.me, ctx.view);
+        println!("Elected {:?} as primary of view {} with msg {:#?} !!!", ctx.me, ctx.view, msg);
+        set_primary(ctx);
         reset_quorum(ctx, msg, view, from.clone());
         next!(primary)
     } else {
         next!(do_view_change)
     }
+}
+
+fn set_primary(ctx: &mut VrCtx) {
+    let primary = compute_primary(ctx);
+    ctx.primary = Some(primary.clone());
+    let dispatch_msg = DispatchMsg::NewPrimary(primary);
+    ctx.dispatch_sender.send(dispatch_msg);
 }
 
 fn set_latest_state(ctx: &mut VrCtx) {
@@ -1020,7 +1023,7 @@ fn maybe_recover(ctx: &mut VrCtx, msg: VrMsg, view: u64, is_primary: bool, from:
                 // Always succeeds
                 if let VrMsg::RecoveryResponse {epoch, op, commit_num, log, ..} = primary_response {
                     // Set our state to that of the latest primary
-                    ctx.primary = Some(primary.clone());
+                    set_primary(ctx);
                     ctx.epoch = epoch;
                     ctx.op = op.unwrap();
                     ctx.log = log.unwrap();
@@ -1042,8 +1045,8 @@ fn maybe_recover(ctx: &mut VrCtx, msg: VrMsg, view: u64, is_primary: bool, from:
 
 fn maybe_send_do_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
     if quorum(&ctx) {
-        let primary = compute_primary(ctx);
-        ctx.primary = Some(primary.clone());
+        set_primary(ctx);
+        let primary = ctx.primary.clone().unwrap();
         if primary == ctx.me {
             return next!(do_view_change);
         }

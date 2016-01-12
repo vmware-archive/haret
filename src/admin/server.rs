@@ -149,6 +149,11 @@ impl AdminServer {
                 if self.request_exists(&token) {
                     self.send_client_reply(token, &AdminClientRpy::Ok);
                 }
+            },
+            AdminRpy::Primary {token, replica} => {
+                if self.request_exists(&token) {
+                    self.send_client_reply(token, &AdminClientRpy::VrPrimary(replica));
+                }
             }
         }
     }
@@ -165,7 +170,8 @@ impl AdminServer {
             AdminClientReq::VrCreateTenant(raw_replicas) => self.create_tenant(token, raw_replicas),
             AdminClientReq::VrTenants => self.get_tenants(token),
             AdminClientReq::VrReplica(replica) => self.get_replica_state(token, replica),
-            AdminClientReq::VrStats => self.get_vr_stats(token)
+            AdminClientReq::VrStats => self.get_vr_stats(token),
+            AdminClientReq::VrPrimary(tenant_id) => self.get_vr_primary(token, tenant_id)
         }
     }
 
@@ -214,6 +220,13 @@ impl AdminServer {
 
     fn get_vr_stats(&mut self, token: Token) {
         let msg = AdminReq::GetVrStats {token: token.clone(),
+                                        reply_tx: self.reply_tx.clone()};
+        self.send_async_dispatcher_msg(token, msg);
+    }
+
+    fn get_vr_primary(&mut self, token: Token, tenant_id: Uuid) {
+        let msg = AdminReq::GetPrimary {token: token.clone(),
+                                        tenant_id: tenant_id,
                                         reply_tx: self.reply_tx.clone()};
         self.send_async_dispatcher_msg(token, msg);
     }
