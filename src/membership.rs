@@ -96,11 +96,6 @@ impl Members {
         format!("{} (Self)\n{}{}", self.me.name, connected_str, disconnected_str)
     }
 
-    pub fn local_name(&self) -> String {
-        let orset = self.orset.read().unwrap();
-        orset.name.clone()
-    }
-
     pub fn join(&mut self, other: ORSet<Member>) {
         let mut orset = self.orset.write().unwrap();
         (*orset).join_state(other);

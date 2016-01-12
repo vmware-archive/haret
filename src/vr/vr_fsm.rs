@@ -945,6 +945,10 @@ fn maybe_start_view(ctx: &mut VrCtx, msg: VrMsg, from: Replica) -> StateFn<VrHan
 
 fn set_primary(ctx: &mut VrCtx) {
     let primary = compute_primary(ctx);
+    set_primary_(ctx, primary);
+}
+
+fn set_primary_(ctx: &mut VrCtx, primary: Replica) {
     ctx.primary = Some(primary.clone());
     let dispatch_msg = DispatchMsg::NewPrimary(primary);
     ctx.dispatch_sender.send(dispatch_msg);

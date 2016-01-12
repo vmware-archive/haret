@@ -173,8 +173,9 @@ fn reconfiguration() {
     }
 
     // Start the new replica
-    let dispatch_msg = dispatcher.try_recv_dispatch_msg().unwrap();
-    dispatcher.handle_dispatch_msg(dispatch_msg);
+    while let Ok(dispatch_msg) = dispatcher.try_recv_dispatch_msg() {
+        dispatcher.handle_dispatch_msg(dispatch_msg);
+    }
     assert_eq!(dispatcher.local_replicas.len(), 4);
 
     let (state, _) = dispatcher.get_state(&replicas[3]).unwrap();
