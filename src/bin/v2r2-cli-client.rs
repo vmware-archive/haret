@@ -11,46 +11,97 @@ use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
 use uuid::Uuid;
 use v2r2::vr::{VrMsg, Replica, ElementType, VrApiReq, VrApiRsp, ClientEnvelope};
+use v2r2::{
+               NewSessionRequest, NewSessionReply};
 use v2r2::frame::{ReadState, WriteState};
 use msgpack::{Encoder, from_msgpack};
-
-// TODO: Don't hardcode this
-const CLIENT_ID: &'static str = "F378DC44-F58B-4A6D-AF63-C8791C44043C";
 
 static mut req_num: u64 = 0;
 
 fn main() {
     let mut args = env::args();
-    let replica: Replica = args.nth(1).unwrap().parse().unwrap();
+    let tenant_id = Uuid::parse_str(&args.nth(1).unwrap()).unwrap();
     let addr = args.next().unwrap();
-    let sock = TcpStream::connect(&addr[..]).unwrap();
+    let (primary, sock, session_id) = start_session(tenant_id, addr);
     if let Some(flag) = args.next() {
-        run_script(&flag, args, sock, &replica);
+        run_script(&flag, args, sock, &primary, session_id);
     } else {
-        run_interactive(sock, &replica);
+        run_interactive(sock, &primary, session_id);
     }
 }
 
-fn run_interactive(mut sock: TcpStream, replica: &Replica) {
+fn start_session(tenant_id: Uuid, addr: String) -> (Replica, TcpStream, Uuid) {
+    let mut sock = TcpStream::connect(&addr[..]).unwrap();
+    send_new_session_request(tenant_id, &mut sock, addr);
+    let reply = read_session_reply(&mut sock);
+    match reply {
+        NewSessionReply::SessionId {session_id, primary} => {
+            println!("Session {} created for {}", session_id, primary);
+            (primary, sock, session_id)
+        },
+        NewSessionReply::Redirect {primary} => {
+            println!("Redirect to {}", primary);
+            (primary, sock, Uuid::nil())
+        },
+        NewSessionReply::Retry(timeout) => panic!("Retry in {} milliseconds", timeout)
+    }
+}
+
+fn read_session_reply(sock: &mut TcpStream) -> NewSessionReply {
+    let mut reader = ReadState::new();
+    loop {
+        match reader.read(sock) {
+            (_, Ok(Some(data))) => {
+                match from_msgpack(&data) {
+                    Ok(reply) => return reply,
+                    Err(_) => panic!("Failed to decode msgpack data for NewSessionReply")
+                }
+            },
+            (new_reader, Ok(None)) => {
+                reader = new_reader;
+            },
+            (_, Err(e)) => {
+                panic!("Failed to read response from server: {}", e);
+            }
+        }
+    }
+}
+
+fn send_new_session_request(tenant_id: Uuid, sock: &mut TcpStream, addr: String) {
+    let msg = Encoder::to_msgpack(&NewSessionRequest(tenant_id)).unwrap();
+    let mut writer = WriteState::new();
+    writer = writer.push(msg);
+    loop {
+        if let Ok((more_to_write, new_writer)) = writer.write(sock) {
+            if !more_to_write { break; }
+            writer = new_writer;
+        } else {
+            panic!("Failed to send session request to {}", addr);
+        }
+    }
+}
+
+fn run_interactive(mut sock: TcpStream, replica: &Replica, session_id: Uuid) {
     loop {
         prompt();
         let mut command = String::new();
         io::stdin().read_line(&mut command).unwrap();
-        match run(&command, &mut sock, replica) {
+        match run(&command, &mut sock, replica, session_id) {
             Ok(result) => println!("{}", result),
             Err(err) => println!("{}", err)
         }
     }
 }
 
-fn run_script(flag: &str, mut args: Args, mut sock: TcpStream, replica: &Replica) {
+fn run_script(flag: &str, mut args: Args, mut sock: TcpStream, replica: &Replica,
+              session_id: Uuid) {
     if flag != "-e" {
         println!("Invalid Flag");
         println!("{}", help());
         exit(-1);
     }
     let command = args.next().unwrap_or(String::new());
-    match run(&command, &mut sock, replica) {
+    match run(&command, &mut sock, replica, session_id) {
         Ok(result) => {
             println!("{}", result);
             exit(0);
@@ -62,9 +113,9 @@ fn run_script(flag: &str, mut args: Args, mut sock: TcpStream, replica: &Replica
     }
 }
 
-fn run(command: &str, sock: &mut TcpStream, replica: &Replica) -> Result<String> {
+fn run(command: &str, sock: &mut TcpStream, replica: &Replica, session_id: Uuid) -> Result<String> {
     let req = try!(parse(&command));
-    exec(req, sock, replica)
+    exec(req, sock, replica, session_id)
 }
 
 fn prompt() {
@@ -156,14 +207,14 @@ fn parse_list(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     Ok(VrApiReq::List {path: path})
 }
 
-fn exec(msg: VrApiReq, sock: &mut TcpStream, replica: &Replica) -> Result<String> {
+fn exec(msg: VrApiReq, sock: &mut TcpStream, replica: &Replica, session_id: Uuid) -> Result<String> {
     unsafe {
         req_num += 1;
     }
 
     let req = VrMsg::ClientRequest {
         op: msg,
-        client_id: Uuid::parse_str(CLIENT_ID).unwrap(),
+        session_id: session_id,
         request_num: unsafe { req_num }
     };
 
@@ -224,8 +275,7 @@ fn exec(msg: VrApiReq, sock: &mut TcpStream, replica: &Replica) -> Result<String
             (new_reader, Ok(None)) =>  {
                 reader = new_reader;
             },
-            (_, Err(_)) =>
-                return Err(Error::new(ErrorKind::Other, "Failed to read response from server"))
+            (_, Err(_)) => panic!("Failed to read response from server")
         }
     }
 }

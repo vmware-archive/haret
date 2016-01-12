@@ -34,6 +34,11 @@ mod debug_sender;
 mod timer_wheel;
 mod requests;
 mod timeout;
+mod shared_messages;
 
 pub use self::membership::Member;
 pub use self::timeout::Timeout;
+pub use self::shared_messages::{
+    NewSessionRequest,
+    NewSessionReply
+};

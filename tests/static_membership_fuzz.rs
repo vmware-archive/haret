@@ -61,15 +61,28 @@ impl VrTest {
                 Some(TestMsg::ClientRequest(req))
             },
             CLIENT_REQUEST_PCT...COMMIT_TOP => Some(TestMsg::Commit),
-            COMMIT_TOP...VIEW_CHANGE_TOP =>
-                Some(TestMsg::ViewChange(self.model.choose_live_backup())),
+            COMMIT_TOP...VIEW_CHANGE_TOP => {
+                // Reset the clients (really session IDs when the view changes). In production
+                // this would happen with tcp disconnect/reconnect.
+                self.clients = clients(self.clients.len());
+                Some(TestMsg::ViewChange(self.model.choose_live_backup()))
+            },
             VIEW_CHANGE_TOP...CRASH_TOP => {
                 match self.model.choose_live_replica() {
                     // We only crash at maximim a minority of replicas because otherwise we end up in
                     // an unsupported configuration with dataloss. In this case just try to generate
                     // a different message.
                     None => None,
-                    Some(replica) => Some(TestMsg::Crash(replica, Uuid::new_v4()))
+                    Some(replica) => {
+                        if let Some(ref primary) = self.model.primary {
+                            if replica == *primary {
+                                // Reset the clients (really session IDs when the view changes). In production
+                                // this would happen with tcp disconnect/reconnect.
+                                self.clients = clients(self.clients.len());
+                            }
+                        }
+                        Some(TestMsg::Crash(replica, Uuid::new_v4()))
+                    }
                 }
             },
             _ => {
@@ -243,7 +256,7 @@ fn assert_response_matches_internal_replica_state(test: &mut VrTest,
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 fn gen_client_request(rng: &mut ThreadRng, clients: &Vec<Uuid>, paths: &Vec<&'static str>, n: u64) -> VrMsg {
     VrMsg::ClientRequest {
-        client_id: oneof(rng, clients),
+        session_id: oneof(rng, clients),
         request_num: n,
         op: gen_op(rng, paths)
     }

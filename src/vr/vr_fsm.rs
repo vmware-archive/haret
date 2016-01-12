@@ -1,4 +1,4 @@
-use std::collections::{HashMap, BTreeMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::Sender;
 use std::iter::FromIterator;
 use uuid::Uuid;
@@ -9,6 +9,8 @@ use super::replica::{Replica, VersionedReplicas};
 use super::messages::*;
 use super::dispatcher::DispatchMsg;
 use super::VrBackend;
+use super::quorum_tracker::QuorumTracker;
+use super::prepare_requests::PrepareRequests;
 use debug_sender::DebugSender;
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
@@ -23,7 +25,6 @@ pub enum StartupState {
 
 /// The internal state of the VR FSM. Note that fields are only made public for visibility,
 /// debugging and testing purposes.
-//#[derive(Debug, Clone)]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VrCtx {
     pub me: Replica,
@@ -39,25 +40,20 @@ pub struct VrCtx {
     /// The number of replicas needed to provide quorum
     pub quorum: u64,
 
-    /// In many parts of the protocol a replica will be waiting for a quorum of responses. Each
-    /// received message of the correct type is placed in `quorum_messages`. When quorum is complete
-    /// or the state changes to no longer needing that particular quorum, quorum_messages should be
-    /// cleared.
-    pub quorum_messages: HashMap<Replica, VrMsg>,
+    /// Used to track waiting on quorums for a single message (DoViewChange, StartEpoch, ...)
+    pub quorum_tracker: QuorumTracker,
 
-    /// The primary uses `commit_quorum` to track the highest seen op number returned in PrepareOk
-    /// from each replica. When it sees a quorum of values >= some op number it commits all ops up
-    /// to the given number.
-    pub commit_quorum: HashMap<Replica, u64>,
+    /// Used by the replica in primary state tracking quorums of Prepare requests
+    pub prepare_requests: PrepareRequests,
 
     pub log: Vec<VrMsg>,
     pub backend: VrBackend,
     pub old_config: VersionedReplicas,
     pub new_config: VersionedReplicas,
 
-    /// As opposed to the Viewstamped replication revisited paper, we only use the client table on
-    /// the current primary and do not replicate it.
-    pub client_table: HashMap<Uuid, (u64, Option<VrMsg>)>,
+    /// As opposed to the Viewstamped replication revisited paper, we keep a session table instead
+    /// of a client table and we do not replicate it.
+    pub session_table: HashMap<Uuid, (u64, Option<VrMsg>)>,
 
     /// The nonce of the last sent recovery message
     pub recovery_nonce: Option<Uuid>,
@@ -66,6 +62,7 @@ pub struct VrCtx {
     /// view learned about in the quorum. We maintain track of the latest view primary heard from in
     /// `recovery_primary`
     pub recovery_primary: Option<(Replica, u64)>,
+    pub recovery_primary_response: Option<VrMsg>,
 
     /// Backups wait `idle_timeout_ms` between messages from the primary before initiating a view
     /// change.
@@ -88,6 +85,7 @@ impl VrCtx {
                sender: Sender<Envelope>,
                client_reply_sender: Sender<ClientReplyEnvelope>,
                dispatch_sender: Sender<DispatchMsg>) -> VrCtx {
+        let quorum = new_config.replicas.len() / 2 + 1;
         VrCtx {
             me: me,
             primary: None,
@@ -98,16 +96,18 @@ impl VrCtx {
             startup_state: startup_state,
             last_received_time: SteadyTime::now(),
             last_normal_view: 0,
-            quorum: (new_config.replicas.len() / 2 + 1) as u64,
-            quorum_messages: HashMap::new(),
-            commit_quorum: HashMap::new(),
+            quorum: quorum as u64,
+            quorum_tracker: QuorumTracker::new(quorum),
+            prepare_requests: PrepareRequests::new(new_config.replicas.len(),
+                                                   DEFAULT_IDLE_TIMEOUT_MS),
             log: Vec::new(),
             backend: VrBackend::new(),
             old_config: old_config,
             new_config: new_config,
-            client_table: HashMap::new(),
+            session_table: HashMap::new(),
             recovery_nonce: None,
             recovery_primary: None,
+            recovery_primary_response: None,
             idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
             primary_tick_ms: DEFAULT_PRIMARY_TICK_MS,
             sender: DebugSender::new(sender),
@@ -132,8 +132,8 @@ impl FsmHandler for VrHandler {
 macro_rules! check_epoch {
     ($ctx:ident, $msg:ident, $state:ident) => {
         match $msg {
-            VrMsg::SessionClosed(client_id) => {
-                $ctx.client_table.remove(&client_id);
+            VrMsg::SessionClosed(session_id) => {
+                $ctx.session_table.remove(&session_id);
                 return next!($state);
             },
             VrMsg::StartViewChange {epoch, ..} if epoch < $ctx.epoch => return next!($state),
@@ -194,15 +194,15 @@ macro_rules! check_epoch {
 /// check them here.
 macro_rules! check_view {
     ($ctx:ident, $msg:ident, $state:ident) => {
-        match $msg {
+        match $msg.clone() {
             VrMsg::StartViewChange {view, ref from, ..} if view > $ctx.view => {
-                reset_quorum($ctx, $msg.clone(), view, from.clone());
+                reset_quorum($ctx, view, from.clone(), $msg);
                 return start_view_change($ctx)
             },
             VrMsg::StartViewChange {view, ..} if view < $ctx.view => return next!($state),
             VrMsg::DoViewChange {view, ref from, ..} if view >= $ctx.view => {
-                reset_quorum($ctx, $msg.clone(), view, from.clone());
-                return maybe_start_view($ctx, $msg.clone(), from.clone());
+                reset_quorum($ctx, view, from.clone(), $msg.clone());
+                return maybe_start_view($ctx, from.clone(), $msg);
             },
             VrMsg::DoViewChange {view, ..} if view < $ctx.view => return next!($state),
             VrMsg::StartView {view, ..} if view >= $ctx.view => {
@@ -254,8 +254,8 @@ pub fn primary(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
     check_view!(ctx, msg, primary);
     let msg2 = msg.clone();
     match msg {
-        VrMsg::ClientRequest {op, client_id, request_num} => {
-            handle_client_request(ctx, msg2, op, client_id, request_num);
+        VrMsg::ClientRequest {op, session_id, request_num} => {
+            handle_client_request(ctx, msg2, op, session_id, request_num);
             next!(primary)
         },
         VrMsg::PrepareOk {view, op, ref from, ..} if view == ctx.view && op > ctx.commit_num => {
@@ -263,6 +263,9 @@ pub fn primary(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
             next!(primary)
         },
         VrMsg::Tick => {
+            if ctx.prepare_requests.expired() {
+                return reset_and_start_view_change(ctx);
+            }
             if primary_idle_timeout(ctx) {
                 broadcast_commit_msg(ctx);
             }
@@ -297,7 +300,7 @@ pub fn backup(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
         VrMsg::Commit {commit_num, ..} => {
             handle_commit(ctx, commit_num)
         },
-        VrMsg::Tick => {
+       VrMsg::Tick => {
             if idle_timeout(ctx) {
                 reset_and_start_view_change(ctx)
             } else {
@@ -349,8 +352,7 @@ pub fn transitioning(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
         VrMsg::NewState {op, ..} if op >= ctx.new_config.op => {
             set_state(ctx, msg);
             if replicas_to_replace(ctx).contains(&ctx.me) {
-                ctx.quorum_messages = HashMap::new();
-                return next!(transitioning_to_replace)
+                return next!(leaving)
             }
             send_epoch_started(ctx);
             if ctx.me == compute_primary(ctx) {
@@ -364,25 +366,27 @@ pub fn transitioning(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
 
 /// A replica is in this state after it has a reconfiguration request in its log and it is not in
 /// the new configuration. It is waiting for f' + 1 EpochStarted messages so that it can shutdown.
-pub fn transitioning_to_replace(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
-    check_epoch!(ctx, msg, transitioning_to_replace);
+pub fn leaving(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
+    check_epoch!(ctx, msg, leaving);
     match msg {
         VrMsg::EpochStarted {ref from, ..} => {
-            ctx.quorum_messages.insert(from.clone(), msg.clone());
-            if quorum(&ctx) {
+            ctx.quorum_tracker.insert(from.clone(), msg.clone());
+            if ctx.quorum_tracker.has_quorum() {
+                reset_quorum_trackers(ctx);
                 let stop = DispatchMsg::Stop(ctx.me.clone());
                 ctx.dispatch_sender.send(stop);
                 return next!(shutdown)
             }
-            next!(transitioning_to_replace)
+            next!(leaving)
         },
         VrMsg::Tick => {
-            if idle_timeout(ctx) {
+            let timeout = u64_to_duration(ctx.idle_timeout_ms);
+            if ctx.quorum_tracker.is_expired(&timeout) {
                 broadcast_start_epoch(ctx);
             }
-            next!(transitioning_to_replace)
+            next!(leaving)
         }
-        _ => next!(transitioning_to_replace)
+        _ => next!(leaving)
     }
 }
 
@@ -395,8 +399,17 @@ pub fn shutdown(_ctx: &mut VrCtx, _: VrMsg) -> StateFn<VrHandler> {
 pub fn recovery(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
     check_epoch!(ctx, msg, recovery);
     match msg {
-        VrMsg::RecoveryResponse {view, ref op, ref nonce, ref from, ..} if Some(*nonce) == ctx.recovery_nonce =>
+        VrMsg::RecoveryResponse {view, ref op, ref nonce, ref from, ..}
+          if Some(*nonce) == ctx.recovery_nonce =>
             maybe_recover(ctx, msg.clone(), view, op.is_some(), from.clone()),
+        VrMsg::Tick => {
+            let timeout = u64_to_duration(ctx.idle_timeout_ms);
+            if ctx.quorum_tracker.is_expired(&timeout) {
+                start_recovery(ctx)
+            } else {
+                next!(recovery)
+            }
+        },
         _ => next!(recovery)
     }
 }
@@ -407,15 +420,14 @@ pub fn recovery(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
 pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
     check_epoch!(ctx, msg, view_change);
     check_view!(ctx, msg, view_change);
-    let msg2 = msg.clone();
     match msg {
         VrMsg::StartViewChange{ref from, ..} => {
-            ctx.quorum_messages.insert(from.clone(), msg2);
+            ctx.quorum_tracker.insert(from.clone(), msg.clone());
             maybe_send_do_view_change(ctx)
         },
         VrMsg::Tick => {
             // We haven't changed views yet. The new primary must be down. Try again.
-            if idle_timeout(ctx) {
+            if ctx.quorum_tracker.is_expired(&u64_to_duration(ctx.idle_timeout_ms)) {
                 reset_and_start_view_change(ctx)
             } else {
                 next!(view_change)
@@ -442,9 +454,8 @@ pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
 pub fn do_view_change(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
     check_epoch!(ctx, msg, do_view_change);
     check_view!(ctx, msg, do_view_change);
-    let msg2 = msg.clone();
-    match msg {
-        VrMsg::DoViewChange{from, ..} => maybe_start_view(ctx, msg2, from),
+    match msg.clone() {
+        VrMsg::DoViewChange{from, ..} => maybe_start_view(ctx, from, msg),
         _ => next!(do_view_change)
     }
 }
@@ -469,8 +480,10 @@ pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
 fn reset_and_start_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
     ctx.last_received_time = SteadyTime::now();
     ctx.view += 1;
-    ctx.commit_quorum = HashMap::new();
-    ctx.quorum_messages = HashMap::new();
+    ctx.prepare_requests = PrepareRequests::new(ctx.new_config.replicas.len(),
+                                                ctx.idle_timeout_ms);
+    ctx.quorum_tracker = QuorumTracker::new(ctx.quorum as usize);
+    clear_primary(ctx);
     start_view_change(ctx)
 }
 
@@ -482,12 +495,12 @@ fn learn_config(_ctx: &mut VrCtx, _epoch: u64) -> StateFn<VrHandler> {
 // only be a reconfig or client request in the log.
 fn rebroadcast_reconfig(ctx: &mut VrCtx) {
     let reconfig = ctx.log[(ctx.op - 1) as usize].clone();
-    if let VrMsg::Reconfiguration {client_id, client_req_num, ..} = reconfig {
+    if let VrMsg::Reconfiguration {session_id, client_req_num, ..} = reconfig {
         let prepare = VrMsg::Prepare {
             epoch: ctx.epoch,
             view: ctx.view,
             op: ctx.op,
-            client_id: client_id,
+            session_id: session_id,
             client_request_num: client_req_num,
             client_op: VrApiReq::Null,
             commit_num: ctx.commit_num
@@ -609,11 +622,16 @@ fn send_new_state(ctx: &mut VrCtx, msg: VrMsg) {
     }
 }
 
+fn reset_quorum_trackers(ctx: &mut VrCtx) {
+    ctx.quorum_tracker = QuorumTracker::new(ctx.quorum as usize);
+}
+
 fn set_state(ctx: &mut VrCtx, msg: VrMsg) {
     if let VrMsg::NewState {view, op, commit_num, log_tail, ..} = msg {
         ctx.view = view;
         ctx.op = op;
         set_primary(ctx);
+        reset_quorum_trackers(ctx);
         for m in log_tail {
             ctx.log.push(m);
         }
@@ -657,7 +675,7 @@ fn handle_start_epoch(ctx: &mut VrCtx,
 /// The primary in the old epoch has sent a commit with the new epoch number to the backups in the
 /// old config. The backups bump their epoch number, ensure they have the latest state, commit
 /// operations up to the reconfig and transition to either backup, primary, or
-/// transitioning_to_replace if they are not a member of the new group.
+/// leaving if they are not a member of the new group.
 fn handle_commit_new_epoch(ctx: &mut VrCtx, commit_num: u64, epoch: u64) -> StateFn<VrHandler> {
     ctx.last_received_time = SteadyTime::now();
     ctx.epoch = epoch;
@@ -672,8 +690,8 @@ fn handle_commit_new_epoch(ctx: &mut VrCtx, commit_num: u64, epoch: u64) -> Stat
         return learn_config(ctx, epoch);
     }
     if to_replace.contains(&ctx.me) {
-        ctx.quorum_messages = HashMap::new();
-        return next!(transitioning_to_replace)
+        reset_quorum_trackers(ctx);
+        return next!(leaving)
     }
     if ctx.me == compute_primary(ctx) {
         return next!(primary)
@@ -728,12 +746,12 @@ fn start_state_transfer_new_view(ctx: &mut VrCtx, view: u64) -> StateFn<VrHandle
 
 fn handle_normal_prepare(ctx: &mut VrCtx, msg: VrMsg) {
     assert!(ctx.primary.is_some());
-    if let VrMsg::Prepare { client_op, commit_num, client_id, client_request_num, ..} = msg {
+    if let VrMsg::Prepare { client_op, commit_num, session_id, client_request_num, ..} = msg {
         ctx.last_received_time = SteadyTime::now();
         ctx.op += 1;
         // Reconstruct Client Request, since the log stores VrMsgs
         let client_req = VrMsg::ClientRequest { op: client_op,
-                                                client_id: client_id,
+                                                session_id: session_id,
                                                 request_num: client_request_num};
         ctx.log.push(client_req);
         let prepare_ok = VrMsg::PrepareOk { epoch: ctx.epoch,
@@ -761,7 +779,7 @@ fn send_to_primary(ctx: &VrCtx, msg: VrMsg) {
 
 /// Handle a Reconfiguration request as the primary
 fn handle_reconfig(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
-    if let VrMsg::Reconfiguration {client_id, client_req_num, epoch, ref replicas} = msg {
+    if let VrMsg::Reconfiguration {session_id, client_req_num, epoch, ref replicas} = msg {
         if replicas.len() < 3 {
             let errmsg = "New config must contain at least 3 replicas".to_string();
             let reply = VrMsg::ClientReply {
@@ -770,7 +788,7 @@ fn handle_reconfig(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
                 request_num: client_req_num,
                 value: VrApiRsp::Error {msg: errmsg}
             };
-            send_client_reply(ctx, client_id, reply);
+            send_client_reply(ctx, session_id, reply);
             return next!(primary);
         }
         if epoch < ctx.epoch || epoch > ctx.epoch {
@@ -781,10 +799,10 @@ fn handle_reconfig(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
                 request_num: client_req_num,
                 value: VrApiRsp::Error {msg: errmsg}
             };
-            send_client_reply(ctx, client_id, reply);
+            send_client_reply(ctx, session_id, reply);
             return next!(primary);
         }
-        handle_client_request(ctx, msg.clone(), VrApiReq::Null, client_id, client_req_num);
+        handle_client_request(ctx, msg.clone(), VrApiReq::Null, session_id, client_req_num);
         return next!(transitioning_primary)
     }
     assert!(false);
@@ -795,36 +813,37 @@ fn handle_reconfig(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
 fn handle_client_request(ctx: &mut VrCtx,
                          msg: VrMsg,
                          client_op: VrApiReq,
-                         client_id: Uuid,
+                         session_id: Uuid,
                          req_num: u64)
 {
-    if sent_last_response(ctx, &client_id, req_num) { return; }
+    if sent_last_response(ctx, &session_id, req_num) { return; }
     ctx.last_received_time = SteadyTime::now();
-    ctx.client_table.insert(client_id, (req_num, None));
+    ctx.session_table.insert(session_id, (req_num, None));
     ctx.op += 1;
     ctx.log.push(msg);
     let prepare = VrMsg::Prepare { epoch: ctx.epoch,
                                    view: ctx.view,
                                    op: ctx.op,
-                                   client_id: client_id,
+                                   session_id: session_id,
                                    client_request_num: req_num,
                                    client_op: client_op,
                                    commit_num: ctx.commit_num };
+    ctx.prepare_requests.new_prepare(ctx.op);
     broadcast(ctx, prepare);
 }
 
-fn sent_last_response(ctx: &mut VrCtx, client_id: &Uuid, req_num: u64) -> bool {
-    if let Some(&(last_req_num, ref maybe_last_response)) = ctx.client_table.get(&client_id) {
+fn sent_last_response(ctx: &mut VrCtx, session_id: &Uuid, req_num: u64) -> bool {
+    if let Some(&(last_req_num, ref maybe_last_response)) = ctx.session_table.get(&session_id) {
         if last_req_num == req_num && maybe_last_response.is_some() {
             // Client replies must be sent with the latest epoch and view. This may be different
-            // from when the operation was actually committed and stored in the client_table.
+            // from when the operation was actually committed and stored in the session_table.
             let last_response = maybe_last_response.clone().unwrap();
             if let VrMsg::ClientReply {request_num, value, ..} = last_response {
                 let reply = VrMsg::ClientReply {epoch: ctx.epoch,
                                                 view: ctx.view,
                                                 request_num: request_num,
                                                 value: value};
-                send_client_reply(ctx, client_id.clone(), reply);
+                send_client_reply(ctx, session_id.clone(), reply);
                 return true;
             }
         } else if last_req_num >= req_num {
@@ -836,8 +855,8 @@ fn sent_last_response(ctx: &mut VrCtx, client_id: &Uuid, req_num: u64) -> bool {
     return false;
 }
 
-fn send_client_reply(ctx: &VrCtx, client_id: Uuid, reply: VrMsg) {
-    let envelope = ClientReplyEnvelope {to: client_id, msg: reply};
+fn send_client_reply(ctx: &VrCtx, session_id: Uuid, reply: VrMsg) {
+    let envelope = ClientReplyEnvelope {to: session_id, msg: reply};
     ctx.client_reply_sender.send(envelope);
 }
 
@@ -846,8 +865,9 @@ fn become_backup(ctx: &mut VrCtx, msg: VrMsg) -> StateFn<VrHandler> {
         ctx.view = view;
         ctx.op = op;
         ctx.log = log;
-        ctx.commit_quorum = HashMap::new();
-        ctx.quorum_messages = HashMap::new();
+        ctx.prepare_requests = PrepareRequests::new(ctx.new_config.replicas.len(),
+                                                    ctx.idle_timeout_ms);
+        ctx.quorum_tracker = QuorumTracker::new(ctx.quorum as usize);
         set_primary(ctx);
         send_prepare_ok_for_uncommitted_ops(ctx);
         backup_commit_known_committed_ops(ctx, commit_num);
@@ -879,16 +899,17 @@ fn backup_commit_known_committed_ops(ctx: &mut VrCtx, new_commit_num: u64) {
 fn primary_commit_known_committed_ops(ctx: &mut VrCtx, last_commit_num: u64) {
     for i in last_commit_num..ctx.commit_num {
         let msg = ctx.log[i as usize].clone();
-        if let VrMsg::ClientRequest {op, client_id, request_num} = msg.clone() {
+        if let VrMsg::ClientRequest {op, session_id, request_num} = msg.clone() {
             let rsp = ctx.backend.call(i+1, op.clone());
             let reply = VrMsg::ClientReply {epoch: ctx.epoch,
                                             view: ctx.view,
                                             request_num: request_num,
                                             value: rsp};
-            ctx.client_table.insert(client_id.clone(), (request_num, Some(reply.clone())));
-            send_client_reply(ctx, client_id, reply);
+            if store_client_reply(ctx, &session_id, request_num, &reply) {
+                send_client_reply(ctx, session_id, reply);
+            }
         }
-        if let VrMsg::Reconfiguration {client_id, client_req_num, epoch, ..} = msg {
+        if let VrMsg::Reconfiguration {session_id, client_req_num, epoch, ..} = msg {
             let rsp = ctx.backend.call(i+1, VrApiReq::Null);
             let reply = VrMsg::ClientReply {
                 epoch: epoch,
@@ -896,9 +917,22 @@ fn primary_commit_known_committed_ops(ctx: &mut VrCtx, last_commit_num: u64) {
                 request_num: client_req_num,
                 value: rsp
             };
-            ctx.client_table.insert(client_id.clone(), (client_req_num, Some(reply.clone())));
-            send_client_reply(ctx, client_id, reply);
+            if store_client_reply(ctx, &session_id, client_req_num, &reply) {
+                send_client_reply(ctx, session_id, reply);
+            }
         }
+    }
+}
+
+/// Store a client reply in the session table if the session is current for the primary
+/// Returns true if the client reply was stored in the session table, false otherwise
+fn store_client_reply(ctx: &mut VrCtx, session_id: &Uuid, req_num: u64, reply: &VrMsg) -> bool {
+    if let Some(&mut(ref mut req, ref mut rpy) ) = ctx.session_table.get_mut(&session_id) {
+        *req = req_num;
+        *rpy = Some(reply.clone());
+        true
+    } else {
+        false
     }
 }
 
@@ -909,38 +943,45 @@ fn send_prepare_ok_for_uncommitted_ops(ctx: &VrCtx) {
     }
 }
 
-fn reset_quorum(ctx: &mut VrCtx, msg: VrMsg, view: u64, from: Replica) {
+fn reset_quorum(ctx: &mut VrCtx, view: u64, from: Replica, msg: VrMsg) {
     ctx.last_received_time = SteadyTime::now();
     ctx.view = view;
-    ctx.commit_quorum = HashMap::new();
-    ctx.quorum_messages = HashMap::new();
-    ctx.quorum_messages.insert(from, msg);
+    ctx.prepare_requests = PrepareRequests::new(ctx.new_config.replicas.len(),
+                                                ctx.idle_timeout_ms);
+    ctx.quorum_tracker = QuorumTracker::new(ctx.quorum as usize);
+    ctx.quorum_tracker.insert(from, msg);
 }
 
 fn maybe_commit(ctx: &mut VrCtx, op: u64, from: Replica) {
-    ctx.commit_quorum.insert(from.clone(), op);
-    if let Some(n) = get_commit_quorum(&ctx) {
+    ctx.prepare_requests.insert(op, from.clone());
+    if ctx.prepare_requests.has_quorum(op) {
         let last_commit_num = ctx.commit_num;
-        ctx.commit_num = n;
+        ctx.commit_num = op;
+        ctx.prepare_requests.remove(op);
         primary_commit_known_committed_ops(ctx, last_commit_num);
     }
 }
 
-fn maybe_start_view(ctx: &mut VrCtx, msg: VrMsg, from: Replica) -> StateFn<VrHandler> {
-    ctx.quorum_messages.insert(from.clone(), msg.clone());
-    if quorum(&ctx) {
+fn maybe_start_view(ctx: &mut VrCtx, from: Replica, msg: VrMsg) -> StateFn<VrHandler> {
+    ctx.quorum_tracker.insert(from, msg);
+    if ctx.quorum_tracker.has_quorum() {
         let last_commit_num = ctx.commit_num;
         set_latest_state(ctx);
         broadcast_start_view_msg(&ctx);
         primary_commit_known_committed_ops(ctx, last_commit_num);
-        let view = ctx.view;
-        println!("Elected {:?} as primary of view {} with msg {:#?} !!!", ctx.me, ctx.view, msg);
+        println!("Elected {:?} as primary of view {}", ctx.me, ctx.view);
         set_primary(ctx);
-        reset_quorum(ctx, msg, view, from.clone());
+        reset_quorum_trackers(ctx);
         next!(primary)
     } else {
         next!(do_view_change)
     }
+}
+
+fn clear_primary(ctx: &mut VrCtx) {
+    ctx.primary = None;
+    let dispatch_msg = DispatchMsg::ClearPrimary(ctx.me.tenant);
+    ctx.dispatch_sender.send(dispatch_msg);
 }
 
 fn set_primary(ctx: &mut VrCtx) {
@@ -960,7 +1001,7 @@ fn set_latest_state(ctx: &mut VrCtx) {
     let mut largest_op = 0;
     let mut largest_log = Vec::new();
     // Find the latest values contained in received DoViewChange messages
-    for (_, m) in ctx.quorum_messages.drain() {
+    for (_, m) in ctx.quorum_tracker.drain() {
         if let VrMsg::DoViewChange{op, last_normal_view, commit_num, log, ..} = m {
             if last_normal_view > largest_last_normal_view {
                 largest_last_normal_view = last_normal_view;
@@ -988,8 +1029,8 @@ fn set_latest_state(ctx: &mut VrCtx) {
         ctx.commit_num = largest_commit_num;
     }
 
-    ctx.quorum_messages = HashMap::new();
     ctx.last_normal_view = ctx.view;
+    reset_quorum_trackers(ctx);
 }
 
 fn broadcast_commit_msg(ctx: &VrCtx) {
@@ -1017,15 +1058,15 @@ fn maybe_recover(ctx: &mut VrCtx, msg: VrMsg, view: u64, is_primary: bool, from:
     if view > ctx.view { ctx.view = view }
     // Is this a response from a primary?
     if is_primary && view == ctx.view {
-        ctx.recovery_primary = Some((from.clone(), view))
+        ctx.recovery_primary = Some((from.clone(), view));
+        ctx.recovery_primary_response = Some(msg.clone());
     }
-    ctx.quorum_messages.insert(from, msg);
-    if super_quorum(&ctx) {
+    ctx.quorum_tracker.insert(from, msg);
+    if ctx.quorum_tracker.has_super_quorum() {
         match ctx.recovery_primary.clone() {
-            Some((ref primary, ref primary_view)) if *primary_view == ctx.view => {
-                let primary_response = ctx.quorum_messages.remove(primary).unwrap();
+            Some((_, ref primary_view)) if *primary_view == ctx.view => {
                 // Always succeeds
-                if let VrMsg::RecoveryResponse {epoch, op, commit_num, log, ..} = primary_response {
+                if let VrMsg::RecoveryResponse {epoch, op, commit_num, log, ..} = ctx.recovery_primary_response.take().unwrap() {
                     // Set our state to that of the latest primary
                     set_primary(ctx);
                     ctx.epoch = epoch;
@@ -1033,10 +1074,11 @@ fn maybe_recover(ctx: &mut VrCtx, msg: VrMsg, view: u64, is_primary: bool, from:
                     ctx.log = log.unwrap();
                     backup_commit_known_committed_ops(ctx, commit_num.unwrap());
                 }
+                reset_quorum_trackers(ctx);
                 // Reset recovery related variables
-                ctx.quorum_messages = HashMap::new();
                 ctx.recovery_nonce = None;
                 ctx.recovery_primary = None;
+                ctx.recovery_primary_response = None;
 
                 return next!(backup)
             },
@@ -1048,7 +1090,7 @@ fn maybe_recover(ctx: &mut VrCtx, msg: VrMsg, view: u64, is_primary: bool, from:
 }
 
 fn maybe_send_do_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
-    if quorum(&ctx) {
+    if ctx.quorum_tracker.has_quorum() {
         set_primary(ctx);
         let primary = ctx.primary.clone().unwrap();
         if primary == ctx.me {
@@ -1068,38 +1110,6 @@ fn maybe_send_do_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
     next!(view_change)
 }
 
-#[inline]
-fn quorum(ctx: &VrCtx) -> bool {
-    // We add 1 because we implicitly include the replica doing the check
-    (ctx.quorum_messages.len() + 1) >= ctx.quorum as usize
-}
-
-// A quorum not containing one's self
-#[inline]
-fn super_quorum(ctx: &VrCtx) -> bool {
-    ctx.quorum_messages.len() >= ctx.quorum as usize
-}
-
-// I'm sure this could be more efficient. At least the count_map could be allocated once and
-// re-used.
-fn get_commit_quorum(ctx: &VrCtx) -> Option<u64> {
-    let mut count_map = BTreeMap::new();
-    let mut highest_op = 0;
-    for (_, &op) in ctx.commit_quorum.iter() {
-        *count_map.entry(op).or_insert(0) += 1;
-    }
-    for (&op, &count) in count_map.iter() {
-        if (count + 1) as u64 >= ctx.quorum {
-            highest_op = op;
-        }
-    }
-    if highest_op > 0 {
-        Some(highest_op)
-    } else {
-        None
-    }
-}
-
 fn compute_primary(ctx: &VrCtx) -> Replica {
     let index = ctx.view as usize % ctx.new_config.replicas.len();
     ctx.new_config.replicas[index].clone()
@@ -1115,7 +1125,10 @@ fn start_view_change(ctx: &mut VrCtx) -> StateFn<VrHandler> {
 }
 
 fn start_recovery(ctx: &mut VrCtx) -> StateFn<VrHandler> {
+    reset_quorum_trackers(ctx);
     ctx.recovery_nonce = Some(Uuid::new_v4());
+    ctx.recovery_primary = None;
+    ctx.recovery_primary_response = None;
     let msg = VrMsg::Recovery {
         from: ctx.me.clone(),
         nonce: ctx.recovery_nonce.clone().unwrap()
@@ -1161,3 +1174,8 @@ fn idle_timeout(ctx: &VrCtx) -> bool {
 fn primary_idle_timeout(ctx: &VrCtx) -> bool {
     SteadyTime::now() - ctx.last_received_time > Duration::milliseconds(ctx.primary_tick_ms as i64)
 }
+
+pub fn u64_to_duration(timeout: u64) -> Duration {
+    Duration::milliseconds(timeout as i64)
+}
+

@@ -4,7 +4,7 @@ use std::fmt::{Display, Error, Formatter};
 
 #[derive(Debug, Clone)]
 pub struct Timeout {
-    client_id: Uuid,
+    session_id: Uuid,
     epoch: u64,
     view: u64,
     request_num: u64,

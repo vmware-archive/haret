@@ -6,7 +6,7 @@ use rand::distributions::{IndependentSample, Range};
 
 /// Create a list of n clients
 pub fn clients(n: usize) -> Vec<Uuid>{
-    let mut clients = Vec::new();
+    let mut clients = Vec::with_capacity(n);
     for _ in 0..n {
         clients.push(Uuid::new_v4());
     }

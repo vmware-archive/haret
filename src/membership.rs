@@ -19,6 +19,18 @@ pub struct Member {
     pub vr_api_host: String
 }
 
+impl Member {
+    #[cfg(debug_assertions)]
+    pub fn new_test_node(name: &str) -> Member {
+        Member {
+            name: name.to_string(),
+            cluster_host: "".to_string(),
+            vr_host: "".to_string(),
+            vr_api_host: "".to_string()
+        }
+    }
+}
+
 /// We only want to do comparisons on the name of the Member. Note however that this can cause
 /// problems when merging ORSets of members with the same name and different hosts. However, we
 /// prevent this in the Members wrapper at join time by doing a full equality check. This allows us

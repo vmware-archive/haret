@@ -5,9 +5,10 @@ mod tenants;
 mod backend;
 mod element;
 mod vr_stats;
+mod quorum_tracker;
+mod prepare_requests;
 
 pub mod messages;
-
 
 pub use self::vr_fsm::{
     VrCtx,
@@ -36,7 +37,8 @@ pub use self::messages::{
     ClientEnvelope,
     ClientReplyEnvelope,
     VrApiReq,
-    VrApiRsp};
+    VrApiRsp
+};
 
 pub use self::backend::{Element, VrBackend};
 pub use self::element::ElementType;
