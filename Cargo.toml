@@ -22,6 +22,25 @@ git = "https://github.com/carllerche/mio.git"
 [dependencies.msgpack]
 git = "https://github.com/mneumann/rust-msgpack.git"
 
+[dependencies.streaming-stats]
+git = "git://github.com/BurntSushi/rust-stats"
+
+[[bin]]
+name = "v2r2"
+path = "src/bin/v2r2.rs"
+
+[[bin]]
+name = "v2r2-cli-client"
+path = "src/bin/v2r2-cli-client.rs"
+
+[[bin]]
+name = "v2r2-admin"
+path = "src/bin/v2r2-admin.rs"
+
+[[bin]]
+name = "devconfig"
+path = "src/bin/devconfig.rs"
+
 [[bin]]
 name = "debugger_cli"
 path = "tests/debugger_cli.rs"

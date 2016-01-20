@@ -1,8 +1,11 @@
-pub mod server;
-pub mod handler;
-pub mod msg;
+mod server;
 mod messages;
 
-pub use self::messages::{Msg, Req, Res};
-pub use self::msg::AdminMsg;
-pub use self::handler::AdminHandler;
+pub use self::server::AdminServer;
+
+pub use self::messages::{
+    AdminReq,
+    AdminRpy,
+    AdminClientReq,
+    AdminClientRpy
+};

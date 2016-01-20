@@ -14,8 +14,8 @@ impl State {
     pub fn new() -> State {
         let config = Config::read();
         let members = Members::new(config.node_name.clone(),
-                                   config.cluster_name.clone(),
-                                   config.cluster_host.clone());
+                                   config.cluster_host.clone(),
+                                   config.vr_host.clone());
         State {
             config: Arc::new(RwLock::new(config)),
             members: members,
@@ -23,13 +23,13 @@ impl State {
         }
     }
 
+    // This would be way more efficient with an atomic u64 instead of a lock
     pub fn next_token(&mut self) -> Token {
         let mut token = self.token.lock().unwrap();
         let Token(count) = *token;
         *token = Token(count + 1);
         *token
     }
-
 }
 
 impl Clone for State {

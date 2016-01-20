@@ -2,14 +2,13 @@
 
 use v2r2::vr::{Dispatcher, Replica, RawReplica, VrMsg};
 use v2r2::Member;
+use v2r2::state::State;
 
 pub fn init_tenant() -> (Dispatcher, Vec<Replica>) {
-    let node = Member {
-        name: "node1".to_string(),
-        cluster: "test".to_string(),
-        ip: "127.0.0.1:5000".to_string()
-    };
-    let mut dispatcher = Dispatcher::new(node.clone());
+    let state = State::new();
+    let node = state.members.me.clone();
+
+    let mut dispatcher = Dispatcher::new(&state);
     // Set the timeouts to zero to preclude the need for sleeps
     dispatcher.set_idle_timeout_ms(0);
 

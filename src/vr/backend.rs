@@ -149,8 +149,8 @@ impl VrBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vr_api::messages::*;
-    use vr_api::ElementType;
+    use vr::messages::*;
+    use vr::ElementType;
 
     fn assert_ok(res: Result<VrApiRsp, VrApiRsp>) {
         match res {

@@ -149,7 +149,7 @@ fn print2(debugger: &Debugger, arg: &str) {
                     }
                 }
             } else {
-                println!("Invalid replica format. Must be of type node:name");
+                println!("Invalid replica format. Must be of type name::node");
                 help();
             }
         }
@@ -157,21 +157,21 @@ fn print2(debugger: &Debugger, arg: &str) {
 }
 
 fn parse_replica(replica_str: &str) -> Option<Replica> {
-    let v: Vec<&str> = replica_str.split(':').collect();
+    let v: Vec<&str> = replica_str.split("::").collect();
     if v.len() != 2 { return None }
-    let node = v[0].to_string();
-    let name = v[1].to_string();
+    let replica_name = v[0].to_string();
+    let node_name = v[1].to_string();
     // This is the same data used in test_setup.rs
     let member = Member {
-        name: node,
-        cluster: "test".to_string(),
-        ip: "127.0.0.1:5000".to_string()
+        name: node_name,
+        cluster_host: "".to_string(),
+        vr_host: "".to_string()
     };
 
     let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
     Some(Replica {
         tenant: tenant,
-        name: name,
+        name: replica_name,
         node: member
     })
 }

@@ -10,16 +10,17 @@ use state::State;
 use event::Event;
 use tcphandler::TcpHandler;
 use super::messages::Msg;
-use admin::AdminMsg;
+use admin::{AdminReq, AdminRpy};
 use orset::ORSet;
 use membership::Member;
 use time::{SteadyTime, Duration};
+use debug_sender::DebugSender;
 
 pub struct ClusterHandler {
     node: String,
     addr: String,
     state: State,
-    pending_joins: HashMap<Token, Token>,
+    pending_joins: HashMap<Token, (Token, DebugSender<AdminRpy>)>,
 
     // Keep track of the time of the last received message on each socket
     // We don't want just another field in `established_by_token`, because it's possible that we
@@ -36,8 +37,7 @@ pub struct ClusterHandler {
     established_by_addr: HashMap<String, (bool, Token)>,
     established_by_token: HashMap<Token, (bool, String)>,
 
-    admin_tx: Sender<AdminMsg>,
-    admin_rx: Option<Receiver<AdminMsg>>,
+    admin_rx: Option<Receiver<AdminReq>>,
     event_loop_tx: Option<mio::Sender<Notification>>,
     event_loop_rx: Option<Receiver<Event<Msg>>>,
 
@@ -79,7 +79,7 @@ fn connected_ips(established: &HashMap<String, (bool, Token)>) -> HashSet<String
 }
 
 impl ClusterHandler {
-    pub fn new(state: State, admin_tx: Sender<AdminMsg>, admin_rx: Receiver<AdminMsg>)
+    pub fn new(state: State, admin_rx: Receiver<AdminReq>)
         -> ClusterHandler {
 
         let addr = {
@@ -98,7 +98,6 @@ impl ClusterHandler {
             established_by_addr: HashMap::new(),
             established_by_token: HashMap::new(),
 
-            admin_tx: admin_tx,
             admin_rx: Some(admin_rx),
             event_loop_tx: None,
             event_loop_rx: Some(rx),
@@ -127,18 +126,18 @@ impl ClusterHandler {
         } else {
             self.unestablished_clients.remove(&token);
         }
-        if let Some(&join_token) = self.pending_joins.get(&token) {
+        let res = self.pending_joins.remove(&token);
+        if let Some((join_token, reply_tx)) = res {
             let err = Error::new(ErrorKind::NotConnected, "Could not connect to server");
-            self.join_err(join_token, err);
-            self.pending_joins.remove(&token);
+            self.join_err(join_token, err.to_string(), reply_tx);
         }
         self.receipts.remove(&token);
     }
 
-    fn handle_admin_msg(&mut self, event: AdminMsg) {
-        match event {
-            AdminMsg::Join {token, ipstr} => self.start_join(token, ipstr),
-            _ => ()
+    fn handle_admin_msg(&mut self, msg: AdminReq) {
+        match msg {
+            AdminReq::Join {token, ipstr, reply_tx} => self.start_join(token, ipstr, reply_tx),
+            _ => println!("Received unknown AdminReq in cluster handler {:?}", msg)
         }
     }
 
@@ -259,42 +258,44 @@ impl ClusterHandler {
     /// IPs that the cluster server needs to establish connections with
     fn to_connect(&self) -> HashSet<String> {
         let connected = connected_ips(&self.established_by_addr);
-        self.state.members.get_ips().difference(&connected)
+        self.state.members.get_cluster_hosts().difference(&connected)
             .filter(|&ip| *ip != self.addr).cloned().collect()
     }
 
     /// IPs that the cluster server needs to disconnect from
     fn to_disconnect(&self) -> HashSet<String> {
         let connected = connected_ips(&self.established_by_addr);
-        connected.difference(&self.state.members.get_ips()).cloned().collect()
+        connected.difference(&self.state.members.get_cluster_hosts()).cloned().collect()
     }
 
     /// IPs that are connected to the cluster server that the membership system doesn't know
     /// about yet.
     fn to_membership_connect(&self) -> HashSet<String> {
         let connected = connected_ips(&self.established_by_addr);
-        connected.difference(&self.state.members.get_connected_ips()).cloned().collect()
+        connected.difference(&self.state.members.get_connected_cluster_hosts()).cloned().collect()
     }
 
-    fn join_err(&self, token: Token, err: Error) {
-        let reply = AdminMsg::JoinReply {token: token, reply: Err(err)};
-        self.admin_tx.send(reply).unwrap();
+    fn join_err(&self, token: Token, err: String, reply_tx: DebugSender<AdminRpy>) {
+        let reply = AdminRpy::JoinReply {token: token, reply: Err(err)};
+        reply_tx.send(reply);
     }
 
-    fn join_success(&self, token: Token) {
-        let reply = AdminMsg::JoinReply {token: token, reply: Ok(())};
-        self.admin_tx.send(reply).unwrap();
+    fn join_success(&self, token: Token, reply_tx: DebugSender<AdminRpy>) {
+        let reply = AdminRpy::JoinReply {token: token, reply: Ok(())};
+        reply_tx.send(reply);
     }
 
-    fn start_join(&mut self, join_token: Token, ipstr: String) {
+    fn start_join(&mut self, join_token: Token, ipstr: String, reply_tx: DebugSender<AdminRpy> ) {
         match ipstr.parse() {
             Err(_) => {
                 let msg = format!("Failed to parse ip: {}", ipstr);
-                self.join_err(join_token, Error::new(ErrorKind::InvalidInput, msg));
+                self.join_err(join_token,
+                              Error::new(ErrorKind::InvalidInput, msg).to_string(),
+                              reply_tx);
             }
             Ok(addr) => {
                 let token = self.state.next_token();
-                self.pending_joins.insert(token, join_token);
+                self.pending_joins.insert(token, (join_token, reply_tx));
                 self.event_loop_tx.as_ref().unwrap().send(Notification::Connect(token, addr)).unwrap();
             }
         }
@@ -302,9 +303,9 @@ impl ClusterHandler {
 
     fn join_members(&mut self, orset: ORSet<Member>, token: Token) {
         self.state.members.join(orset);
-        if let Some(&join_token) = self.pending_joins.get(&token) {
-            self.join_success(join_token);
-            self.pending_joins.remove(&token);
+        let res = self.pending_joins.remove(&token);
+        if let Some((join_token, reply_tx)) = res {
+            self.join_success(join_token, reply_tx);
         }
     }
 

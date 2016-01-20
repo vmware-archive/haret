@@ -15,8 +15,7 @@ use uuid::Uuid;
 use utils::fuzzer::{Test, Fuzzer};
 use utils::{vr_invariants, op_invariants, test_setup, Model, TestMsg, Scheduler};
 use utils::generators::{oneof, paths, clients};
-use v2r2::vr::{VrMsg};
-use v2r2::vr_api::{ElementType, VrApiReq};
+use v2r2::vr::{VrMsg, ElementType, VrApiReq};
 
 // These constants should all add up to 100%
 const CLIENT_REQUEST_PCT: u8 = 80;
