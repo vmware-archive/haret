@@ -200,7 +200,7 @@ macro_rules! check_view {
                 return start_view_change($ctx)
             },
             VrMsg::StartViewChange {view, ..} if view < $ctx.view => return next!($state),
-            VrMsg::DoViewChange {view, ref from, ..} if view >= $ctx.view => {
+            VrMsg::DoViewChange {view, ref from, ..} if view > $ctx.view => {
                 reset_quorum($ctx, view, from.clone(), $msg.clone());
                 return maybe_start_view($ctx, from.clone(), $msg);
             },
