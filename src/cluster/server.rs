@@ -324,6 +324,7 @@ impl ClusterServer {
     fn init_connect(&mut self, addr: SocketAddr) {
         let token = self.state.next_token();
         self.event_loop_tx.as_ref().unwrap().send(IncomingMsg::Connect(token, addr)).unwrap();
+        self.unestablished_clients.insert(token);
     }
 
     fn send_members(&mut self, token: Token) {
