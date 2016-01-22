@@ -13,6 +13,7 @@ use membership::Member;
 use orset::ORSet;
 use state::State;
 use admin::{AdminReq, AdminRpy};
+use shared_messages::{NewSessionRequest, NewSessionReply};
 use super::ClusterMsg;
 use debug_sender::DebugSender;
 
@@ -64,7 +65,6 @@ impl ClusterServer {
         let host = {
             let config = self.state.config.read().unwrap();
             config.cluster_host.parse().unwrap()
-
         };
         let mut event_loop = EventLoop::new(host, 5000);
         let (data_tx, data_rx) = sync_channel(EVENT_LOOP_QUEUE_SIZE/2);
@@ -105,6 +105,11 @@ impl ClusterServer {
     fn handle_data_msg(&mut self, msg: OutDataMsg) {
         match msg {
             OutDataMsg::TcpMsg(token, data) => {
+                // Handle incorrect API client requests
+                if let Ok(NewSessionRequest(_)) = from_msgpack(&data) {
+                    return self.invalid_client_session_attempt(token);
+                }
+
                 match from_msgpack(&data) {
                     Ok(ClusterMsg::Members(addr, orset)) => {
                         self.maybe_establish_connection(token, addr);
@@ -160,6 +165,14 @@ impl ClusterServer {
         let dereg_msg = IncomingMsg::Deregister(token.clone(), reason);
         self.event_loop_tx.as_ref().unwrap().send(dereg_msg).unwrap();
     }
+
+    fn invalid_client_session_attempt(&mut self, token: Token) {
+        let reply = NewSessionReply::Redirect {host: self.state.members.me.vr_api_host.clone()};
+        let encoded = Encoder::to_msgpack(&reply).unwrap();
+        let msg = IncomingMsg::WireMsg(token, encoded);
+        self.event_loop_tx.as_ref().unwrap().send(msg).unwrap();
+    }
+
 
     /// The current tick comes in at one second intervals, meaning each node should send a `Ping`
     /// every second. If we haven't received a Ping within 5 seconds, the connection should be

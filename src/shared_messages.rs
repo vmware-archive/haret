@@ -14,6 +14,7 @@ pub struct NewSessionRequest(pub Uuid);
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum NewSessionReply {
     SessionId {session_id: Uuid, primary: Replica},
-    Redirect {primary: Replica},
-    Retry(u64) // milliseconds
+    Redirect {host: String},
+    Retry(u64), // milliseconds
+    NoSuchTenant
 }

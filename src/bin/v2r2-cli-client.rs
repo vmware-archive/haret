@@ -39,11 +39,20 @@ fn start_session(tenant_id: Uuid, addr: String) -> (Replica, TcpStream, Uuid) {
             println!("Session {} created for {}", session_id, primary);
             (primary, sock, session_id)
         },
-        NewSessionReply::Redirect {primary} => {
-            println!("Redirect to {}", primary);
-            (primary, sock, Uuid::nil())
+        NewSessionReply::Redirect {host} => {
+            println!("Redirect to {}", host);
+            exit(-1);
         },
-        NewSessionReply::Retry(timeout) => panic!("Retry in {} milliseconds", timeout)
+        NewSessionReply::Retry(timeout) => {
+            // TODO: Implement retry logic here?
+            println!("Retry in {} milliseconds", timeout);
+            exit(-1);
+
+        },
+        NewSessionReply::NoSuchTenant => {
+            println!("Tenant does not exist");
+            exit(-1);
+        }
     }
 }
 
@@ -54,7 +63,12 @@ fn read_session_reply(sock: &mut TcpStream) -> NewSessionReply {
             (_, Ok(Some(data))) => {
                 match from_msgpack(&data) {
                     Ok(reply) => return reply,
-                    Err(_) => panic!("Failed to decode msgpack data for NewSessionReply")
+                    Err(_) => {
+                        // It could be a channel initiation or ping message from the server it's
+                        // connecting to. Just ignore it and try again. We're able to do this
+                        // because all servers share the same 4 byte framing.
+                        reader = ReadState::new();
+                    }
                 }
             },
             (new_reader, Ok(None)) => {

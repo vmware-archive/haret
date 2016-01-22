@@ -443,6 +443,26 @@ impl Dispatcher {
         }
     }
 
+    fn new_session_reply(&mut self, tenant_id: &Uuid) -> NewSessionReply {
+        match self.tenants.primaries.get(&tenant_id) {
+            Some(primary) => {
+                NewSessionReply::Redirect {host: primary.node.vr_api_host.clone()}
+            },
+            None => {
+                if self.tenants.exists(&tenant_id) {
+                    NewSessionReply::Retry(1000)
+                } else {
+                    NewSessionReply::NoSuchTenant
+                }
+            }
+        }
+    }
+
+    fn invalid_client_session_attempt(&mut self, token: Token, tenant_id: Uuid) {
+        let reply = self.new_session_reply(&tenant_id);
+        self.send_client_error_to_peer(token, reply);
+    }
+
     fn new_session(&mut self, token: Token, tenant_id: Uuid) {
         let session_id = Uuid::new_v4();
         let reply = match self.tenants.primaries.get(&tenant_id) {
@@ -451,14 +471,18 @@ impl Dispatcher {
                     self.sessions.insert(token, Session::new(session_id.clone(), tenant_id.clone()));
                     NewSessionReply::SessionId {session_id: session_id, primary: primary.clone()}
                 } else {
-                    NewSessionReply::Redirect {primary: primary.clone()}
+                    NewSessionReply::Redirect {host: primary.node.vr_api_host.clone()}
+                }
+            },
+            None => {
+                if self.tenants.exists(&tenant_id) {
+                    NewSessionReply::Retry(1000)
+                } else {
+                    NewSessionReply::NoSuchTenant
                 }
             }
-            None => NewSessionReply::Retry(1000)
         };
-        let encoded = Encoder::to_msgpack(&reply).unwrap();
-        let msg = IncomingMsg::WireMsg(token, encoded);
-        self.client_event_loop_tx.as_ref().unwrap().send(msg).unwrap();
+        self.send_client_reply(token, reply);
     }
 
     fn deregister_client(&mut self, token: Token, reason: String) {
@@ -497,6 +521,10 @@ impl Dispatcher {
                 };
                 reply_tx.send(AdminRpy::Primary {token: token, replica: val});
             },
+            AdminReq::GetNewSessionReply {token, tenant_id, reply_tx} => {
+                let reply = self.new_session_reply(&tenant_id);
+                reply_tx.send(AdminRpy::NewSessionReply {token: token, reply: reply});
+            },
             _ => println!("Received unknown AdminReq in dispatcher: {:?}", req)
         }
     }
@@ -504,6 +532,11 @@ impl Dispatcher {
     fn handle_peer_data_msg(&mut self, msg: OutDataMsg) {
         match msg {
             OutDataMsg::TcpMsg(token, data) => {
+                // Make sure that a client is not trying to connect to the peer server.
+                if let Ok(NewSessionRequest(tenant_id)) = from_msgpack(&data) {
+                    return self.invalid_client_session_attempt(token, tenant_id);
+                }
+
                 match from_msgpack(&data) {
                     Ok(PeerMsg::VrMsg(to, vrmsg)) => {
                         self.send_local(&to, vrmsg);
@@ -762,7 +795,7 @@ impl Dispatcher {
                 },
                 Err(_) => break
             }
-        }
+       }
     }
 
     fn dispatch_client_reply(&mut self, envelope: ClientReplyEnvelope) {
@@ -772,11 +805,21 @@ impl Dispatcher {
         }
     }
 
-    fn send_client_reply(&mut self, token: Token, msg: VrMsg) {
+    fn send_client_reply<T: Encodable>(&mut self, token: Token, msg: T) {
         self.stats.client_reply_count += 1;
         let encoded = Encoder::to_msgpack(&msg).unwrap();
         let msg = IncomingMsg::WireMsg(token, encoded);
         self.client_event_loop_tx.as_ref().unwrap().send(msg).unwrap();
+    }
+
+    /// When a client improperly connects to the peer server it will send a NewSessionRequest. In
+    /// this case we respond with a NewSessionReply indicating a redirect to the primary for the
+    /// given tenant, or an error.
+    fn send_client_error_to_peer(&mut self, token: Token, msg: NewSessionReply) {
+        self.stats.client_reply_count += 1;
+        let encoded = Encoder::to_msgpack(&msg).unwrap();
+        let msg = IncomingMsg::WireMsg(token, encoded);
+        self.peer_event_loop_tx.as_ref().unwrap().send(msg).unwrap();
     }
 
     // This is useful when testing operations that include view changes. After a view change, th

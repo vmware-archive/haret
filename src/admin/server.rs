@@ -3,6 +3,7 @@ use std::thread::JoinHandle;
 use std::sync::mpsc::{channel, sync_channel, Sender, Receiver};
 use std::collections::VecDeque;
 use std::error::Error;
+use rustc_serialize::Encodable;
 use msgpack::{Encoder, from_msgpack};
 use mio::{self, Token};
 use time::{SteadyTime, Duration};
@@ -10,6 +11,7 @@ use uuid::Uuid;
 use state::State;
 use super::{AdminClientReq, AdminClientRpy, AdminReq, AdminRpy};
 use event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
+use shared_messages::{NewSessionRequest, NewSessionReply};
 use vr::{DispatchMsg, RawReplica, Replica};
 use debug_sender::DebugSender;
 
@@ -76,6 +78,11 @@ impl AdminServer {
     fn handle_data_msg(&mut self, msg: OutDataMsg) {
         match msg {
             OutDataMsg::TcpMsg(token, data) => {
+                // Handle incorrect API client requests
+                if let Ok(NewSessionRequest(tenant_id)) = from_msgpack(&data) {
+                    return self.invalid_client_session_attempt(token, tenant_id);
+                }
+
                 match from_msgpack(&data) {
                     Ok(req) => self.handle_client_request(token, req),
                     Err(_) => {
@@ -154,6 +161,11 @@ impl AdminServer {
                 if self.request_exists(&token) {
                     self.send_client_reply(token, &AdminClientRpy::VrPrimary(replica));
                 }
+            },
+            AdminRpy::NewSessionReply {token, reply} => {
+                if self.request_exists(&token) {
+                    self.send_client_reply(token, &reply);
+                }
             }
         }
     }
@@ -184,6 +196,13 @@ impl AdminServer {
     fn cluster_members(&mut self, token: Token) {
         let members = self.state.members.to_string();
         self.send_client_reply(token, &AdminClientRpy::Members(members));
+    }
+
+    fn invalid_client_session_attempt(&mut self, token: Token, tenant_id: Uuid) {
+        let msg = AdminReq::GetNewSessionReply { token: token,
+                                                 tenant_id: tenant_id,
+                                                 reply_tx: self.reply_tx.clone()};
+        self.send_async_dispatcher_msg(token, msg);
     }
 
     fn cluster_status(&mut self, token: Token) {
@@ -307,7 +326,7 @@ impl AdminServer {
         }
     }
 
-    fn send_client_reply(&mut self, token: Token, reply: &AdminClientRpy) {
+    fn send_client_reply<T: Encodable>(&mut self, token: Token, reply: &T) {
         let _ = self.remove_client_request(&token);
         let encoded = Encoder::to_msgpack(reply).unwrap();
         let msg = IncomingMsg::WireMsg(token, encoded);
