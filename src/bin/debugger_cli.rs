@@ -7,8 +7,11 @@ extern crate msgpack;
 extern crate rustc_serialize;
 
 #[macro_use]
-#[path = "utils/mod.rs"]
-mod utils;
+#[path = "../../tests/debugger/mod.rs"]
+mod debugger;
+
+#[path = "../../tests/debugger_shared/mod.rs"]
+mod debugger_shared;
 
 use std::env;
 use std::process::exit;
@@ -16,7 +19,8 @@ use std::io;
 use std::io::Write;
 use std::fmt::Write as FmtWrite;
 use uuid::Uuid;
-use utils::{test_setup, Scheduler, Debugger, Action};
+use debugger::{Debugger, Scheduler};
+use debugger_shared::{test_setup, Action};
 use v2r2::Member;
 use v2r2::vr::{Replica};
 

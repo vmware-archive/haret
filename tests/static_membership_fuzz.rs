@@ -8,12 +8,14 @@ extern crate rustc_serialize;
 
 #[macro_use]
 mod utils;
+mod debugger_shared;
 
 use rand::{thread_rng, ThreadRng};
 use rand::distributions::{IndependentSample, Range};
 use uuid::Uuid;
 use utils::fuzzer::{Test, Fuzzer};
-use utils::{vr_invariants, op_invariants, test_setup, Model, TestMsg, Scheduler};
+use utils::{vr_invariants, op_invariants, Model, Recorder};
+use debugger_shared::{test_setup, TestMsg};
 use utils::generators::{oneof, paths, clients};
 use v2r2::vr::{VrMsg, ElementType, VrApiReq};
 
@@ -29,7 +31,7 @@ const VIEW_CHANGE_TOP: u8 = COMMIT_TOP + VIEW_CHANGE_PCT;
 const CRASH_TOP: u8 = VIEW_CHANGE_TOP + 5;
 
 struct VrTest {
-    scheduler: Scheduler,
+    recorder: Recorder,
     clients: Vec<Uuid>,
     paths: Vec<&'static str>,
     rng: ThreadRng,
@@ -46,7 +48,7 @@ impl VrTest {
         let (mut dispatcher, replicas) = test_setup::init_tenant();
         test_setup::elect_initial_leader(&mut dispatcher, &replicas);
         VrTest {
-            scheduler: Scheduler::new(dispatcher),
+            recorder: Recorder::new(dispatcher),
             clients: clients(1),
             paths: paths(),
             rng: thread_rng(),
@@ -114,10 +116,10 @@ impl Test for VrTest {
     fn reset(&mut self, record: bool) {
         let (mut dispatcher, replicas) = test_setup::init_tenant();
         test_setup::elect_initial_leader(&mut dispatcher, &replicas);
-        self.scheduler = Scheduler::new(dispatcher);
+        self.recorder = Recorder::new(dispatcher);
         self.model = Model::new(replicas, 1);
         if record {
-            self.scheduler.record()
+            self.recorder.record()
         }
     }
 
@@ -148,26 +150,26 @@ impl Test for VrTest {
         let test_msg = request.clone();
         match request {
             TestMsg::ClientRequest(vrmsg) => {
-                self.scheduler.send(test_msg, &self.model.primary.clone().unwrap(), vrmsg.clone());
+                self.recorder.send(test_msg, &self.model.primary.clone().unwrap(), vrmsg.clone());
                 assert_client_request_correctness(self, vrmsg)
             },
             TestMsg::Commit => {
-                self.scheduler.send(test_msg, &self.model.primary.clone().unwrap(), VrMsg::Tick);
+                self.recorder.send(test_msg, &self.model.primary.clone().unwrap(), VrMsg::Tick);
                 assert_basic_correctness(self)
             },
             TestMsg::ViewChange(backup) => {
-                self.scheduler.send(test_msg, &backup, VrMsg::Tick);
-                // Scheduler doesn't handle client replies yet
-                self.scheduler.dispatcher.drop_all_client_replies();
+                self.recorder.send(test_msg, &backup, VrMsg::Tick);
+                // Recorder doesn't handle client replies yet
+                self.recorder.dispatcher.drop_all_client_replies();
                 assert_basic_correctness(self)
             },
             TestMsg::Crash(replica, _) => {
-                self.scheduler.stop_replica(test_msg, &replica);
+                self.recorder.stop_replica(test_msg, &replica);
                 assert_basic_correctness(self)
             },
             TestMsg::Restart(replica, _) => {
-                self.scheduler.restart_replica(test_msg, &replica);
-                self.scheduler.dispatcher.drop_all_client_replies();
+                self.recorder.restart_replica(test_msg, &replica);
+                self.recorder.dispatcher.drop_all_client_replies();
                 assert_basic_correctness(self)
             },
             TestMsg::Null => Ok(())
@@ -177,7 +179,7 @@ impl Test for VrTest {
     fn get_states(&self) -> Option<Vec<String>> {
         let mut states = Vec::new();
         for r in &self.model.live_replicas {
-            let (state, ctx) = self.scheduler.dispatcher.get_state(r).unwrap();
+            let (state, ctx) = self.recorder.dispatcher.get_state(r).unwrap();
             states.push(format!("State: {}",state));
             states.push(format!("{:#?}", ctx));
         }
@@ -189,7 +191,7 @@ impl Test for VrTest {
     }
 
     fn get_schedule(&self) -> Option<Vec<u8>> {
-        Some(self.scheduler.serialize_history())
+        Some(self.recorder.serialize_history())
     }
 
 }
@@ -206,19 +208,19 @@ fn stable_group() {
 fn assert_client_request_correctness(test: &mut VrTest, request: VrMsg) -> Result<(), String> {
     try!(assert_response_matches_internal_replica_state(test, request));
     try!(assert_vr_invariants(test));
-    test.model.check(&test.scheduler.dispatcher)
+    test.model.check(&test.recorder.dispatcher)
 }
 
 /// Assert that we maintain correctness conditions not relating to a client request
 fn assert_basic_correctness(test: &mut VrTest) -> Result<(), String> {
     try!(assert_vr_invariants(test));
-    test.model.check(&test.scheduler.dispatcher)
+    test.model.check(&test.recorder.dispatcher)
 }
 
 fn assert_vr_invariants(test: &mut VrTest) -> Result<(), String> {
     let mut states = Vec::new();
     for r in &test.model.live_replicas {
-        let state_tuple = test.scheduler.dispatcher.get_state(r).unwrap();
+        let state_tuple = test.recorder.dispatcher.get_state(r).unwrap();
         states.push(state_tuple);
     }
     let quorum = test.model.replicas.len() / 2 + 1;
@@ -234,17 +236,17 @@ fn assert_response_matches_internal_replica_state(test: &mut VrTest,
     match request {
         VrMsg::ClientRequest {op: VrApiReq::Create{..}, ..} =>
             op_invariants::assert_create_response(&test.model.replicas,
-                                                  &test.scheduler.dispatcher,
+                                                  &test.recorder.dispatcher,
                                                   &primary,
                                                   request),
         VrMsg::ClientRequest {op: VrApiReq::Put{..}, ..} =>
             op_invariants::assert_put_response(&test.model.replicas,
-                                               &test.scheduler.dispatcher,
+                                               &test.recorder.dispatcher,
                                                &primary,
                                                request),
         VrMsg::ClientRequest {op: VrApiReq::Get{..}, ..} =>
             op_invariants::assert_get_response(&test.model.replicas,
-                                               &test.scheduler.dispatcher,
+                                               &test.recorder.dispatcher,
                                                &primary,
                                                request),
         _ => fail!()

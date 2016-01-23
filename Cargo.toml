@@ -28,20 +28,24 @@ git = "git://github.com/BurntSushi/rust-stats"
 [[bin]]
 name = "v2r2"
 path = "src/bin/v2r2.rs"
+test = false
 
 [[bin]]
 name = "v2r2-cli-client"
 path = "src/bin/v2r2-cli-client.rs"
+test = false
 
 [[bin]]
 name = "v2r2-admin"
 path = "src/bin/v2r2-admin.rs"
+test = false
 
 [[bin]]
 name = "devconfig"
 path = "src/bin/devconfig.rs"
+test = false
 
 [[bin]]
 name = "debugger_cli"
-path = "tests/debugger_cli.rs"
-
+path = "src/bin/debugger_cli.rs"
+test = false

@@ -7,7 +7,8 @@ use std::fmt::Write;
 use msgpack::{from_msgpack};
 use fsm::{Fsm};
 use v2r2::vr::{DispatcherState, Replica, VrCtx, VrHandler, Envelope};
-use super::{Scheduler, Frame};
+use debugger_shared::{Frame};
+use super::Scheduler;
 
 // Tracks the state of the replicas and dispatchers between Frames
 // Note that frame_state is only set once during the call to initial run.
