@@ -825,12 +825,10 @@ impl Dispatcher {
     // This is useful when testing operations that include view changes. After a view change, th
     // new primary replays any uncommitted client operations. This allows us to just drop them and
     // get a response to the latest client request.
-    #[cfg(debug_assertions)]
     pub fn drop_all_client_replies(&self) {
         while let Ok(_) = self.client_reply_rx.try_recv() {};
     }
 
-    #[cfg(debug_assertions)]
     pub fn save_state(&self) -> DispatcherState {
         let mut replica_states = HashMap::new();
         for (replica, fsm) in self.local_replicas.iter() {
@@ -843,7 +841,6 @@ impl Dispatcher {
         }
     }
 
-    #[cfg(debug_assertions)]
     pub fn restore_state(&mut self, state: &DispatcherState) {
         self.tenants = state.tenants.clone();
         let mut local_replicas = HashMap::new();
@@ -863,7 +860,6 @@ fn send_client_reply(tx: &mio::Sender<IncomingMsg>, token: Token, msg: VrMsg) {
 /// This structure is used to save and restore dispatcher state during debugging
 /// Note that states are only stored/retrieved after all messages have been dispatched. Therefore
 /// there should be nothing left in the channels that requires saving.
-#[cfg(debug_assertions)]
 #[derive(Clone)]
 pub struct DispatcherState {
     pub node: Member,
