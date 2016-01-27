@@ -25,14 +25,20 @@ pub mod event_loop;
 pub mod admin;
 pub mod cluster;
 pub mod state;
-pub mod resp;
 pub mod vr;
+pub mod frame;
+mod error;
 
-mod event;
-mod tcphandler;
 mod membership;
 mod debug_sender;
 mod timer_wheel;
 mod requests;
+mod timeout;
+mod shared_messages;
 
 pub use self::membership::Member;
+pub use self::timeout::Timeout;
+pub use self::shared_messages::{
+    NewSessionRequest,
+    NewSessionReply
+};

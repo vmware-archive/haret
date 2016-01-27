@@ -1,7 +1,6 @@
 //! This module contains common test setup functions
 
 use v2r2::vr::{Dispatcher, Replica, RawReplica, VrMsg};
-use v2r2::Member;
 use v2r2::state::State;
 
 pub fn init_tenant() -> (Dispatcher, Vec<Replica>) {

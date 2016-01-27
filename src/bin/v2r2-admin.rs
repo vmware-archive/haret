@@ -9,10 +9,11 @@ use std::process::exit;
 use std::io::{Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
-use v2r2::admin::{AdminClientReq, AdminClientRpy};
-use v2r2::vr::frame::{ReadState, WriteState};
-use v2r2::vr::{Replica};
 use msgpack::{Encoder, from_msgpack};
+use uuid::Uuid;
+use v2r2::admin::{AdminClientReq, AdminClientRpy};
+use v2r2::frame::{ReadState, WriteState};
+use v2r2::vr::{Replica};
 
 fn main() {
     let mut args = env::args();
@@ -131,6 +132,7 @@ fn parse_vr(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
         Some("tenants") => Ok(AdminClientReq::VrTenants),
         Some("replica") => parse_vr_replica(iter),
         Some("stats") => Ok(AdminClientReq::VrStats),
+        Some("primary") => parse_vr_primary(iter),
         _ => Err(help())
     }
 }
@@ -149,6 +151,22 @@ fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
         None => Err(help())
     }
 }
+
+fn parse_vr_primary(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+    match iter.next() {
+        Some(string) => {
+            match Uuid::parse_str(string) {
+                Ok(uuid) => Ok(AdminClientReq::VrPrimary(uuid)),
+                Err(_) => {
+                    println!("Error: Couldn't parse tenant id as UUID");
+                    Err(help())
+                }
+            }
+        },
+        None => Err(help())
+    }
+}
+
 
 fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
     match iter.next() {
@@ -190,7 +208,9 @@ fn exec(req: AdminClientReq, sock: &mut TcpStream) -> Result<String> {
                     AdminClientRpy::VrTenantId(uuid) => Ok(uuid.to_string()),
                     AdminClientRpy::VrTenants(tenants) => Ok(format!("{:#?}", tenants)),
                     AdminClientRpy::VrReplica(state, ctx) => Ok(format_replica_state(state, ctx)),
-                    AdminClientRpy::VrStats(stats) => Ok(stats)
+                    AdminClientRpy::VrStats(stats) => Ok(stats),
+                    AdminClientRpy::VrPrimary(Some(replica)) => Ok(replica.to_string()),
+                    AdminClientRpy::VrPrimary(None) => Ok("None".to_string())
                 };
                 return reply;
             },
@@ -225,6 +245,7 @@ fn help() -> Error {
         vr tenants
         vr replica <Replica>
         vr stats
+        vr primary <TenantId>
 
     Flags:
         -e <Command>   Non-interactive mode

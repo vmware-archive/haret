@@ -7,7 +7,8 @@ use std::fmt::Write;
 use msgpack::{from_msgpack};
 use fsm::{Fsm};
 use v2r2::vr::{DispatcherState, Replica, VrCtx, VrHandler, Envelope};
-use super::{Scheduler, Frame};
+use debugger_shared::{Frame};
+use super::Scheduler;
 
 // Tracks the state of the replicas and dispatchers between Frames
 // Note that frame_state is only set once during the call to initial run.
@@ -328,14 +329,6 @@ fn diff_replicas(old: &Fsm<VrHandler>, new: &Fsm<VrHandler>) -> String {
         let _ = writeln!(&mut diff, "Quorum requirements changed from {} replicas to {} replicas",
                  old.ctx.quorum, new.ctx.quorum);
     }
-    if old.ctx.quorum_messages != new.ctx.quorum_messages {
-        let _ = writeln!(&mut diff, "Quorum messages have changed. There were {} messages stored. Now {}",
-                 old.ctx.quorum_messages.len(), new.ctx.quorum_messages.len());
-    }
-    if old.ctx.commit_quorum != new.ctx.commit_quorum {
-        // TODO: A better message here?
-        let _ = writeln!(&mut diff, "Commit Quorum has changed");
-    }
     if old.ctx.log != new.ctx.log {
         // TODO: Show differing entries
         let _ = writeln!(&mut diff, "The log has changed");
@@ -352,7 +345,7 @@ fn diff_replicas(old: &Fsm<VrHandler>, new: &Fsm<VrHandler>) -> String {
         // TODO: show differences
         let _ = writeln!(&mut diff, "New configuration has changed");
     }
-    if old.ctx.client_table != new.ctx.client_table {
+    if old.ctx.session_table != new.ctx.session_table {
         let _ = writeln!(&mut diff, "Client table has changed");
     }
     if old.ctx.recovery_nonce != new.ctx.recovery_nonce {

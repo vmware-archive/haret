@@ -15,7 +15,8 @@ impl State {
         let config = Config::read();
         let members = Members::new(config.node_name.clone(),
                                    config.cluster_host.clone(),
-                                   config.vr_host.clone());
+                                   config.vr_host.clone(),
+                                   config.vr_api_host.clone());
         State {
             config: Arc::new(RwLock::new(config)),
             members: members,

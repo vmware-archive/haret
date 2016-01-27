@@ -4,7 +4,7 @@
 use std::io::{Read, Write};
 use std::collections::LinkedList as List;
 use std::mem;
-use super::error::VrError;
+use error::VrError;
 
 
 /// Convert a 4 byte array in big endian to a u32 in native order

@@ -19,7 +19,7 @@ impl<K, V> Requests<K, V> where K: Eq+Hash+Clone {
     // responses. Note that the timerwheel strategy will need to change if that ever becomes untrue.
     pub fn insert(&mut self, key: K, val: V) {
         let slot = self.timer_wheel.insert(key.clone());
-        self.requests.insert(key.clone(), (slot, val));
+        self.requests.insert(key, (slot, val));
     }
 
     pub fn remove(&mut self, key: &K) -> Option<V> {
@@ -34,11 +34,10 @@ impl<K, V> Requests<K, V> where K: Eq+Hash+Clone {
     // Expire each request at the current reading wheel slot. Run the callback function with each
     // key and value if the there is an outstanding request. The callback should perform side
     // effects for each request, such as sending a timeout response to the client and tracking stats.
-    pub fn expire<F>(&mut self, mut callback: F) where F : FnMut(K, V) {
+    pub fn expire<F>(&mut self, mut callback: F) where F: FnMut(K, V) {
         let set = self.timer_wheel.expire();
         let mut iter = set.iter();
         while let Some(key) = iter.next() {
-            println!("expire yo!!!");
             if let Some((_, val)) = self.requests.remove(&key) {
                 callback((*key).clone(), val);
             }

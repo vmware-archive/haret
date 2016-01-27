@@ -9,7 +9,7 @@ use rand::{thread_rng};
 use rand::distributions::{IndependentSample, Range};
 use uuid::Uuid;
 use v2r2::vr::{Dispatcher, Replica, VrMsg, VrBackend, VrApiReq};
-use super::TestMsg;
+use debugger_shared::TestMsg;
 
 #[derive(Debug, Clone)]
 struct BackupState {

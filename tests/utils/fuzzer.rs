@@ -8,7 +8,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use time;
 use uuid::Uuid;
-use super::test_msg::CausalMsg;
+use debugger_shared::CausalMsg;
 
 /// An assert that doesn't panic on failure, but instead returns a result<(), String> with an
 /// appropriate error message.
@@ -299,7 +299,7 @@ mod tests {
     use rand::{thread_rng, ThreadRng};
     use rand::distributions::{IndependentSample, Range};
     use uuid::Uuid;
-    use super::super::test_msg::CausalMsg;
+    use debugger_shared::CausalMsg;
 
 #[test]
 #[should_panic]

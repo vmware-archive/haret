@@ -11,7 +11,8 @@ use admin::{AdminReq, AdminRpy};
 use state::State;
 use super::replica::{RawReplica, Replica, VersionedReplicas};
 use super::vr_fsm::{StartupState, VrCtx, VrHandler, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
-use super::event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
+use shared_messages::{NewSessionRequest, NewSessionReply};
+use event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
 use super::tenants::Tenants;
 use super::messages::*;
 use requests::Requests;
@@ -38,12 +39,25 @@ pub enum DispatchMsg {
     Reconfiguration {tenant: Uuid, old_config: VersionedReplicas, new_config: VersionedReplicas},
     Stop(Replica),
     Admin(AdminReq),
+    NewPrimary(Replica),
+    ClearPrimary(Uuid)
 }
 
-struct Client {
-    id: Uuid,
+struct Session {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
     /// A list of Replicas that this client has talked to
-    replicas: HashSet<Replica>
+    pub replicas: HashSet<Replica>
+}
+
+impl Session {
+    fn new(session_id: Uuid, tenant_id: Uuid) -> Session {
+        Session {
+            id: session_id,
+            tenant_id: tenant_id,
+            replicas: HashSet::new()
+        }
+    }
 }
 
 /// The Dispatcher is in charge of both starting VR FSMs and routing requests to them.
@@ -92,7 +106,7 @@ pub struct Dispatcher {
     client_event_loop_tx: Option<mio::Sender<IncomingMsg>>,
 
     client_requests: Requests<Uuid, (Token, u64)>,
-    clients: HashMap<Token, Client>,
+    sessions: HashMap<Token, Session>,
 
     /// To be cloned and passed into the constructor of VrCtx and admin server
     pub dispatch_tx: Sender<DispatchMsg>,
@@ -140,7 +154,7 @@ impl Dispatcher {
             client_event_loop_thread: None,
             client_event_loop_tx: None,
             client_requests: Requests::new(CLIENT_TICK, REQUEST_TIMEOUT),
-            clients: HashMap::new(),
+            sessions: HashMap::new(),
             dispatch_tx: dispatch_tx,
             dispatch_rx: dispatch_rx,
             idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
@@ -362,15 +376,28 @@ impl Dispatcher {
     fn handle_client_data_msg(&mut self, msg: OutDataMsg) {
         match msg {
             OutDataMsg::TcpMsg(token, data) => {
+                if let Ok(NewSessionRequest(tenant_id)) = from_msgpack(&data) {
+                    return self.new_session(token, tenant_id);
+                }
+
                 match from_msgpack(&data) {
                     Ok(ClientEnvelope {to, msg: vrmsg @ VrMsg::ClientRequest {..}}) => {
-                        if let VrMsg::ClientRequest {client_id, request_num, ..} = vrmsg.clone() {
-                            self.stats.client_req_count += 1;
-                            self.client_requests.insert(client_id.clone(), (token, request_num));
-                            self.send(&to, vrmsg);
-                            let empty_client = Client {id: client_id, replicas: HashSet::new()};
-                            let client = self.clients.entry(token).or_insert(empty_client);
-                            client.replicas.insert(to);
+                        if let VrMsg::ClientRequest {session_id, request_num, ..} = vrmsg.clone() {
+                            let valid_session = match self.sessions.get(&token) {
+                                Some(ref session) if session.id == session_id => true,
+                                _ => false
+                            };
+                            if valid_session {
+                                self.stats.client_req_count += 1;
+                                self.client_requests.insert(session_id.clone(), (token, request_num));
+                                self.send(&to, vrmsg);
+                                if let Some(session) = self.sessions.get_mut(&token) {
+                                    session.replicas.insert(to);
+                                }
+                            } else {
+                                let reason = format!("Invalid session id: {}", session_id);
+                                self.deregister_client(token, reason);
+                            }
                         }
                     },
                     Ok(_) => {
@@ -388,7 +415,7 @@ impl Dispatcher {
                 // Clone the sender and counter to get around the borrow checker.
                 let tx = self.client_event_loop_tx.as_ref().unwrap().clone();
                 let mut count = self.stats.client_reply_count;
-                self.client_requests.expire(|_client_id, (token, request_num)| {
+                self.client_requests.expire(|_session_id, (token, request_num)| {
                     let timeout = VrMsg::ClientReply {epoch: 0,
                                                       view: 0,
                                                       request_num: request_num,
@@ -403,19 +430,59 @@ impl Dispatcher {
 
     fn handle_client_control_msg(&mut self, msg: OutControlMsg) {
         match msg {
-            // We don't need to do anything special here as all client messages contain the uuid for
-            // the given token.
             OutControlMsg::NewSock(_token) => self.stats.client_new_sock_count += 1,
             OutControlMsg::Deregister(token) => {
                 self.stats.client_deregister_count += 1;
-                if let Some(client) = self.clients.remove(&token) {
-                    let _ = self.client_requests.remove(&client.id);
-                    for to in client.replicas.iter() {
-                        self.send(to, VrMsg::SessionClosed(client.id.clone()));
+                if let Some(session) = self.sessions.remove(&token) {
+                    let _ = self.client_requests.remove(&session.id);
+                    for to in session.replicas.iter() {
+                        self.send(to, VrMsg::SessionClosed(session.id.clone()));
                     }
                 }
             }
         }
+    }
+
+    fn new_session_reply(&mut self, tenant_id: &Uuid) -> NewSessionReply {
+        match self.tenants.primaries.get(&tenant_id) {
+            Some(primary) => {
+                NewSessionReply::Redirect {host: primary.node.vr_api_host.clone()}
+            },
+            None => {
+                if self.tenants.exists(&tenant_id) {
+                    NewSessionReply::Retry(1000)
+                } else {
+                    NewSessionReply::NoSuchTenant
+                }
+            }
+        }
+    }
+
+    fn invalid_client_session_attempt(&mut self, token: Token, tenant_id: Uuid) {
+        let reply = self.new_session_reply(&tenant_id);
+        self.send_client_error_to_peer(token, reply);
+    }
+
+    fn new_session(&mut self, token: Token, tenant_id: Uuid) {
+        let session_id = Uuid::new_v4();
+        let reply = match self.tenants.primaries.get(&tenant_id) {
+            Some(primary) => {
+                if primary.node == self.node {
+                    self.sessions.insert(token, Session::new(session_id.clone(), tenant_id.clone()));
+                    NewSessionReply::SessionId {session_id: session_id, primary: primary.clone()}
+                } else {
+                    NewSessionReply::Redirect {host: primary.node.vr_api_host.clone()}
+                }
+            },
+            None => {
+                if self.tenants.exists(&tenant_id) {
+                    NewSessionReply::Retry(1000)
+                } else {
+                    NewSessionReply::NoSuchTenant
+                }
+            }
+        };
+        self.send_client_reply(token, reply);
     }
 
     fn deregister_client(&mut self, token: Token, reason: String) {
@@ -447,6 +514,17 @@ impl Dispatcher {
             AdminReq::GetVrStats {token, reply_tx} => {
                 reply_tx.send(AdminRpy::VrStats {token: token, stats: self.stats.to_string()});
             },
+            AdminReq::GetPrimary {token, tenant_id, reply_tx} => {
+                let val = match self.tenants.primaries.get(&tenant_id) {
+                    Some(replica) => Some(replica.clone()),
+                    None => None
+                };
+                reply_tx.send(AdminRpy::Primary {token: token, replica: val});
+            },
+            AdminReq::GetNewSessionReply {token, tenant_id, reply_tx} => {
+                let reply = self.new_session_reply(&tenant_id);
+                reply_tx.send(AdminRpy::NewSessionReply {token: token, reply: reply});
+            },
             _ => println!("Received unknown AdminReq in dispatcher: {:?}", req)
         }
     }
@@ -454,6 +532,11 @@ impl Dispatcher {
     fn handle_peer_data_msg(&mut self, msg: OutDataMsg) {
         match msg {
             OutDataMsg::TcpMsg(token, data) => {
+                // Make sure that a client is not trying to connect to the peer server.
+                if let Ok(NewSessionRequest(tenant_id)) = from_msgpack(&data) {
+                    return self.invalid_client_session_attempt(token, tenant_id);
+                }
+
                 match from_msgpack(&data) {
                     Ok(PeerMsg::VrMsg(to, vrmsg)) => {
                         self.send_local(&to, vrmsg);
@@ -595,7 +678,13 @@ impl Dispatcher {
             DispatchMsg::Reconfiguration {tenant, old_config, new_config} =>
                 self.reconfigure(tenant, old_config, new_config),
             DispatchMsg::Stop(replica) => self.stop(&replica),
-            DispatchMsg::Admin(admin_req) => self.handle_admin_request(admin_req)
+            DispatchMsg::Admin(admin_req) => self.handle_admin_request(admin_req),
+            DispatchMsg::NewPrimary(replica) => {
+                self.tenants.primaries.insert(replica.tenant.clone(), replica);
+            }
+            DispatchMsg::ClearPrimary(tenant_id) => {
+                self.tenants.primaries.remove(&tenant_id);
+            }
         }
     }
 
@@ -706,7 +795,7 @@ impl Dispatcher {
                 },
                 Err(_) => break
             }
-        }
+       }
     }
 
     fn dispatch_client_reply(&mut self, envelope: ClientReplyEnvelope) {
@@ -716,22 +805,30 @@ impl Dispatcher {
         }
     }
 
-    fn send_client_reply(&mut self, token: Token, msg: VrMsg) {
+    fn send_client_reply<T: Encodable>(&mut self, token: Token, msg: T) {
         self.stats.client_reply_count += 1;
         let encoded = Encoder::to_msgpack(&msg).unwrap();
         let msg = IncomingMsg::WireMsg(token, encoded);
         self.client_event_loop_tx.as_ref().unwrap().send(msg).unwrap();
     }
 
+    /// When a client improperly connects to the peer server it will send a NewSessionRequest. In
+    /// this case we respond with a NewSessionReply indicating a redirect to the primary for the
+    /// given tenant, or an error.
+    fn send_client_error_to_peer(&mut self, token: Token, msg: NewSessionReply) {
+        self.stats.client_reply_count += 1;
+        let encoded = Encoder::to_msgpack(&msg).unwrap();
+        let msg = IncomingMsg::WireMsg(token, encoded);
+        self.peer_event_loop_tx.as_ref().unwrap().send(msg).unwrap();
+    }
+
     // This is useful when testing operations that include view changes. After a view change, th
     // new primary replays any uncommitted client operations. This allows us to just drop them and
     // get a response to the latest client request.
-    #[cfg(debug_assertions)]
     pub fn drop_all_client_replies(&self) {
         while let Ok(_) = self.client_reply_rx.try_recv() {};
     }
 
-    #[cfg(debug_assertions)]
     pub fn save_state(&self) -> DispatcherState {
         let mut replica_states = HashMap::new();
         for (replica, fsm) in self.local_replicas.iter() {
@@ -744,7 +841,6 @@ impl Dispatcher {
         }
     }
 
-    #[cfg(debug_assertions)]
     pub fn restore_state(&mut self, state: &DispatcherState) {
         self.tenants = state.tenants.clone();
         let mut local_replicas = HashMap::new();
@@ -764,7 +860,6 @@ fn send_client_reply(tx: &mio::Sender<IncomingMsg>, token: Token, msg: VrMsg) {
 /// This structure is used to save and restore dispatcher state during debugging
 /// Note that states are only stored/retrieved after all messages have been dispatched. Therefore
 /// there should be nothing left in the channels that requires saving.
-#[cfg(debug_assertions)]
 #[derive(Clone)]
 pub struct DispatcherState {
     pub node: Member,

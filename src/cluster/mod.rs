@@ -1,6 +1,6 @@
-pub mod server;
-pub mod handler;
+mod server;
 mod messages;
 
-pub use self::messages::Msg;
-pub use self::handler::ClusterHandler;
+pub use self::server::ClusterServer;
+
+pub use self::messages::ClusterMsg;

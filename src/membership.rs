@@ -15,7 +15,20 @@ pub struct Member {
     /// name should be globally unique.
     pub name: String,
     pub cluster_host: String,
-    pub vr_host: String
+    pub vr_host: String,
+    pub vr_api_host: String
+}
+
+impl Member {
+    #[cfg(debug_assertions)]
+    pub fn new_test_node(name: &str) -> Member {
+        Member {
+            name: name.to_string(),
+            cluster_host: "".to_string(),
+            vr_host: "".to_string(),
+            vr_api_host: "".to_string()
+        }
+    }
 }
 
 /// We only want to do comparisons on the name of the Member. Note however that this can cause
@@ -57,11 +70,12 @@ impl Display for Members {
 }
 
 impl Members {
-    pub fn new(name: String, cluster_host: String, vr_host: String) -> Members {
+    pub fn new(name: String, cluster_host: String, vr_host: String, vr_api_host: String) -> Members {
         let me = Member {
             name: name.clone(),
             cluster_host: cluster_host,
-            vr_host: vr_host
+            vr_host: vr_host,
+            vr_api_host: vr_api_host
         };
         let mut orset = ORSet::new(name);
         orset.add(me.clone());
@@ -92,11 +106,6 @@ impl Members {
             acc
         });
         format!("{} (Self)\n{}{}", self.me.name, connected_str, disconnected_str)
-    }
-
-    pub fn local_name(&self) -> String {
-        let orset = self.orset.read().unwrap();
-        orset.name.clone()
     }
 
     pub fn join(&mut self, other: ORSet<Member>) {

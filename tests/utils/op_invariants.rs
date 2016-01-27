@@ -10,7 +10,7 @@ pub fn assert_create_response(replicas: &Vec<Replica>,
                               primary: &Replica,
                               request: VrMsg) -> Result<(), String> {
 
-    let (client_id, request_num, api_req, api_rsp) = try!(match_client_reply(dispatcher, request));
+    let (session_id, request_num, api_req, api_rsp) = try!(match_client_reply(dispatcher, request));
     let path = if let VrApiReq::Create {path, ..} = api_req { path } else { fail!() };
     match api_rsp {
         VrApiRsp::Ok => {
@@ -18,7 +18,7 @@ pub fn assert_create_response(replicas: &Vec<Replica>,
                                             dispatcher,
                                             primary,
                                             path,
-                                            &client_id,
+                                            &session_id,
                                             request_num)
         },
         VrApiRsp::ParentNotFoundError => {
@@ -39,7 +39,7 @@ pub fn assert_put_response(replicas: &Vec<Replica>,
                            primary: &Replica,
                            request: VrMsg) -> Result<(), String> {
 
-    let (client_id, request_num, api_req, api_rsp) = try!(match_client_reply(dispatcher, request));
+    let (session_id, request_num, api_req, api_rsp) = try!(match_client_reply(dispatcher, request));
     let (path, data) =
         if let VrApiReq::Put {path, data, ..} = api_req { (path, data) } else { fail!() };
     match api_rsp {
@@ -48,7 +48,7 @@ pub fn assert_put_response(replicas: &Vec<Replica>,
                                                 dispatcher,
                                                 primary,
                                                 path,
-                                                &client_id,
+                                                &session_id,
                                                 request_num,
                                                 data)
         },
@@ -64,7 +64,7 @@ pub fn assert_get_response(replicas: &Vec<Replica>,
                            primary: &Replica,
                            request: VrMsg) -> Result<(), String> {
 
-    let (client_id, request_num, api_req, api_rsp) = try!(match_client_reply(dispatcher, request));
+    let (session_id, request_num, api_req, api_rsp) = try!(match_client_reply(dispatcher, request));
     let path = if let VrApiReq::Get {path, ..} = api_req { path } else { fail!() };
     match api_rsp {
         VrApiRsp::Element{data, ..} => {
@@ -72,7 +72,7 @@ pub fn assert_get_response(replicas: &Vec<Replica>,
                                                 dispatcher,
                                                 primary,
                                                 path,
-                                                &client_id,
+                                                &session_id,
                                                 request_num,
                                                 data)
         },
@@ -87,13 +87,13 @@ pub fn assert_get_response(replicas: &Vec<Replica>,
 /// request.
 fn match_client_reply(dispatcher: &Dispatcher,
                       request: VrMsg) -> Result<(Uuid, u64, VrApiReq, VrApiRsp), String> {
-    if let VrMsg::ClientRequest {op, client_id, request_num} = request {
+    if let VrMsg::ClientRequest {op, session_id, request_num} = request {
         match dispatcher.try_recv_client_reply() {
             Ok(ClientReplyEnvelope {to, msg: VrMsg::ClientReply {request_num: reply_req_num,
                                                                  value, ..}}) => {
-                let _ = safe_assert_eq!(to, client_id);
+                let _ = safe_assert_eq!(to, session_id);
                 let _ = safe_assert_eq!(reply_req_num, request_num, op);
-                return Ok((client_id, request_num, op, value))
+                return Ok((session_id, request_num, op, value))
             },
             _ => fail!()
         }
@@ -106,11 +106,11 @@ pub fn assert_successful_create(replicas: &Vec<Replica>,
                                 dispatcher: &Dispatcher,
                                 primary: &Replica,
                                 path: String,
-                                client_id: &Uuid,
+                                session_id: &Uuid,
                                 request_num: u64) -> Result<(), String>
 {
-    try!(assert_majority_of_nodes_contain_op(replicas, dispatcher, &client_id, request_num));
-    try!(assert_primary_has_committed_op(dispatcher, primary, &client_id, request_num));
+    try!(assert_majority_of_nodes_contain_op(replicas, dispatcher, &session_id, request_num));
+    try!(assert_primary_has_committed_op(dispatcher, primary, &session_id, request_num));
     assert_path_exists_in_primary_backend(dispatcher, primary, path.clone())
 }
 
@@ -118,25 +118,25 @@ pub fn assert_successful_put_or_get(replicas: &Vec<Replica>,
                                     dispatcher: &Dispatcher,
                                     primary: &Replica,
                                     path: String,
-                                    client_id: &Uuid,
+                                    session_id: &Uuid,
                                     request_num: u64,
                                     data: Vec<u8>) -> Result<(), String>
 {
-    try!(assert_majority_of_nodes_contain_op(replicas, dispatcher, &client_id, request_num));
-    try!(assert_primary_has_committed_op(dispatcher, primary, &client_id, request_num));
+    try!(assert_majority_of_nodes_contain_op(replicas, dispatcher, &session_id, request_num));
+    try!(assert_primary_has_committed_op(dispatcher, primary, &session_id, request_num));
     assert_data_matches_primary_backend(dispatcher, primary, path, data)
 }
 
 pub fn assert_majority_of_nodes_contain_op(replicas: &Vec<Replica>,
                                            dispatcher: &Dispatcher,
-                                           client_id: &Uuid,
+                                           session_id: &Uuid,
                                            request_num: u64) -> Result<(), String> {
     let quorum = replicas.len() / 2 + 1;
     let mut contained_in_log = 0;
     for r in replicas {
         match dispatcher.get_state(&r) {
             Some((_, ctx)) => {
-                if is_client_request_last_in_log(&ctx, client_id, request_num) {
+                if is_client_request_last_in_log(&ctx, session_id, request_num) {
                     contained_in_log += 1;
                 }
             },
@@ -149,13 +149,13 @@ pub fn assert_majority_of_nodes_contain_op(replicas: &Vec<Replica>,
 #[allow(unused_must_use)]
 pub fn assert_primary_has_committed_op(dispatcher: &Dispatcher,
                                        primary: &Replica,
-                                       client_id: &Uuid,
+                                       session_id: &Uuid,
                                        request_num: u64) -> Result<(), String> {
 
     let (state, ctx) = dispatcher.get_state(primary).unwrap();
     safe_assert_eq!(state, "primary");
     safe_assert_eq!(ctx.op, ctx.commit_num);
-    safe_assert_eq!(true, is_client_request_last_in_log(&ctx, client_id, request_num))
+    safe_assert_eq!(true, is_client_request_last_in_log(&ctx, session_id, request_num))
 }
 
 fn assert_data_matches_primary_backend(dispatcher: &Dispatcher,
@@ -216,11 +216,11 @@ fn assert_element_has_diff_op_num_from_latest(dispatcher: &Dispatcher,
 }
 
 
-fn is_client_request_last_in_log(ctx: &VrCtx, client_id: &Uuid, request_num: u64) -> bool {
+fn is_client_request_last_in_log(ctx: &VrCtx, session_id: &Uuid, request_num: u64) -> bool {
     if ctx.op == 0 { return false; }
     let ref msg = ctx.log[(ctx.op - 1) as usize];
-    if let &VrMsg::ClientRequest {client_id: logged_id, request_num: logged_num, ..} = msg {
-        if *client_id == logged_id && request_num == logged_num {
+    if let &VrMsg::ClientRequest {session_id: logged_id, request_num: logged_num, ..} = msg {
+        if *session_id == logged_id && request_num == logged_num {
             return true;
         }
     }

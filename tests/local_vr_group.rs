@@ -26,27 +26,27 @@ fn basic_ops() {
     let (mut dispatcher, replicas) = init_tenant();
     elect_initial_leader(&mut dispatcher, &replicas);
 
-    let client_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
     let op = VrApiReq::Create {path: "/test_root".to_string(), ty: ElementType::Binary};
-    let msg = VrMsg::ClientRequest {op: op, client_id: client_id, request_num: 1};
+    let msg = VrMsg::ClientRequest {op: op, session_id: session_id, request_num: 1};
     let primary = &replicas[1];
     dispatcher.send(primary, msg.clone());
     dispatcher.dispatch_all_received_messages();
 
     // See if we get a response to our first operation.
-    assert_create_response(&client_id, &dispatcher);
+    assert_create_response(&session_id, &dispatcher);
 
     // Resend the message. We should get the same response
     dispatcher.send(primary, msg.clone());
     dispatcher.dispatch_all_received_messages();
-    assert_create_response(&client_id, &dispatcher);
+    assert_create_response(&session_id, &dispatcher);
     // The log should still only have one operation in it, since the response was returned from the
     // client_table
     let (_, primary_ctx) = dispatcher.get_state(primary).unwrap();
     assert_eq!(primary_ctx.log.len(), 1);
     assert_eq!(primary_ctx.op, 1);
 
-    assert_put_and_get(primary, &client_id, &mut dispatcher);
+    assert_put_and_get(primary, &session_id, &mut dispatcher);
 
     // A tick timeout occurs resulting in a commit message being sent. Note that the current
     // timeouts are all 0, therefore no sleeps are necessary and this is deterministic.
@@ -64,16 +64,16 @@ fn state_change() {
     let (mut dispatcher, replicas) = init_tenant();
     elect_initial_leader(&mut dispatcher, &replicas);
 
-    let client_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
     let op = VrApiReq::Create {path: "/test_root".to_string(), ty: ElementType::Binary};
-    let msg = VrMsg::ClientRequest {op: op, client_id: client_id, request_num: 1};
+    let msg = VrMsg::ClientRequest {op: op, session_id: session_id, request_num: 1};
     let primary = &replicas[1];
     dispatcher.send(primary, msg.clone());
     // dispatch all commands, dropping messages to r1
     dispatch_with_drop(&mut dispatcher, &replicas[0]);
 
     // Ensure we still commit the create op
-    assert_create_response(&client_id, &dispatcher);
+    assert_create_response(&session_id, &dispatcher);
 
     // Ensure we have no ops at r1 still
     let (_, r1_ctx) = dispatcher.get_state(&replicas[0]).unwrap();
@@ -97,15 +97,15 @@ fn recovery() {
     let (mut dispatcher, replicas) = init_tenant();
     elect_initial_leader(&mut dispatcher, &replicas);
 
-    let client_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
     let op = VrApiReq::Create {path: "/test_root".to_string(), ty: ElementType::Binary};
-    let msg = VrMsg::ClientRequest {op: op, client_id: client_id, request_num: 1};
+    let msg = VrMsg::ClientRequest {op: op, session_id: session_id, request_num: 1};
     let primary = &replicas[1];
     dispatcher.send(primary, msg.clone());
     dispatcher.dispatch_all_received_messages();
 
     // See if we get a response to our first operation.
-    assert_create_response(&client_id, &dispatcher);
+    assert_create_response(&session_id, &dispatcher);
     assert_commit_gets_sent(primary, &mut dispatcher, 1);
 
     // Stop the primary and trigger an election
@@ -152,8 +152,8 @@ fn reconfiguration() {
                                name: "r4".to_string(),
                                node: dispatcher.node.clone() };
     replicas.push(new_replica);
-    let client_id = Uuid::new_v4();
-    let msg = VrMsg::Reconfiguration{client_id: client_id,
+    let session_id = Uuid::new_v4();
+    let msg = VrMsg::Reconfiguration{session_id: session_id,
                                      client_req_num: 1,
                                      epoch: 1,
                                      replicas: replicas.clone()};
@@ -164,7 +164,7 @@ fn reconfiguration() {
 
     // Assure that we get a response to the committed reconfiguration
     let ClientReplyEnvelope{to, msg} = dispatcher.try_recv_client_reply().unwrap();
-    assert_eq!(to, client_id);
+    assert_eq!(to, session_id);
     if let VrMsg::ClientReply{request_num, value, ..} = msg {
         assert_eq!(request_num, 1);
         assert_eq!(value, VrApiRsp::Ok);
@@ -173,8 +173,9 @@ fn reconfiguration() {
     }
 
     // Start the new replica
-    let dispatch_msg = dispatcher.try_recv_dispatch_msg().unwrap();
-    dispatcher.handle_dispatch_msg(dispatch_msg);
+    while let Ok(dispatch_msg) = dispatcher.try_recv_dispatch_msg() {
+        dispatcher.handle_dispatch_msg(dispatch_msg);
+    }
     assert_eq!(dispatcher.local_replicas.len(), 4);
 
     let (state, _) = dispatcher.get_state(&replicas[3]).unwrap();
@@ -273,12 +274,12 @@ fn assert_commit_gets_sent(primary: &Replica, dispatcher: &mut Dispatcher, expec
     dispatcher.dispatch_all_received_messages();
 }
 
-fn assert_put_and_get(primary: &Replica, client_id: &Uuid, dispatcher: &mut Dispatcher) {
+fn assert_put_and_get(primary: &Replica, session_id: &Uuid, dispatcher: &mut Dispatcher) {
     let put_op = VrApiReq::Put { path: "/test_root".to_string(), data: b"hello".to_vec(), cas_tag: None};
-    let put_msg = VrMsg::ClientRequest {op: put_op, client_id: client_id.clone(), request_num: 2};
+    let put_msg = VrMsg::ClientRequest {op: put_op, session_id: session_id.clone(), request_num: 2};
     dispatcher.send(primary, put_msg);
     let get_op = VrApiReq::Get { path: "/test_root".to_string(), cas: false };
-    let get_msg = VrMsg::ClientRequest {op: get_op, client_id: client_id.clone(), request_num: 3};
+    let get_msg = VrMsg::ClientRequest {op: get_op, session_id: session_id.clone(), request_num: 3};
     dispatcher.send(primary, get_msg);
     dispatcher.dispatch_all_received_messages();
 
@@ -286,7 +287,7 @@ fn assert_put_and_get(primary: &Replica, client_id: &Uuid, dispatcher: &mut Disp
     dispatcher.try_recv_client_reply().unwrap();
     // Ensure we get back the value stored
     let ClientReplyEnvelope{to, msg} = dispatcher.try_recv_client_reply().unwrap();
-    assert_eq!(to, *client_id);
+    assert_eq!(to, *session_id);
     if let VrMsg::ClientReply{epoch, view, request_num, value} = msg {
         assert_eq!(epoch, 1);
         assert_eq!(view, 1);
@@ -302,9 +303,9 @@ fn assert_put_and_get(primary: &Replica, client_id: &Uuid, dispatcher: &mut Disp
 
 }
 
-fn assert_create_response(client_id: &Uuid, dispatcher: &Dispatcher) {
+fn assert_create_response(session_id: &Uuid, dispatcher: &Dispatcher) {
     if let Ok(ClientReplyEnvelope{to, msg}) = dispatcher.try_recv_client_reply() {
-        assert_eq!(to, *client_id);
+        assert_eq!(to, *session_id);
         if let VrMsg::ClientReply{request_num, value, ..} = msg {
             assert_eq!(request_num, 1);
             assert_eq!(value, VrApiRsp::Ok);

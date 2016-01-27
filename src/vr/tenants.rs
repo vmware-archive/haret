@@ -5,13 +5,15 @@ use super::replica::{Replica, VersionedReplicas};
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Tenants {
-    pub map: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>
+    pub map: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>,
+    pub primaries: HashMap<Uuid, Replica>
 }
 
 impl Tenants {
     pub fn new() -> Tenants {
         Tenants {
-            map: HashMap::new()
+            map: HashMap::new(),
+            primaries: HashMap::new()
         }
     }
 
@@ -30,7 +32,6 @@ impl Tenants {
             None => None
         }
     }
-
 
     /// Save the new tenant configuration and return the new replicas that need starting
     pub fn reconfigure(&mut self, tenant: &Uuid, old: VersionedReplicas, new: VersionedReplicas) ->
