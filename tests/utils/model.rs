@@ -8,8 +8,8 @@ use std::collections::{HashMap};
 use rand::{thread_rng};
 use rand::distributions::{IndependentSample, Range};
 use uuid::Uuid;
-use v2r2::vr::{Dispatcher, Replica, VrMsg, VrBackend, VrApiReq};
-use debugger_shared::TestMsg;
+use v2r2::vr::{Replica, VrMsg, VrBackend, VrApiReq};
+use debugger_shared::{Scheduler, TestMsg};
 
 #[derive(Debug, Clone)]
 struct BackupState {
@@ -141,18 +141,18 @@ impl Model {
         self.view += 1;
     }
 
-    pub fn check(&self, dispatcher: &Dispatcher) -> Result<(), String> {
+    pub fn check(&self, scheduler: &Scheduler) -> Result<(), String> {
         match self.last_msg {
             TestMsg::ClientRequest(VrMsg::ClientRequest {ref op, ..}) =>
-                self.assert_last_op_matches_primary_state(op.clone(), dispatcher),
+                self.assert_last_op_matches_primary_state(op.clone(), scheduler),
             TestMsg::Commit => Ok(()),
-            TestMsg::ViewChange(_) => self.assert_view_change(dispatcher),
+            TestMsg::ViewChange(_) => self.assert_view_change(scheduler),
             TestMsg::Crash(_, _) => {
                 // A crash doesn't cause any messages/side effects on it's own.
                 // It may affect the next message though.
                 Ok(())
             },
-            TestMsg::Restart(ref replica, _) => self.assert_replica_state(dispatcher, replica),
+            TestMsg::Restart(ref replica, _) => self.assert_replica_state(scheduler, replica),
             TestMsg::Null => Ok(()),
             _ => unreachable!()
         }
@@ -175,11 +175,11 @@ impl Model {
 
     fn assert_last_op_matches_primary_state(&self,
                                             op: VrApiReq,
-                                            dispatcher: &Dispatcher) -> Result<(), String>
+                                            scheduler: &Scheduler) -> Result<(), String>
     {
         let path = op.get_path();
         let model_element = self.backend.tree.get(&path);
-        let (state, ctx) = dispatcher.get_state(&self.primary.as_ref().unwrap()).unwrap();
+        let (state, ctx) = scheduler.get_state(&self.primary.as_ref().unwrap()).unwrap();
         let _ = safe_assert_eq!(state, "primary");
         let primary_element = ctx.backend.tree.get(&path);
         match primary_element {
@@ -188,17 +188,17 @@ impl Model {
         }
     }
 
-    fn assert_replica_state(&self, dispatcher: &Dispatcher, replica: &Replica)
+    fn assert_replica_state(&self, scheduler: &Scheduler, replica: &Replica)
         -> Result<(), String>
     {
         let backup_state = self.backup_states.get(&replica).clone().unwrap();
-        let (state, _ctx) = dispatcher.get_state(replica).unwrap();
+        let (state, _ctx) = scheduler.get_state(replica).unwrap();
         safe_assert_eq!(backup_state.state, state)
     }
 
-    fn assert_view_change(&self, dispatcher: &Dispatcher) -> Result<(), String> {
+    fn assert_view_change(&self, scheduler: &Scheduler) -> Result<(), String> {
         for (replica, backup_state) in self.backup_states.iter() {
-            let (state, ctx) = dispatcher.get_state(replica).unwrap();
+            let (state, ctx) = scheduler.get_state(replica).unwrap();
             if self.primary.is_some() && state == "backup" {
                 let _ = safe_assert_eq!(ctx.primary, self.primary);
             }

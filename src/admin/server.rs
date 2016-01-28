@@ -12,7 +12,7 @@ use state::State;
 use super::{AdminClientReq, AdminClientRpy, AdminReq, AdminRpy};
 use event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
 use shared_messages::{NewSessionRequest, NewSessionReply};
-use vr::{DispatchMsg, RawReplica, Replica};
+use vr::{RawReplica, Replica};
 use debug_sender::DebugSender;
 
 const EVENT_LOOP_QUEUE_SIZE: usize = 1000;
@@ -23,7 +23,7 @@ pub struct AdminServer {
    state: State,
    client_requests: VecDeque<(Token, SteadyTime)>,
    event_loop_tx: Option<mio::Sender<IncomingMsg>>,
-   dispatcher_tx: Sender<DispatchMsg>,
+   dispatcher_tx: Sender<AdminReq>,
    cluster_tx: Sender<AdminReq>,
    // To be cloned and used for responses to the admin server
    reply_tx: DebugSender<AdminRpy>,
@@ -33,7 +33,7 @@ pub struct AdminServer {
 
 impl AdminServer {
     pub fn new(state: State,
-               dispatcher_tx: Sender<DispatchMsg>,
+               dispatcher_tx: Sender<AdminReq>,
                cluster_tx: Sender<AdminReq>) -> AdminServer {
         let (reply_tx, reply_rx) = channel();
         AdminServer {
@@ -251,8 +251,7 @@ impl AdminServer {
     }
 
     fn send_async_dispatcher_msg(&mut self, token: Token, req: AdminReq) {
-        let msg = DispatchMsg::Admin(req);
-        self.dispatcher_tx.send(msg).unwrap();
+        self.dispatcher_tx.send(req).unwrap();
         self.client_requests.push_back((token, SteadyTime::now()));
     }
 

@@ -1,41 +1,45 @@
 mod dispatcher;
 mod replica;
-mod vr_fsm;
 mod tenants;
 mod backend;
 mod element;
 mod vr_stats;
 mod quorum_tracker;
 mod prepare_requests;
+mod vrmsg;
+mod envelope;
+mod vr_api_messages;
 
-pub mod messages;
+pub mod vr_fsm;
 
 pub use self::vr_fsm::{
     VrCtx,
-    StartupState,
-    VrHandler
+    VrTypes
 };
 
 pub use self::vr_stats::VrStats;
 
-pub use self::dispatcher::{
-    Dispatcher,
-    DispatcherState,
-    DispatchMsg
-};
+pub use self::dispatcher::Dispatcher;
 
 pub use self::replica::{
     RawReplica,
-    Replica
+    Replica,
+    VersionedReplicas
 };
 
 pub use self::tenants::{Tenants};
 
-pub use self::messages::{
-    VrMsg,
+pub use self::vrmsg::VrMsg;
+
+pub use self::envelope::{
     Envelope,
+    PeerEnvelope,
+    Announcement,
     ClientEnvelope,
     ClientReplyEnvelope,
+};
+
+pub use self::vr_api_messages::{
     VrApiReq,
     VrApiRsp
 };

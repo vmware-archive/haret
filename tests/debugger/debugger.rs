@@ -5,25 +5,24 @@ use std::io::Read;
 use std::fs::File;
 use std::fmt::Write;
 use msgpack::{from_msgpack};
-use fsm::{Fsm};
-use v2r2::vr::{DispatcherState, Replica, VrCtx, VrHandler, Envelope};
-use debugger_shared::{Frame};
-use super::Scheduler;
+use fsm::Fsm;
+use v2r2::vr::{Replica, VrCtx, Envelope, VrTypes};
+use debugger_shared::{Scheduler, Frame};
 
 // Tracks the state of the replicas and dispatchers between Frames
 // Note that frame_state is only set once during the call to initial run.
 pub struct State {
-    frame_state: DispatcherState,
-    step_state: DispatcherState,
+    frame_state: Scheduler,
+    step_state: Scheduler,
     step_count: usize,
     total_steps_in_frame: Option<usize>
 }
 
 impl State {
-    fn new(state: DispatcherState) -> State {
+    fn new(scheduler: Scheduler) -> State {
         State {
-            frame_state: state.clone(),
-            step_state: state,
+            frame_state: scheduler.clone(),
+            step_state: scheduler,
             step_count: 0,
             total_steps_in_frame: None
         }
@@ -36,7 +35,7 @@ pub struct Status {
     pub step_count: usize,
     pub current_test_msg: Option<Frame>,
     pub next_test_msg: Option<Frame>,
-    pub last_received_vrmsg: Option<Envelope>
+    pub last_received_envelope : Option<Envelope>
 }
 
 pub struct Debugger {
@@ -44,18 +43,20 @@ pub struct Debugger {
     schedule: Vec<Frame>,
     history: Vec<State>,
     frame_count: usize,
-    last_received_msg: Option<Envelope>,
-    diff_start: Option<(usize, usize, DispatcherState)>
+    last_received_envelope: Option<Envelope>,
+    diff_start: Option<(usize, usize, Scheduler)>
 }
 
 impl Debugger {
-    pub fn new(scheduler: Scheduler) -> Debugger {
+    pub fn new() -> Debugger {
+        let mut scheduler = Scheduler::new(3);
+        scheduler.elect_initial_leader();
         Debugger {
             scheduler: scheduler,
             schedule: Vec::new(),
             history: Vec::new(),
             frame_count: 0,
-            last_received_msg: None,
+            last_received_envelope: None,
             diff_start: None
         }
     }
@@ -75,13 +76,12 @@ impl Debugger {
     // Just do an initial run on startup to get the complete history. It's easier to do this than to
     // track which parts are already computed.
     fn initial_run(&mut self) {
-        self.history.push(State::new(self.scheduler.get_state()));
+        self.history.push(State::new(self.scheduler.clone()));
         for frame in &self.schedule {
             for action in &frame.actions {
                 self.scheduler.run_action(action);
-                self.scheduler.dispatch();
             }
-            self.history.push(State::new(self.scheduler.get_state()));
+            self.history.push(State::new(self.scheduler.clone()));
             self.frame_count += 1;
         }
     }
@@ -111,7 +111,7 @@ impl Debugger {
             step_count: self.current_step(),
             current_test_msg: current_test_msg,
             next_test_msg: next_test_msg,
-            last_received_vrmsg: self.last_received_msg.clone()
+            last_received_envelope: self.last_received_envelope.clone()
         }
     }
 
@@ -136,8 +136,9 @@ impl Debugger {
         if self.current_step() == 0 {
             self.step_forward_new_frame();
         } else {
-            match self.scheduler.dispatch_one_msg() {
+            match self.scheduler.next() {
                 Some(envelope) => {
+                    self.scheduler.send_once(envelope.clone());
                     self.step_forward_same_frame(envelope);
                 },
                 None => {
@@ -204,27 +205,25 @@ impl Debugger {
     fn step_forward_new_frame(&mut self) {
         self.reset_step_state();
         let current_state = self.current_state().clone();
-        self.scheduler.set_state(&current_state);
+        self.scheduler = current_state.clone();
         self.run_actions();
         let state = &mut self.history[self.frame_count];
         state.step_count += 1;
-        state.step_state = self.scheduler.get_state();
+        state.step_state = self.scheduler.clone();
     }
 
     fn step_forward_same_frame(&mut self, envelope: Envelope) {
-        self.last_received_msg = Some(envelope);
+        self.last_received_envelope = Some(envelope);
         let state = &mut self.history[self.frame_count];
         state.step_count +=1;
-        state.step_state = self.scheduler.get_state();
+        state.step_state = self.scheduler.clone();
     }
 
     fn reset_step_state(&mut self) {
-        self.last_received_msg = None;
+        self.last_received_envelope = None;
         let state = &mut self.history[self.frame_count];
         state.step_count = 0;
         state.step_state = state.frame_state.clone();
-        // Clear out any old messages that we didn't completely step through
-        self.scheduler.dispatch();
     }
 
     pub fn start_diff(&mut self) {
@@ -233,15 +232,15 @@ impl Debugger {
 
     pub fn diff(&self, replica: &Replica) -> Result<String, &'static str> {
         if self.diff_start.is_none() { return Err("Error: Please start a diff"); }
-        match self.diff_start.as_ref().unwrap().2.local_replicas.get(&replica) {
+        match self.diff_start.as_ref().unwrap().2.fsms.get(&replica) {
             None => {
-                match self.current_state().local_replicas.get(&replica) {
+                match self.current_state().fsms.get(&replica) {
                     None => Err("Error: Replica not found"),
                     Some(_) => Ok("Replica was added to group".to_string())
                 }
             },
             Some(old) => {
-                match self.current_state().local_replicas.get(&replica) {
+                match self.current_state().fsms.get(&replica) {
                     None => Ok("Replica was removed from group".to_string()),
                     Some(new) => Ok(diff_replicas(old, new))
                 }
@@ -252,7 +251,7 @@ impl Debugger {
     pub fn replica_names(&self) -> Vec<String> {
         let ref dispatcher_state = self.current_state();
         let mut names = Vec::new();
-        for (r, _)  in dispatcher_state.local_replicas.iter() {
+        for (r, _)  in dispatcher_state.fsms.iter() {
             let mut s = r.name.clone();
             s.push_str("::");
             s.push_str(&r.node.name);
@@ -264,13 +263,13 @@ impl Debugger {
     pub fn replica_state(&self, replica: &Replica) -> Option<(&'static str, &VrCtx)> {
         println!("Checking replica state for {:?}", replica);
         let ref dispatcher_state = self.current_state();
-        match dispatcher_state.local_replicas.get(replica) {
+        match dispatcher_state.fsms.get(replica) {
             None => None,
             Some(fsm) => Some((fsm.state.0, &fsm.ctx))
         }
     }
 
-    fn current_state(&self) -> &DispatcherState {
+    fn current_state(&self) -> &Scheduler {
         &self.history[self.frame_count].step_state
     }
 
@@ -292,7 +291,7 @@ impl Debugger {
     }
 }
 
-fn diff_replicas(old: &Fsm<VrHandler>, new: &Fsm<VrHandler>) -> String {
+fn diff_replicas(old: &Fsm<VrTypes>, new: &Fsm<VrTypes>) -> String {
     let mut diff = String::new();
     if old.state.0 != new.state.0 {
         let _ = writeln!(&mut diff, "State changed from {} to {}", old.state.0, new.state.0);
@@ -313,10 +312,6 @@ fn diff_replicas(old: &Fsm<VrHandler>, new: &Fsm<VrHandler>) -> String {
     if old.ctx.commit_num != new.ctx.commit_num {
         let _ = writeln!(&mut diff, "Commit Number changed from {} to {}",
                  old.ctx.commit_num, new.ctx.commit_num);
-    }
-    if old.ctx.startup_state != new.ctx.startup_state {
-        let _ = writeln!(&mut diff, "Startup State changed from {:?} to {:?}",
-                 old.ctx.startup_state, new.ctx.startup_state);
     }
     if old.ctx.last_received_time != new.ctx.last_received_time {
         let _ = writeln!(&mut diff, "Last received time changed");

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{channel, sync_channel, Sender, Receiver};
 use std::thread::{self, JoinHandle};
 use rustc_serialize::Encodable;
@@ -9,12 +9,15 @@ use fsm::Fsm;
 use membership::Member;
 use admin::{AdminReq, AdminRpy};
 use state::State;
+use fsm::StateFn;
 use super::replica::{RawReplica, Replica, VersionedReplicas};
-use super::vr_fsm::{StartupState, VrCtx, VrHandler, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+use super::vr_fsm::{self, VrCtx, VrTypes, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 use shared_messages::{NewSessionRequest, NewSessionReply};
 use event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
 use super::tenants::Tenants;
-use super::messages::*;
+use super::vrmsg::VrMsg;
+use super::vr_api_messages::VrApiRsp;
+use super::envelope::{Envelope, Announcement, PeerEnvelope, ClientEnvelope, ClientReplyEnvelope};
 use requests::Requests;
 use super::vr_stats::VrStats;
 
@@ -31,16 +34,6 @@ pub enum PeerMsg {
     // Gossiped between dispatchers to ensure all replicas are correctly started on each
     // node and can process VR requests
     Tenants(Tenants)
-}
-
-/// Messages sent to the Dispatcher. They are sent to the local dispatcher from an FSM on the same node or the admin server.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum DispatchMsg {
-    Reconfiguration {tenant: Uuid, old_config: VersionedReplicas, new_config: VersionedReplicas},
-    Stop(Replica),
-    Admin(AdminReq),
-    NewPrimary(Replica),
-    ClearPrimary(Uuid)
 }
 
 struct Session {
@@ -60,11 +53,22 @@ impl Session {
     }
 }
 
+impl Iterator for Dispatcher {
+    type Item = Envelope;
+
+    /// Return the next envelope to be sent. It can be manually sent with self.open_envelope().
+    fn next(&mut self) -> Option<Envelope> {
+        self.envelopes.pop_front()
+    }
+}
+
 /// The Dispatcher is in charge of both starting VR FSMs and routing requests to them.
 pub struct Dispatcher {
     pub node: Member,
     pub tenants: Tenants,
-    pub local_replicas: HashMap<Replica, Fsm<VrHandler>>,
+    pub local_replicas: HashMap<Replica, Fsm<VrTypes>>,
+
+    pub envelopes: VecDeque<Envelope>,
 
     state: State,
     stats: VrStats,
@@ -87,17 +91,11 @@ pub struct Dispatcher {
 
     fsm_tick_id: Uuid,
 
-    /// Receives output messages from local VrHandlers
-    fsm_rx: Receiver<Envelope>,
-    /// To be cloned and passed into the constructor of VrCtx
-    fsm_tx: Sender<Envelope>,
+    /// To be cloned and passed into the constructor of the admin server
+    pub admin_tx: Sender<AdminReq>,
 
-    /// Receives client responses from the local fsms that can either be used directly in testing or
-    /// forwarded to the client_event_loop then actual client in production.
-    client_reply_rx: Receiver<ClientReplyEnvelope>,
-
-    /// To be cloned and passed into the constructor of VrCtx
-    client_reply_tx: Sender<ClientReplyEnvelope>,
+    /// Receives requests from the admin server
+    admin_rx: Option<Receiver<AdminReq>>,
 
     /// Processes API requests from v2r2 clients
     client_event_loop_thread: Option<JoinHandle<()>>,
@@ -107,12 +105,6 @@ pub struct Dispatcher {
 
     client_requests: Requests<Uuid, (Token, u64)>,
     sessions: HashMap<Token, Session>,
-
-    /// To be cloned and passed into the constructor of VrCtx and admin server
-    pub dispatch_tx: Sender<DispatchMsg>,
-
-    /// Receives requests destined for the dispatcher from the local fsms
-    dispatch_rx: Receiver<DispatchMsg>,
 
     /// The peer event loop processes VR protocol messages sent between dispatchers on different
     /// nodes.
@@ -138,29 +130,24 @@ pub struct Dispatcher {
 
 impl Dispatcher {
     pub fn new(state: &State) -> Dispatcher {
-        let (tx, rx) = channel();
-        let (cli_tx, cli_rx) = channel();
-        let (dispatch_tx, dispatch_rx) = channel();
+        let (admin_tx, admin_rx) = channel();
         Dispatcher {
             node: state.members.me.clone(),
             tenants: Tenants::new(),
             local_replicas: HashMap::new(),
+            envelopes: VecDeque::new(),
             state: state.clone(),
             stats: VrStats::new(),
-            fsm_rx: rx,
-            fsm_tx: tx,
-            client_reply_rx: cli_rx,
-            client_reply_tx: cli_tx,
             client_event_loop_thread: None,
             client_event_loop_tx: None,
             client_requests: Requests::new(CLIENT_TICK, REQUEST_TIMEOUT),
             sessions: HashMap::new(),
-            dispatch_tx: dispatch_tx,
-            dispatch_rx: dispatch_rx,
             idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
             primary_tick_ms: DEFAULT_PRIMARY_TICK_MS,
             tick_period: DEFAULT_PRIMARY_TICK_MS / 3,
             fsm_tick_id: Uuid::new_v4(),
+            admin_tx: admin_tx,
+            admin_rx: Some(admin_rx),
             peer_event_loop_thread: None,
             peer_event_loop_tx: None,
             peer_connections_by_member: HashMap::new(),
@@ -220,19 +207,18 @@ impl Dispatcher {
                client_data_rx: Receiver<OutDataMsg>,
                client_control_rx: Receiver<OutControlMsg>) -> Vec<JoinHandle<()>> {
         let mut handles = Vec::new();
+        let admin_rx = self.admin_rx.take().unwrap();
         handles.push(self.peer_event_loop_thread.take().unwrap());
         handles.push(self.client_event_loop_thread.take().unwrap());
         handles.push(thread::Builder::new().name("dispatcher_loop".to_string()).spawn(move || {
             loop {
                 select! {
+                    msg = admin_rx.recv() => self.handle_admin_request(msg.unwrap()),
                     msg = peer_data_rx.recv() => self.handle_peer_data_msg(msg.unwrap()),
                     msg = peer_control_rx.recv() => self.handle_peer_control_msg(msg.unwrap()),
                     msg = client_data_rx.recv() => self.handle_client_data_msg(msg.unwrap()),
                     msg = client_control_rx.recv() => self.handle_client_control_msg(msg.unwrap())
                 }
-                self.dispatch_all_received_messages();
-                self.dispatch_all_client_replies();
-                self.dispatch_all_dispatcher_messages();
             }
         }).unwrap());
         handles
@@ -261,12 +247,6 @@ impl Dispatcher {
         self.idle_timeout_ms = timeout;
         self.primary_tick_ms = timeout / 4;
         self.tick_period = self.primary_tick_ms / 3;
-    }
-
-    pub fn create_test_tenant(&mut self, raw_replicas: Vec<RawReplica>) -> Uuid {
-        let tenant = Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
-        let _ = self.create_tenant_(tenant, raw_replicas);
-        tenant
     }
 
     pub fn create_tenant(&mut self, raw_replicas: Vec<RawReplica>) -> Uuid {
@@ -310,14 +290,12 @@ impl Dispatcher {
        println!("start replica {:?}", replica);
        let mut ctx = VrCtx::new(replica.clone(),
                                 VersionedReplicas::new(),
-                                new_config,
-                                StartupState::InitialConfig,
-                                self.fsm_tx.clone(),
-                                self.client_reply_tx.clone(),
-                                self.dispatch_tx.clone());
+                                new_config);
        ctx.idle_timeout_ms = self.idle_timeout_ms;
        ctx.primary_tick_ms = self.primary_tick_ms;
-       let fsm = Fsm::<VrHandler>::new(ctx);
+       let fun = vr_fsm::startup_new_tenant;
+       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(fun));
+       self.envelopes.extend(fsm.send(VrMsg::Tick));
        self.local_replicas.insert(replica, fsm);
     }
 
@@ -331,27 +309,29 @@ impl Dispatcher {
        if let Some((old_config, new_config)) = self.tenants.get_config(&replica.tenant) {
            let mut ctx = VrCtx::new(replica.clone(),
                                     old_config.clone(),
-                                    new_config.clone(),
-                                    StartupState::Recovery,
-                                    self.fsm_tx.clone(),
-                                    self.client_reply_tx.clone(),
-                                    self.dispatch_tx.clone());
+                                    new_config.clone());
            ctx.idle_timeout_ms = self.idle_timeout_ms;
            ctx.primary_tick_ms = self.primary_tick_ms;
-           let mut fsm = Fsm::<VrHandler>::new(ctx);
+           let fun = vr_fsm::startup_recovery;
+           let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(fun));
            // Send an initial tick to transition to proper state
-           fsm.send_msg(VrMsg::Tick);
+           self.envelopes.extend(fsm.send(VrMsg::Tick));
            self.local_replicas.insert(replica, fsm);
        }
     }
 
-    pub fn send_broadcast(&mut self, replicas: &Vec<Replica>, msg: VrMsg) {
-        for r in replicas {
-            self.send(r, msg.clone());
+    // We only send one message. We don't send any envelopes we receive.
+    fn send_once(&mut self, to: &Replica, msg: VrMsg) {
+        if self.node == to.node {
+            if let Some(ref mut fsm) = self.local_replicas.get_mut(to) {
+                self.envelopes.extend(fsm.send(msg));
+            }
+        } else {
+            self.send_remote(to, msg);
         }
     }
 
-    pub fn send(&mut self, to: &Replica, msg: VrMsg) {
+    fn send(&mut self, to: &Replica, msg: VrMsg) {
         if self.node == to.node {
             self.send_local(to, msg);
         } else {
@@ -359,13 +339,14 @@ impl Dispatcher {
         }
     }
 
-    pub fn send_local(&mut self, to: &Replica, msg: VrMsg) {
+    fn send_local(&mut self, to: &Replica, msg: VrMsg) {
         if let Some(ref mut fsm) = self.local_replicas.get_mut(to) {
-            fsm.send_msg(msg);
+            self.envelopes.extend(fsm.send(msg));
         }
+        self.send_until_empty();
     }
 
-    pub fn send_remote(&mut self, to: &Replica, msg: VrMsg) {
+    fn send_remote(&mut self, to: &Replica, msg: VrMsg) {
         if let Some(token) = self.peer_connections_by_member.get(&to.node) {
             let encoded = Encoder::to_msgpack(&PeerMsg::VrMsg(to.clone(), msg)).unwrap();
             let msg = IncomingMsg::WireMsg(token.clone(), encoded);
@@ -642,8 +623,9 @@ impl Dispatcher {
 
     fn fsm_tick(&mut self) {
         for (_, fsm) in self.local_replicas.iter_mut() {
-            fsm.send_msg(VrMsg::Tick);
+            self.envelopes.extend(fsm.send(VrMsg::Tick));
         }
+        self.send_until_empty();
     }
 
     fn establish_connection(&mut self, token: Token, peer: Member) {
@@ -673,21 +655,6 @@ impl Dispatcher {
         }
     }
 
-    pub fn handle_dispatch_msg(&mut self, msg: DispatchMsg) {
-        match msg {
-            DispatchMsg::Reconfiguration {tenant, old_config, new_config} =>
-                self.reconfigure(tenant, old_config, new_config),
-            DispatchMsg::Stop(replica) => self.stop(&replica),
-            DispatchMsg::Admin(admin_req) => self.handle_admin_request(admin_req),
-            DispatchMsg::NewPrimary(replica) => {
-                self.tenants.primaries.insert(replica.tenant.clone(), replica);
-            }
-            DispatchMsg::ClearPrimary(tenant_id) => {
-                self.tenants.primaries.remove(&tenant_id);
-            }
-        }
-    }
-
    fn reconfigure(&mut self,
                   tenant: Uuid,
                   old_config: VersionedReplicas,
@@ -707,49 +674,16 @@ impl Dispatcher {
                              old_config: &VersionedReplicas,
                              new_config: &VersionedReplicas) {
        let mut ctx = VrCtx::new(replica.clone(),
-       old_config.clone(),
-       new_config.clone(),
-       StartupState::Reconfiguration,
-       self.fsm_tx.clone(),
-       self.client_reply_tx.clone(),
-       self.dispatch_tx.clone());
+                                old_config.clone(),
+                                new_config.clone());
        ctx.idle_timeout_ms = self.idle_timeout_ms;
        ctx.primary_tick_ms = self.primary_tick_ms;
-       let fsm = Fsm::<VrHandler>::new(ctx);
+       let fun = vr_fsm::startup_reconfiguration;
+       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(fun));
+       self.envelopes.extend(fsm.send(VrMsg::Tick));
        self.local_replicas.insert(replica.clone(), fsm);
+       self.send_until_empty();
    }
-
-    pub fn try_recv_dispatch_msg(&self) -> Result<DispatchMsg, ()> {
-        match self.dispatch_rx.try_recv() {
-            Ok(msg) => Ok(msg),
-            // We ignore disconnects. Since we hold a reference to our corresponding Sender it will
-            // never disconnect.
-            Err(_) => Err(())
-        }
-    }
-
-    pub fn try_recv_client_reply(&self) -> Result<ClientReplyEnvelope, ()> {
-        match self.client_reply_rx.try_recv() {
-            Ok(envelope) => Ok(envelope),
-
-            // We ignore disconnects. Since we hold a reference to our corresponding Sender it will
-            // never disconnect.
-            Err(_) => Err(())
-        }
-    }
-
-    /// Try to receive any messages sent by one of the local FSMs.
-    /// This method is used to receive envelopes and dispatch them.
-    /// It is made public so that it can be used in testing to track all messages sent
-    /// by local FSMs.
-    pub fn try_recv(&mut self) -> Result<Envelope, ()> {
-        match self.fsm_rx.try_recv() {
-            Ok(envelope) => Ok(envelope),
-            // We ignore disconnects. Since we hold a reference to our corresponding Sender it will
-            // never disconnect.
-            Err(_) => Err(())
-        }
-    }
 
     /// This will call Fsm::get_state(&self) for the given replica and return the internal state
     /// of the handler Fsm. This call will block waiting for receipt of the state for threaded_fsms.
@@ -766,42 +700,39 @@ impl Dispatcher {
         }
     }
 
-    /// This function will block the currently running thread until all messages in the fsm_rx
-    /// have been dispatched. Note that each message sent to an fsm may cause it to send messages
-    /// and result in more messages being received by the dispatcher.
-    pub fn dispatch_all_received_messages(&mut self) {
+    pub fn send_until_empty(&mut self) {
         loop {
-            match self.try_recv() {
-                Ok(Envelope {to, msg, ..}) => self.send(&to, msg),
-                Err(()) => break
+            match self.next() {
+                Some(envelope) => self.open_envelope(envelope),
+                None => return
             }
         }
     }
 
-    pub fn dispatch_all_dispatcher_messages(&mut self) {
-        loop {
-            match self.try_recv_dispatch_msg() {
-                Ok(msg) => self.handle_dispatch_msg(msg),
-                Err(_) => break
+    pub fn open_envelope(&mut self, envelope: Envelope) {
+        match envelope {
+            Envelope::Peer(PeerEnvelope {to, msg, ..}) => self.send_once(&to, msg),
+            Envelope::Announcement(announcement) => self.handle_announcement(announcement),
+            Envelope::Client(ClientEnvelope {to, msg}) => self.send_once(&to, msg),
+            Envelope::ClientReply(ClientReplyEnvelope {to, msg}) => {
+                if let Some((token, _)) = self.client_requests.remove(&to) {
+                    self.send_client_reply(token, msg);
+                }
             }
         }
     }
 
-    pub fn dispatch_all_client_replies(&mut self) {
-        loop {
-            match self.try_recv_client_reply() {
-                Ok(envelope) => {
-                    self.dispatch_client_reply(envelope);
-                },
-                Err(_) => break
+    fn handle_announcement(&mut self, announcement: Announcement) {
+        match announcement {
+            Announcement::Reconfiguration {tenant, old_config, new_config} =>
+                self.reconfigure(tenant, old_config, new_config),
+            Announcement::Stop(replica) => self.stop(&replica),
+            Announcement::NewPrimary(replica) => {
+                self.tenants.primaries.insert(replica.tenant.clone(), replica);
+            },
+            Announcement::ClearPrimary(tenant_id) => {
+                self.tenants.primaries.remove(&tenant_id);
             }
-       }
-    }
-
-    fn dispatch_client_reply(&mut self, envelope: ClientReplyEnvelope) {
-        let ClientReplyEnvelope {to, msg} = envelope;
-        if let Some((token, _)) = self.client_requests.remove(&to) {
-            self.send_client_reply(token, msg);
         }
     }
 
@@ -821,34 +752,6 @@ impl Dispatcher {
         let msg = IncomingMsg::WireMsg(token, encoded);
         self.peer_event_loop_tx.as_ref().unwrap().send(msg).unwrap();
     }
-
-    // This is useful when testing operations that include view changes. After a view change, th
-    // new primary replays any uncommitted client operations. This allows us to just drop them and
-    // get a response to the latest client request.
-    pub fn drop_all_client_replies(&self) {
-        while let Ok(_) = self.client_reply_rx.try_recv() {};
-    }
-
-    pub fn save_state(&self) -> DispatcherState {
-        let mut replica_states = HashMap::new();
-        for (replica, fsm) in self.local_replicas.iter() {
-            replica_states.insert(replica.clone(), fsm.clone());
-        }
-        DispatcherState {
-            node: self.node.clone(),
-            tenants: self.tenants.clone(),
-            local_replicas: replica_states
-        }
-    }
-
-    pub fn restore_state(&mut self, state: &DispatcherState) {
-        self.tenants = state.tenants.clone();
-        let mut local_replicas = HashMap::new();
-        for (replica, fsm) in state.local_replicas.iter() {
-            local_replicas.insert(replica.clone(), fsm.clone());
-        }
-        self.local_replicas = local_replicas;
-    }
 }
 
 fn send_client_reply(tx: &mio::Sender<IncomingMsg>, token: Token, msg: VrMsg) {
@@ -856,14 +759,3 @@ fn send_client_reply(tx: &mio::Sender<IncomingMsg>, token: Token, msg: VrMsg) {
     let msg = IncomingMsg::WireMsg(token, encoded);
     tx.send(msg).unwrap();
 }
-
-/// This structure is used to save and restore dispatcher state during debugging
-/// Note that states are only stored/retrieved after all messages have been dispatched. Therefore
-/// there should be nothing left in the channels that requires saving.
-#[derive(Clone)]
-pub struct DispatcherState {
-    pub node: Member,
-    pub tenants: Tenants,
-    pub local_replicas: HashMap<Replica, Fsm<VrHandler>>
-}
-

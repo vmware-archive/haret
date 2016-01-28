@@ -8,7 +8,6 @@ pub struct Frame {
 }
 
 /// A granularity of a history that allows stepping between TestMsgs
-#[cfg(test)]
 impl Frame {
     pub fn new(test_msg: TestMsg) -> Frame {
         Frame {

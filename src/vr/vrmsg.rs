@@ -1,7 +1,7 @@
 use uuid::Uuid;
 use rustc_serialize::Encodable;
+use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::{Replica, VersionedReplicas};
-use super::ElementType;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum VrMsg {
@@ -13,6 +13,12 @@ pub enum VrMsg {
         op: VrApiReq,
         session_id: Uuid,
         request_num: u64
+    },
+    Reconfiguration {
+        session_id: Uuid,
+        client_req_num: u64,
+        epoch: u64,
+        replicas: Vec<Replica>
     },
     ClientReply {
         epoch: u64,
@@ -90,12 +96,6 @@ pub enum VrMsg {
         commit_num: Option<u64>,
         log: Option<Vec<VrMsg>>
     },
-    Reconfiguration {
-        session_id: Uuid,
-        client_req_num: u64,
-        epoch: u64,
-        replicas: Vec<Replica>
-    },
     StartEpoch {
         epoch: u64,
         op: u64,
@@ -108,79 +108,40 @@ pub enum VrMsg {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Envelope {
-    pub to: Replica,
-    pub from: Replica,
-    pub msg: VrMsg
-}
-
-impl Envelope {
-    pub fn new(to: Replica, from: Replica, msg: VrMsg) -> Envelope {
-        Envelope {
-            to: to,
-            from: from,
-            msg: msg
-        }
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
-pub struct ClientReplyEnvelope {
-    pub to: Uuid,
-    pub msg: VrMsg
-}
-
-impl ClientReplyEnvelope {
-    pub fn new(to: Uuid, msg: VrMsg) -> ClientReplyEnvelope {
-        ClientReplyEnvelope {
-            to: to,
-            msg: msg
-        }
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
-pub struct ClientEnvelope {
-    pub to: Replica,
-
-    // Note that VrMsg's that aren't of the ClientRequest variety will be dropped on receipt and the
-    // connection closed.
-    pub msg: VrMsg
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
-pub enum VrApiReq {
-    Create {path: String, ty: ElementType},
-    Put {path: String, data: Vec<u8>, cas_tag: Option<u64>},
-    Get {path: String, cas: bool},
-    Delete {path: String, cas_tag: Option<u64>},
-    List {path: String},
-    Null // used during reconfiguration
-}
-
-impl VrApiReq {
-    pub fn get_path(&self) -> String {
+impl VrMsg {
+    // This is only used for filtering messages in vr_fsm. However we don't ever want to filter
+    // client requests from the primary, so we exclude `VrMsg::Reconfiguration`
+    pub fn get_epoch(&self) -> Option<u64> {
         match *self {
-            VrApiReq::Create {ref path, ..} => path.clone(),
-            VrApiReq::Put {ref path, ..} => path.clone(),
-            VrApiReq::Get {ref path, ..} => path.clone(),
-            VrApiReq::Delete {ref path, ..} => path.clone(),
-            VrApiReq::List {ref path, ..} => path.clone(),
-            VrApiReq::Null => unreachable!()
+            VrMsg::ClientReply {epoch, ..} => Some(epoch),
+            VrMsg::StartViewChange {epoch, ..} => Some(epoch),
+            VrMsg::DoViewChange {epoch, ..} => Some(epoch),
+            VrMsg::StartView {epoch, ..} => Some(epoch),
+            VrMsg::Prepare {epoch, ..} => Some(epoch),
+            VrMsg::PrepareOk {epoch, ..} => Some(epoch),
+            VrMsg::Commit {epoch, ..} => Some(epoch),
+            VrMsg::GetState {epoch, ..} => Some(epoch),
+            VrMsg::NewState {epoch, ..} => Some(epoch),
+            VrMsg::RecoveryResponse {epoch, ..} => Some(epoch),
+            VrMsg::StartEpoch {epoch, ..} => Some(epoch),
+            VrMsg::EpochStarted {epoch, ..} => Some(epoch),
+            _ => None
         }
     }
-}
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
-pub enum VrApiRsp {
-    Element {data: Vec<u8>, cas_tag: Option<u64>},
-    KeyList {keys: Vec<String>},
-    Ok,
-    Error {msg: String},
-    Timeout,
-    ParentNotFoundError,
-    ElementAlreadyExistsError,
-    ElementNotFoundError(String),
-    CasFailedError {path: String, expected: u64, actual: u64},
+    pub fn get_view(&self) -> Option<u64> {
+        match *self {
+            VrMsg::ClientReply {view, ..} => Some(view),
+            VrMsg::StartViewChange {view, ..} => Some(view),
+            VrMsg::DoViewChange {view, ..} => Some(view),
+            VrMsg::StartView {view, ..} => Some(view),
+            VrMsg::Prepare {view, ..} => Some(view),
+            VrMsg::PrepareOk {view, ..} => Some(view),
+            VrMsg::Commit {view, ..} => Some(view),
+            VrMsg::GetState {view, ..} => Some(view),
+            VrMsg::NewState {view, ..} => Some(view),
+            VrMsg::RecoveryResponse {view, ..} => Some(view),
+            _ => None
+        }
+    }
 }

@@ -4,14 +4,12 @@
 use uuid::Uuid;
 use rustc_serialize::Encodable;
 use v2r2::vr::{VrMsg, Replica};
-
-pub trait CausalMsg {
-    fn causal_id(&self) -> Option<Uuid>;
-}
+use distill::CausalMsg;
 
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable)]
 pub enum TestMsg {
     ClientRequest(VrMsg),
+    Reconfiguration(VrMsg),
     Commit,
     // Specify which backup to send the VrMsg::Tick to
     ViewChange(Replica),

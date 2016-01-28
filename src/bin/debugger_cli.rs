@@ -1,10 +1,13 @@
 extern crate uuid;
 extern crate rand;
 extern crate v2r2;
-extern crate fsm;
 extern crate time;
 extern crate msgpack;
 extern crate rustc_serialize;
+extern crate distill;
+
+#[macro_use]
+extern crate fsm;
 
 #[macro_use]
 #[path = "../../tests/debugger/mod.rs"]
@@ -19,8 +22,8 @@ use std::io;
 use std::io::Write;
 use std::fmt::Write as FmtWrite;
 use uuid::Uuid;
-use debugger::{Debugger, Scheduler};
-use debugger_shared::{test_setup, Action};
+use debugger::Debugger;
+use debugger_shared::Action;
 use v2r2::Member;
 use v2r2::vr::{Replica};
 
@@ -33,9 +36,7 @@ fn main() {
             exit(-1);
         }
     };
-    let (mut dispatcher, replicas) = test_setup::init_tenant();
-    test_setup::elect_initial_leader(&mut dispatcher, &replicas);
-    let mut debugger = Debugger::new(Scheduler::new(dispatcher));
+    let mut debugger = Debugger::new();
 
     if let Err(e) = debugger.load_schedule(&filename) {
         println!("{}", e);
@@ -215,11 +216,8 @@ fn show_status(debugger: &Debugger) {
         }
     }
 
-    if let Some(envelope) = val.last_received_vrmsg {
-        writeln!(&mut status, "\nLast received internal message from {}:{} to {}:{}",
-                 envelope.from.node.name, envelope.from.name,
-                 envelope.to.node.name, envelope.to.name).unwrap();
-        writeln!(&mut status, "{:#?}", envelope.msg).unwrap();
+    if let Some(envelope) = val.last_received_envelope {
+        writeln!(&mut status, "Last Received Envelope: {:#?}", envelope).unwrap();
     }
     println!("{}", status);
 }

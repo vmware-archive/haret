@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::collections::BTreeMap;
 use std::collections::Bound::{Excluded, Unbounded};
-use super::messages::{VrApiReq, VrApiRsp};
+use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::ElementType;
 
 // TODO: Parameterize data based on element type (i.e. don't ignore it)
@@ -149,7 +149,7 @@ impl VrBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vr::messages::*;
+    use vr::vr_api_messages::VrApiRsp;
     use vr::ElementType;
 
     fn assert_ok(res: Result<VrApiRsp, VrApiRsp>) {

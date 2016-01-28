@@ -15,6 +15,7 @@ rand = "*"
 
 fsm = { path = "../fsm" }
 orset = { path = "../orset"}
+distill = { path = "../distill"}
 
 [dependencies.mio]
 git = "https://github.com/carllerche/mio.git"
