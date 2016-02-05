@@ -34,7 +34,7 @@ Run the tests with `cargo test`
  * Noting the tenant id and primary from the last step, open a third terminal window
  * Run the CLI client, giving the primary replica to talk to (in this case r2), and the VR API port
    to listen on (in this case 3002).
-   * `rlwrap cargo run --bin v2r2-cli-client <UUID>::r2::dev2 127.0.0.1:3002`
+   * `rlwrap cargo run --bin v2r2-cli-client <UUID> 127.0.0.1:3002`
  * Start issuing commands
 
 ```
@@ -64,7 +64,7 @@ v2r2> create binary /foo
    output logging.
  * Connect to the new master (in this case dev3) with the cli client and run some operations, ensuring the state is
    correct
-   * `rlwrap cargo run --bin v2r2-cli-client <UUID>::r3::dev3 127.0.0.1:4002`
+   * `rlwrap cargo run --bin v2r2-cli-client <UUID> 127.0.0.1:4002`
 
 ```
 v2r2> get /foo cas
