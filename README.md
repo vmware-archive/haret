@@ -6,6 +6,8 @@ Run the tests with `cargo test`
 
 # Setting up a test cluster
 
+ * Install rust. Some features that v2r2 requires are not yet part of stable or beta builds. The nightly channel of 1.7.0 from 2015-12-13 works. It can be installed by using:
+   * curl -sSf https://static.rust-lang.org/rustup.sh | sh -s -- --channel=nightly --date=2015-12-13
  * Install rlwrap so that you can have readline support on CLIs
  * Install the code by cloning fsm, orset, and v2r2 to the same directory. V2R2 will look for
    the fsm code there. This is required since cargo doesn't handle sourcing from private repos.
