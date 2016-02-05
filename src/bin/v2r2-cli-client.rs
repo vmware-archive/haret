@@ -20,8 +20,31 @@ static mut req_num: u64 = 0;
 
 fn main() {
     let mut args = env::args();
-    let tenant_id = Uuid::parse_str(&args.nth(1).unwrap()).unwrap();
-    let addr = args.next().unwrap();
+
+    let tenant_id: Uuid = match args.nth(1) {
+        Some(arg1) => {
+            match Uuid::parse_str(&arg1) {
+                Ok(uuid) => uuid,
+                Err(_) => {
+                    println!("Invalid UUID format\n{}", help());
+                    exit(-1);
+                }
+            }
+        },
+        None => {
+            println!("Missing argument UUID\n{}", help());
+            exit(-1);
+        }
+    };
+
+    let addr: String = match args.next() {
+        Some(ipport) => ipport,
+        None => {
+            println!("Missing IP Address\n{}", help());
+            exit(-1);
+        }
+    };
+
     let (primary, sock, session_id) = start_session(tenant_id, addr);
     if let Some(flag) = args.next() {
         run_script(&flag, args, sock, &primary, session_id);
@@ -296,7 +319,7 @@ fn exec(msg: VrApiReq, sock: &mut TcpStream, replica: &Replica, session_id: Uuid
 
 fn help() -> Error {
     let string  =
-"Usage: v2r2-cli-client <IpAddress> [-e <command>]
+"Usage: v2r2-cli-client <UUID> <IpAddress> [-e <command>]
 
     Commands:
         create <Element Type> <Path>
