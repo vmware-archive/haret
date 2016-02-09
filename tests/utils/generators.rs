@@ -4,13 +4,13 @@ use rand::{ThreadRng};
 use uuid::Uuid;
 use rand::distributions::{IndependentSample, Range};
 
-/// Create a list of n clients
-pub fn clients(n: usize) -> Vec<Uuid>{
-    let mut clients = Vec::with_capacity(n);
+/// Create a list of n session ids
+pub fn session_ids(n: usize) -> Vec<Uuid>{
+    let mut session_ids = Vec::with_capacity(n);
     for _ in 0..n {
-        clients.push(Uuid::new_v4());
+        session_ids.push(Uuid::new_v4());
     }
-    clients
+    session_ids
 }
 
 /// Create a list of paths

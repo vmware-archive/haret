@@ -1,23 +1,28 @@
 extern crate uuid;
 extern crate rand;
 extern crate v2r2;
-extern crate fsm;
 extern crate time;
 extern crate msgpack;
 extern crate rustc_serialize;
 
 #[macro_use]
+extern crate fsm;
+
+#[macro_use]
+extern crate distill;
+
 mod utils;
-mod debugger_shared;
+
+pub mod debugger_shared;
 
 use rand::{thread_rng, ThreadRng};
 use rand::distributions::{IndependentSample, Range};
 use uuid::Uuid;
-use utils::fuzzer::{Test, Fuzzer};
-use utils::{vr_invariants, op_invariants, Model, Recorder};
-use debugger_shared::{test_setup, TestMsg};
-use utils::generators::{oneof, paths, clients};
-use v2r2::vr::{VrMsg, ElementType, VrApiReq};
+use distill::{Test, Distill};
+use utils::{vr_invariants, op_invariants, Model};
+use debugger_shared::{Scheduler, TestMsg};
+use utils::generators::{oneof, paths, session_ids};
+use v2r2::vr::{VrMsg, VrCtx, ElementType, VrApiReq, ClientReplyEnvelope};
 
 // These constants should all add up to 100%
 const CLIENT_REQUEST_PCT: u8 = 80;
@@ -31,8 +36,8 @@ const VIEW_CHANGE_TOP: u8 = COMMIT_TOP + VIEW_CHANGE_PCT;
 const CRASH_TOP: u8 = VIEW_CHANGE_TOP + 5;
 
 struct VrTest {
-    recorder: Recorder,
-    clients: Vec<Uuid>,
+    scheduler: Scheduler,
+    session_ids: Vec<Uuid>,
     paths: Vec<&'static str>,
     rng: ThreadRng,
     model: Model
@@ -45,11 +50,12 @@ impl VrTest {
                         VIEW_CHANGE_PCT +
                         CRASH_PCT +
                         RESTART_PCT);
-        let (mut dispatcher, replicas) = test_setup::init_tenant();
-        test_setup::elect_initial_leader(&mut dispatcher, &replicas);
+        let mut scheduler = Scheduler::new(3);
+        scheduler.elect_initial_leader();
+        let replicas = scheduler.new_config.replicas.clone();
         VrTest {
-            recorder: Recorder::new(dispatcher),
-            clients: clients(1),
+            scheduler: scheduler,
+            session_ids: session_ids(1),
             paths: paths(),
             rng: thread_rng(),
             model: Model::new(replicas, 1)
@@ -59,14 +65,14 @@ impl VrTest {
     fn choose_request(&mut self, range: &mut Range<u8>, n: u64) -> Option<TestMsg> {
         match range.ind_sample(&mut self.rng) {
             0...CLIENT_REQUEST_PCT => {
-                let req = gen_client_request(&mut self.rng, &self.clients, &self.paths, n);
+                let req = gen_client_request(&mut self.rng, &self.session_ids, &self.paths, n);
                 Some(TestMsg::ClientRequest(req))
             },
             CLIENT_REQUEST_PCT...COMMIT_TOP => Some(TestMsg::Commit),
             COMMIT_TOP...VIEW_CHANGE_TOP => {
-                // Reset the clients (really session IDs when the view changes). In production
+                // Reset the session_ids (really session IDs when the view changes). In production
                 // this would happen with tcp disconnect/reconnect.
-                self.clients = clients(self.clients.len());
+                self.session_ids = session_ids(self.session_ids.len());
                 Some(TestMsg::ViewChange(self.model.choose_live_backup()))
             },
             VIEW_CHANGE_TOP...CRASH_TOP => {
@@ -78,9 +84,9 @@ impl VrTest {
                     Some(replica) => {
                         if let Some(ref primary) = self.model.primary {
                             if replica == *primary {
-                                // Reset the clients (really session IDs when the view changes). In production
+                                // Reset the session_ids (really session IDs when the view changes). In production
                                 // this would happen with tcp disconnect/reconnect.
-                                self.clients = clients(self.clients.len());
+                                self.session_ids = session_ids(self.session_ids.len());
                             }
                         }
                         Some(TestMsg::Crash(replica, Uuid::new_v4()))
@@ -112,18 +118,22 @@ impl VrTest {
 
 impl Test for VrTest {
     type Msg = TestMsg;
+    type State = Vec<(&'static str, VrCtx)>;
+    type Model = Model;
 
+    /// Reset the replica group state to view 1 with r2 as a leader.
     fn reset(&mut self, record: bool) {
-        let (mut dispatcher, replicas) = test_setup::init_tenant();
-        test_setup::elect_initial_leader(&mut dispatcher, &replicas);
-        self.recorder = Recorder::new(dispatcher);
-        self.model = Model::new(replicas, 1);
+        self.scheduler = Scheduler::new(3);
+        self.scheduler.elect_initial_leader();
+        let replicas = self.scheduler.new_config.replicas.clone();
+        let view = 1;
+        self.model = Model::new(replicas, view);
         if record {
-            self.recorder.record()
+            self.scheduler.record()
         }
     }
 
-    fn gen_request(&mut self, n: u64) -> TestMsg {
+    fn generate(&mut self, n: u64) -> TestMsg {
         match self.model.primary {
             None => self.choose_request_no_primary(),
             Some(_) => {
@@ -138,7 +148,7 @@ impl Test for VrTest {
         }
     }
 
-    fn update_model(&mut self, request: TestMsg) {
+    fn update(&mut self, request: TestMsg) {
         self.model.update(request);
     }
 
@@ -150,48 +160,47 @@ impl Test for VrTest {
         let test_msg = request.clone();
         match request {
             TestMsg::ClientRequest(vrmsg) => {
-                self.recorder.send(test_msg, &self.model.primary.clone().unwrap(), vrmsg.clone());
-                assert_client_request_correctness(self, vrmsg)
+                let mut replies = self.scheduler.send(test_msg,
+                                                      &self.model.primary.clone().unwrap(),
+                                                      vrmsg.clone());
+                assert_eq!(replies.len(), 1);
+                assert_client_request_correctness(self, vrmsg, replies.pop().unwrap())
             },
             TestMsg::Commit => {
-                self.recorder.send(test_msg, &self.model.primary.clone().unwrap(), VrMsg::Tick);
+                self.scheduler.send(test_msg, &self.model.primary.clone().unwrap(), VrMsg::Tick);
                 assert_basic_correctness(self)
             },
             TestMsg::ViewChange(backup) => {
-                self.recorder.send(test_msg, &backup, VrMsg::Tick);
-                // Recorder doesn't handle client replies yet
-                self.recorder.dispatcher.drop_all_client_replies();
+                self.scheduler.send(test_msg, &backup, VrMsg::Tick);
                 assert_basic_correctness(self)
             },
             TestMsg::Crash(replica, _) => {
-                self.recorder.stop_replica(test_msg, &replica);
+                self.scheduler.stop(test_msg, &replica);
                 assert_basic_correctness(self)
             },
             TestMsg::Restart(replica, _) => {
-                self.recorder.restart_replica(test_msg, &replica);
-                self.recorder.dispatcher.drop_all_client_replies();
+                self.scheduler.restart(test_msg, &replica);
                 assert_basic_correctness(self)
             },
+            TestMsg::Reconfiguration(_vrmsg) => Ok(()),
             TestMsg::Null => Ok(())
         }
     }
 
-    fn get_states(&self) -> Option<Vec<String>> {
+    fn get_state(&self) -> Option<Vec<(&'static str, VrCtx)>> {
         let mut states = Vec::new();
         for r in &self.model.live_replicas {
-            let (state, ctx) = self.recorder.dispatcher.get_state(r).unwrap();
-            states.push(format!("State: {}",state));
-            states.push(format!("{:#?}", ctx));
+            states.push(self.scheduler.get_state(r).unwrap());
         }
         Some(states)
     }
 
-    fn get_model(&self) -> Option<String> {
-        Some(format!("{:#?}", self.model))
+    fn get_model(&self) -> Option<Model> {
+        Some(self.model.clone())
     }
 
     fn get_schedule(&self) -> Option<Vec<u8>> {
-        Some(self.recorder.serialize_history())
+        Some(self.scheduler.serialize_history())
     }
 
 }
@@ -200,27 +209,29 @@ impl Test for VrTest {
 #[test]
 fn stable_group() {
     let test = VrTest::new();
-    let mut fuzzer = Fuzzer::new("static_membership", test);
-    fuzzer.run(1000);
+    let mut distill = Distill::new("static_membership", test);
+    distill.run(1000);
 }
 
 /// Assert that all correctness conditions are maintained after each client request to the group
-fn assert_client_request_correctness(test: &mut VrTest, request: VrMsg) -> Result<(), String> {
-    try!(assert_response_matches_internal_replica_state(test, request));
+fn assert_client_request_correctness(test: &mut VrTest,
+                                     request: VrMsg,
+                                     reply: ClientReplyEnvelope) -> Result<(), String> {
+    try!(assert_response_matches_internal_replica_state(test, request, reply));
     try!(assert_vr_invariants(test));
-    test.model.check(&test.recorder.dispatcher)
+    test.model.check(&test.scheduler)
 }
 
 /// Assert that we maintain correctness conditions not relating to a client request
 fn assert_basic_correctness(test: &mut VrTest) -> Result<(), String> {
     try!(assert_vr_invariants(test));
-    test.model.check(&test.recorder.dispatcher)
+    test.model.check(&test.scheduler)
 }
 
 fn assert_vr_invariants(test: &mut VrTest) -> Result<(), String> {
     let mut states = Vec::new();
     for r in &test.model.live_replicas {
-        let state_tuple = test.recorder.dispatcher.get_state(r).unwrap();
+        let state_tuple = test.scheduler.get_state(r).unwrap();
         states.push(state_tuple);
     }
     let quorum = test.model.replicas.len() / 2 + 1;
@@ -231,24 +242,28 @@ fn assert_vr_invariants(test: &mut VrTest) -> Result<(), String> {
 
 
 fn assert_response_matches_internal_replica_state(test: &mut VrTest,
-                                                  request: VrMsg) -> Result<(), String> {
+                                                  request: VrMsg,
+                                                  reply: ClientReplyEnvelope) -> Result<(), String> {
     let primary = test.model.primary.clone().unwrap();
     match request {
         VrMsg::ClientRequest {op: VrApiReq::Create{..}, ..} =>
             op_invariants::assert_create_response(&test.model.replicas,
-                                                  &test.recorder.dispatcher,
+                                                  &test.scheduler,
                                                   &primary,
-                                                  request),
+                                                  request,
+                                                  reply),
         VrMsg::ClientRequest {op: VrApiReq::Put{..}, ..} =>
             op_invariants::assert_put_response(&test.model.replicas,
-                                               &test.recorder.dispatcher,
+                                               &test.scheduler,
                                                &primary,
-                                               request),
+                                               request,
+                                               reply),
         VrMsg::ClientRequest {op: VrApiReq::Get{..}, ..} =>
             op_invariants::assert_get_response(&test.model.replicas,
-                                               &test.recorder.dispatcher,
+                                               &test.scheduler,
                                                &primary,
-                                               request),
+                                               request,
+                                               reply),
         _ => fail!()
     }
 }
@@ -256,9 +271,9 @@ fn assert_response_matches_internal_replica_state(test: &mut VrTest,
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //  GENERATOR FUNCTIONS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-fn gen_client_request(rng: &mut ThreadRng, clients: &Vec<Uuid>, paths: &Vec<&'static str>, n: u64) -> VrMsg {
+fn gen_client_request(rng: &mut ThreadRng, session_ids: &Vec<Uuid>, paths: &Vec<&'static str>, n: u64) -> VrMsg {
     VrMsg::ClientRequest {
-        session_id: oneof(rng, clients),
+        session_id: oneof(rng, session_ids),
         request_num: n,
         op: gen_op(rng, paths)
     }
