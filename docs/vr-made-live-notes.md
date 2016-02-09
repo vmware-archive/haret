@@ -49,9 +49,25 @@ if the replica learns of a later epoch in normal mode it's likely the replicas i
 config have shut down because they have received a quorum of `EpochStarted` messages. In this case
 the replica will need to transfer state from a replica in the new group.
 
+Note that a similar scenario to the one above can occur with a partitioned node *during* a
+reconfiguration. For clarity, the exact steps to make this happen are detailed below.
+
+ 1. B gets a reconfiguration request from the client.
+ 2. B sends Prepare messages to A and C.
+ 3. A does not get the message, C responds with a prepare OK
+ 4. B receives the PrepareOk from C and sends a commit message to A and C containing the new epoch
+ 5. B sends StartEpoch messages to new replicas D and E, and moves to the new epoch
+ 6. C commits the request and moves to the new epoch
+ 7. D and E get a StartEpoch message, and transfer state from B and C.
+ 8. B and C get a quorum of EpochStarted messages for the new group from D and E and shutdown
+ 9. A receives the Commit Message and tries to do state transfer, but at this point it only knows of B
+ and C which are shutdown.
+
 The protocol as written does not provide for this scneario, although it is easy enough to work around in
 practice. There are two methods of obtaining the old and new config in this scenario and performing
-state transfer. The replica can directly ask the replica that informed it of the latest epoch. In
+state transfer.
+
+The replica can directly ask the replica that informed it of the latest epoch. In
 the normal case this is the primary as a result of a `Prepare` message. During View Change this
 would be a backup replica. Both of these are safe in that the replica that was partitioned off will
 learn of operations later than any that it has participated in the commit of, and so will not
@@ -62,10 +78,16 @@ The replica can ask the dispatcher that participates in gossip for the latest co
 tenant. If the local dispatcher has not learned this information yet it can broadcast a request to
 other nodes, or simply wait for the state to converge before replying to the local replica.
 
+In order to maintain the semantics and safety of the original protocol, we have decided to implement
+the first method. Since this is only a liveness bug, as soon as the partition between A and the new
+group heals, the system should recover. However, note also that if A was partioned off and is not
+included in the new group, it will sit being harmlessly idle. In this latter case, an administrative
+command can be used to take the replica down.
+
 ## Efficiency
 There are a number of major and minor adjustments we can make that make the VR implementation more efficient. Some of them are described in the paper, and some have been discovered by us during implementation and testing. This section will cover optimizations made in our implementation.
 
 #### Primary Crash and Recovery
-When a replica crashes and restarts it enters recovery mode. This results in a `Recovery` message being sent to the other replicas when it restarts. If, however, in a given view, the primary crashes and restarts before the backups notice the primary crashed, the backups may receive a Recovery message from the crashed primary, which they currently believe is the active primary. In this instance, as described in the paper, the backups are still in 'normal' status and should respond to the recovery message. However, the primary will never recover in this view because it itself is the primary for the largest view received by the quorum of `RecoveryResponse` messages. 
+When a replica crashes and restarts it enters recovery mode. This results in a `Recovery` message being sent to the other replicas when it restarts. If, however, in a given view, the primary crashes and restarts before the backups notice the primary crashed, the backups may receive a Recovery message from the crashed primary, which they currently believe is the active primary. In this instance, as described in the paper, the backups are still in 'normal' status and should respond to the recovery message. However, the primary will never recover in this view because it itself is the primary for the largest view received by the quorum of `RecoveryResponse` messages.
 
 Note that the above scenario is safe because eventually the backups will timeout and start a view change and one of them will become a new primary and respond to further Recovery messages. Therefore the old primary will eventually recover. However, it is suboptimal, in that it requires waiting for a timeout to trigger a view change that can be detected without a timeout. We can eliminate the remaining view change timeout wait time by having a backup start a view change immediately if it sees a `Recovery` message from the primary of the current view. Additionally, the backup does not respond to this message.
