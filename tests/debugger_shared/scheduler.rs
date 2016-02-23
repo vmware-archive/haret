@@ -15,7 +15,7 @@ use super::{TestMsg, Frame, Action};
 #[cfg(test)]
 use msgpack::Encoder;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Scheduler {
     pub primary: Option<Replica>,
     pub envelopes: VecDeque<Envelope>,
