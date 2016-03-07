@@ -194,6 +194,15 @@ that can experience crashes and restarts of nodes. There remains much more testi
 including dropping and delaying messages, and forcing partitions. These additional failure modes
 must be tested during reconfiguration as well. The testing framework is well suited to this task.
 
+There is also an [interactive
+debugger](https://github.com/vmware/v2r2/blob/9112f7f0749424714976067e5ef6094f195fce63/src/bin/debugger_cli.rs)
+that can load replicas in a failing generative test case and step through message sends and receives
+as recorded during testing/shrinking. This allows one to single step through the protocol and
+isolate the problem. Oh, and it also tracks differences between replica states during stepping and
+can be run in reverse!  Unfortunately there is not much documentation written for this tool,
+although some instructions exist in the
+[README](https://github.com/vmware/v2r2/blob/9112f7f0749424714976067e5ef6094f195fce63/README.md#using-the-debugger).
+
 # Closing Remarks
 
 I hope I have clearly revealed what exists at this state of our project's existence. There remains
