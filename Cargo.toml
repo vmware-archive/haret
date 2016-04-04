@@ -8,17 +8,15 @@ serde = "*"
 serde_macros = "*"
 serde_json = "*"
 libc = "0.1"
-rustc-serialize = "*"
+rustc-serialize = "0.3"
 time = "*"
 uuid = "0.1"
 rand = "*"
+mio = "0.5.0"
 
 fsm = { path = "../fsm" }
 orset = { path = "../orset"}
 distill = { path = "../distill"}
-
-[dependencies.mio]
-git = "https://github.com/carllerche/mio.git"
 
 [dependencies.msgpack]
 git = "https://github.com/mneumann/rust-msgpack.git"
