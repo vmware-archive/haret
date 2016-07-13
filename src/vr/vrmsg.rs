@@ -1,5 +1,4 @@
 use uuid::Uuid;
-use rustc_serialize::Encodable;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::{Replica, VersionedReplicas};
 

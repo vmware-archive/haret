@@ -11,7 +11,7 @@ use uuid::Uuid;
 use state::State;
 use super::{AdminClientReq, AdminClientRpy, AdminReq, AdminRpy};
 use event_loop::{EventLoop, OutControlMsg, OutDataMsg, IncomingMsg};
-use shared_messages::{NewSessionRequest, NewSessionReply};
+use shared_messages::{NewSessionRequest};
 use vr::{RawReplica, Replica};
 use debug_sender::DebugSender;
 

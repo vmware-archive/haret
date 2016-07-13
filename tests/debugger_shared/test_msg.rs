@@ -2,7 +2,6 @@
 /// actual VrMsg messages, since some messages (like VrMsg::Tick) can signal different things.
 
 use uuid::Uuid;
-use rustc_serialize::Encodable;
 use v2r2::vr::{VrMsg, Replica};
 use distill::CausalMsg;
 

@@ -1,7 +1,7 @@
 use std::thread;
 use std::thread::JoinHandle;
 use std::io::{Error, ErrorKind};
-use std::sync::mpsc::{channel, sync_channel, Sender, Receiver};
+use std::sync::mpsc::{channel, sync_channel, Receiver};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use time::{SteadyTime, Duration};

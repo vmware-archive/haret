@@ -1,4 +1,3 @@
-use rustc_serialize::Encodable;
 use super::{Action, TestMsg};
 
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable)]

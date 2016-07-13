@@ -1,7 +1,6 @@
 use std::cmp::{Ordering, PartialOrd};
 use std::fmt::{Display, Error, Formatter};
 use std::str::FromStr;
-use rustc_serialize::Encodable;
 use membership::Member;
 use uuid::Uuid;
 

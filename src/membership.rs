@@ -5,7 +5,6 @@ use orset::ORSet;
 use std::result;
 use std::io::Result;
 use std::fmt::{Display, Error, Formatter};
-use rustc_serialize::Encodable;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::hash::{Hash, Hasher};

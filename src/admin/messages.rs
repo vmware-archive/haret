@@ -1,7 +1,7 @@
 use mio::Token;
 use uuid::Uuid;
 use shared_messages::NewSessionReply;
-use vr::{Replica, RawReplica, Tenants, VrCtx, VrStats};
+use vr::{Replica, RawReplica, Tenants, VrCtx};
 use debug_sender::DebugSender;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

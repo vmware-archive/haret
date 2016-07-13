@@ -1,4 +1,3 @@
-use rustc_serialize::Encodable;
 use membership::Member;
 use orset::ORSet;
 
