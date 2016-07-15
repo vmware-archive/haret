@@ -7,7 +7,7 @@ use std::fmt::Write;
 use msgpack::{from_msgpack};
 use fsm::Fsm;
 use v2r2::vr::{Replica, VrCtx, Envelope, VrTypes};
-use debugger_shared::{Scheduler, Frame};
+use debugger_shared::{Scheduler, DynamicOp};
 
 // Tracks the state of the replicas and dispatchers between Frames
 // Note that frame_state is only set once during the call to initial run.
@@ -33,14 +33,14 @@ impl State {
 pub struct Status {
     pub frame_count: usize,
     pub step_count: usize,
-    pub current_test_msg: Option<Frame>,
-    pub next_test_msg: Option<Frame>,
+    pub current_op: Option<DynamicOp>,
+    pub next_op: Option<DynamicOp>,
     pub last_received_envelope : Option<Envelope>
 }
 
 pub struct Debugger {
     scheduler: Scheduler,
-    schedule: Vec<Frame>,
+    schedule: Vec<DynamicOp>,
     history: Vec<State>,
     frame_count: usize,
     last_received_envelope: Option<Envelope>,
@@ -77,30 +77,21 @@ impl Debugger {
     // track which parts are already computed.
     fn initial_run(&mut self) {
         self.history.push(State::new(self.scheduler.clone()));
-        for frame in &self.schedule {
-            for action in &frame.actions {
-                self.scheduler.run_action(action);
-            }
+        for op in &self.schedule {
+            self.scheduler.run(op);
             self.history.push(State::new(self.scheduler.clone()));
             self.frame_count += 1;
         }
     }
 
-    fn run_actions(&mut self) {
-        let ref actions = self.schedule[self.frame_count].actions;
-        for action in actions {
-            self.scheduler.run_action(action);
-        }
-    }
-
     pub fn get_status(&self) -> Status {
-        let current_test_msg = if self.frame_count >= self.schedule.len() {
+        let current_op = if self.frame_count >= self.schedule.len() {
             None
         } else {
             Some(self.schedule[self.frame_count].clone())
         };
 
-        let next_test_msg = if self.frame_count >= self.schedule.len() - 1 {
+        let next_op = if self.frame_count >= self.schedule.len() - 1 {
             None
         } else {
             Some(self.schedule[self.frame_count + 1].clone())
@@ -109,8 +100,8 @@ impl Debugger {
         Status {
             frame_count: self.frame_count,
             step_count: self.current_step(),
-            current_test_msg: current_test_msg,
-            next_test_msg: next_test_msg,
+            current_op: current_op,
+            next_op: next_op,
             last_received_envelope: self.last_received_envelope.clone()
         }
     }
@@ -206,7 +197,8 @@ impl Debugger {
         self.reset_step_state();
         let current_state = self.current_state().clone();
         self.scheduler = current_state.clone();
-        self.run_actions();
+        let ref op = self.schedule[self.frame_count];
+        self.scheduler.run(op);
         let state = &mut self.history[self.frame_count];
         state.step_count += 1;
         state.step_state = self.scheduler.clone();

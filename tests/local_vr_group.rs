@@ -114,12 +114,12 @@ fn recovery() {
     assert_commit_gets_sent(view1_primary, &mut scheduler, 1);
 
     // Stop the view1_primary and trigger an election
-    scheduler.stop_(view1_primary);
+    scheduler.stop(view1_primary);
     scheduler.send_direct(&replicas[0], VrMsg::Tick);
     scheduler.send_until_empty();
 
     // Restart the view1_primary and check the status of the replicas
-    scheduler.restart_(view1_primary);
+    scheduler.restart(view1_primary);
 
     let (state, ctx) = scheduler.get_state(view1_primary).unwrap();
     assert_eq!(state, "backup");

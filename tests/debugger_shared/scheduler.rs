@@ -1,7 +1,6 @@
 //! This module contains code that acts as the dispatcher for testing purposes, in that it manages
 //! fsm lifetimes and sends and receives their messages. It's used for testing a single tenant
-//! with all replicas running on a single node, and is capable of recording all interactions between
-//! them.
+//! with all replicas running on a single node.
 
 use std::iter::FromIterator;
 use std::collections::{HashSet, HashMap, VecDeque};
@@ -10,10 +9,7 @@ use fsm::{Fsm, StateFn};
 use v2r2::Member;
 use v2r2::vr::{vr_fsm, Replica, VrMsg, Envelope, PeerEnvelope, Announcement, ClientEnvelope,
               ClientReplyEnvelope, VrCtx, VrTypes, VersionedReplicas};
-use super::{TestMsg, Frame, Action};
-
-#[cfg(test)]
-use msgpack::Encoder;
+use super::DynamicOp;
 
 #[derive(Clone)]
 pub struct Scheduler {
@@ -22,9 +18,7 @@ pub struct Scheduler {
     pub tenant_id: Uuid,
     pub fsms: HashMap<Replica, Fsm<VrTypes>>,
     pub old_config: VersionedReplicas,
-    pub new_config: VersionedReplicas,
-    pub recording: bool,
-    pub history: Vec<Frame>
+    pub new_config: VersionedReplicas
 }
 
 impl Iterator for Scheduler {
@@ -51,28 +45,20 @@ impl Scheduler {
             tenant_id: Uuid::nil(),
             fsms: fsms,
             old_config: VersionedReplicas::new(),
-            new_config: new_config,
-            recording: false,
-            history: Vec::new()
+            new_config: new_config
         }
     }
 
     // We always start in view 1 with an elected primary
-    pub fn elect_initial_leader(&mut self) {
-        let replica = self.fsms.iter().next().unwrap().clone().0.clone();
-        let test_msg = TestMsg::ViewChange(replica.clone());
-        let vrmsg = VrMsg::Tick;
-        self.send(test_msg, &replica, vrmsg);
+    // We return the view change operation that caused the transition
+    pub fn elect_initial_leader(&mut self) -> DynamicOp {
+        let replica = self.fsms.iter().next().as_ref().unwrap().0.clone();
+        self.send(&replica, VrMsg::Tick);
+        DynamicOp::ViewChange(replica)
     }
 
-    pub fn send(&mut self, test_msg: TestMsg, to: &Replica, msg: VrMsg) -> Vec<ClientReplyEnvelope> {
-        if self.recording {
-            let action = Action::Send(to.clone(), msg.clone());
-            let mut frame = Frame::new(test_msg);
-            frame.push(action);
-            self.history.push(frame);
-        }
-        if let Some(ref mut fsm) = self.fsms.get_mut(to) {
+    pub fn send(&mut self, to: &Replica, msg: VrMsg) -> Vec<ClientReplyEnvelope> {
+        if let Some(ref mut fsm) = self.fsms.get_mut(&to) {
             self.envelopes.extend(fsm.send(msg));
         }
         self.send_until_empty()
@@ -86,33 +72,11 @@ impl Scheduler {
         }
     }
 
-    #[cfg(test)]
-    pub fn stop(&mut self, test_msg: TestMsg, replica: &Replica) {
-        if self.recording {
-            let mut frame = Frame::new(test_msg);
-            let action = Action::Stop(replica.clone());
-            frame.push(action);
-            self.history.push(frame);
-        }
-        self.stop_(replica);
-    }
-
-    pub fn stop_(&mut self, replica: &Replica) {
+    pub fn stop(&mut self, replica: &Replica) {
         self.fsms.remove(&replica);
     }
 
-    #[cfg(test)]
-    pub fn restart(&mut self, test_msg: TestMsg, replica: &Replica) {
-        if self.recording {
-            let mut frame = Frame::new(test_msg);
-            let action = Action::Restart(replica.clone());
-            frame.push(action);
-            self.history.push(frame);
-        }
-        self.restart_(replica);
-    }
-
-    pub fn restart_(&mut self, replica: &Replica) {
+    pub fn restart(&mut self, replica: &Replica) {
         let mut ctx = VrCtx::new(replica.clone(),
                                  self.old_config.clone(),
                                  self.new_config.clone());
@@ -126,25 +90,21 @@ impl Scheduler {
         self.send_until_empty();
     }
 
-    #[cfg(test)]
-    pub fn record(&mut self) {
-        self.recording = true;
-    }
-
-    #[cfg(test)]
-    pub fn serialize_history(&self) -> Vec<u8> {
-        Encoder::to_msgpack(&self.history).unwrap()
-    }
-
-    pub fn run_action(&mut self, action: &Action) {
-        match *action {
-            Action::Send(ref replica, ref msg) => {
-                if let Some(ref mut fsm) = self.fsms.get_mut(replica) {
+    pub fn run(&mut self, op: &DynamicOp) {
+        match *op {
+            DynamicOp::ClientRequest(ref primary, ref msg) => {
+                if let Some(ref mut fsm) = self.fsms.get_mut(primary) {
                     self.envelopes.extend(fsm.send(msg.clone()));
                 }
             },
-            Action::Stop(ref replica) => self.stop_(&replica),
-            Action::Restart(ref replica) => self.restart_(replica)
+            DynamicOp::Commit(ref replica) | DynamicOp::ViewChange(ref replica) => {
+                if let Some(ref mut fsm) = self.fsms.get_mut(replica) {
+                    self.envelopes.extend(fsm.send(VrMsg::Tick));
+                }
+            },
+            DynamicOp::Crash(ref replica) => self.stop(replica),
+            DynamicOp::Restart(ref replica) => self.restart(replica),
+            DynamicOp::Reconfiguration(_) => ()
         }
     }
 
@@ -210,7 +170,7 @@ impl Scheduler {
                 self.reconfigure(old_config, new_config);
             },
             Announcement::Stop(replica) => {
-                self.stop_(&replica);
+                self.stop(&replica);
             },
             Announcement::NewPrimary(replica) => {
                 self.primary = Some(replica);

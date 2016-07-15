@@ -23,7 +23,6 @@ use std::io::Write;
 use std::fmt::Write as FmtWrite;
 use uuid::Uuid;
 use debugger::Debugger;
-use debugger_shared::Action;
 use v2r2::Member;
 use v2r2::vr::{Replica};
 
@@ -198,42 +197,19 @@ fn show_diff(debugger: &Debugger, words: &Vec<&str>) {
 
 fn show_status(debugger: &Debugger) {
     let val = debugger.get_status();
-    let mut status = String::new();
-    writeln!(&mut status, "Frame count: {}", val.frame_count).unwrap();
-    writeln!(&mut status, "Step count: {}", val.step_count).unwrap();
+    println!("Frame count: {}", val.frame_count);
+    println!("Step count: {}", val.step_count);
 
-    if let Some(frame) = val.current_test_msg {
-        write!(&mut status, "\nCurrent actions: ").unwrap();
-        for action in &frame.actions {
-            write_action(&mut status, action);
-        }
+    if let Some(op) = val.current_op {
+        println!("Current op: {:?}", op);
     }
 
-    if let Some(frame) = val.next_test_msg {
-        write!(&mut status, "\nNext actions: ").unwrap();
-        for action in &frame.actions {
-            write_action(&mut status, action);
-        }
+    if let Some(op) = val.next_op {
+        println!("Next op: {:?}", op);
     }
 
     if let Some(envelope) = val.last_received_envelope {
-        writeln!(&mut status, "Last Received Envelope: {:#?}", envelope).unwrap();
-    }
-    println!("{}", status);
-}
-
-fn write_action(status: &mut String, action: &Action) {
-    match *action {
-        Action::Send(ref replica, ref msg) => {
-            writeln!(status, "Send to {}:{}", replica.node.name, replica.name).unwrap();
-            writeln!(status, "{:?}", msg).unwrap();
-        },
-        Action::Stop(ref replica) => {
-            writeln!(status, "Stop {}:{}", replica.node.name, replica.name).unwrap();
-        },
-        Action::Restart(ref replica) => {
-            writeln!(status, "Restart {}:{}", replica.node.name, replica.name).unwrap();
-        }
+        println!("Last Received Envelope: {:#?}", envelope);
     }
 }
 

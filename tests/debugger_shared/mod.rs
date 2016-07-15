@@ -1,9 +1,7 @@
-mod action;
-mod frame;
 mod scheduler;
-pub mod test_msg;
+mod symbolic_op;
+mod dynamic_op;
 
 pub use self::scheduler::Scheduler;
-pub use self::test_msg::TestMsg;
-pub use self::action::Action;
-pub use self::frame::Frame;
+pub use self::symbolic_op::SymbolicOp;
+pub use self::dynamic_op::DynamicOp;

@@ -1,8 +1,7 @@
 //! This module contains common generators to be used across fuzz tests
 
-use rand::{ThreadRng};
+use rand::{Rng, thread_rng};
 use uuid::Uuid;
-use rand::distributions::{IndependentSample, Range};
 
 /// Create a list of n session ids
 pub fn session_ids(n: usize) -> Vec<Uuid>{
@@ -27,9 +26,6 @@ pub fn paths() -> Vec<&'static str> {
         ]
 }
 
-pub fn oneof<T: Clone>(rng: &mut ThreadRng, v: &Vec<T>) -> T {
-    // Not sure if creating a new Range here throws off sampling uniformity
-    let range = Range::new(0, v.len());
-    let index = range.ind_sample(rng);
-    v[index].clone()
+pub fn oneof<T: Clone>(v: &[T]) -> T {
+    thread_rng().choose(v).unwrap().clone()
 }

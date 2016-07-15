@@ -4,12 +4,11 @@
 //! maintains a history of operations to allow for even more checks against the current replica
 //! states to ensure consistent operation.
 
-use std::collections::{HashMap};
-use rand::{thread_rng};
+use std::collections::HashMap;
+use rand::thread_rng;
 use rand::distributions::{IndependentSample, Range};
-use uuid::Uuid;
 use v2r2::vr::{Replica, VrMsg, VrBackend, VrApiReq};
-use debugger_shared::{Scheduler, TestMsg};
+use debugger_shared::{Scheduler, DynamicOp};
 
 #[derive(Debug, Clone)]
 struct BackupState {
@@ -21,7 +20,7 @@ struct BackupState {
 impl BackupState {
     pub fn new() -> BackupState {
         BackupState {
-            view: 1,
+            view: 0,
             op: 0,
             state: "backup"
         }
@@ -32,37 +31,42 @@ impl BackupState {
 pub struct Model {
     pub replicas: Vec<Replica>,
     pub primary: Option<Replica>,
-    pub crashed_replicas: Vec<(Replica, Uuid)>,
+    pub crashed_replicas: Vec<Replica>,
     pub live_replicas: Vec<Replica>,
+
     // backend, view, op, commit_num are all the values on the primary
     // No need to re-implement the backend for the model
     backend: VrBackend,
     view: u64,
     op: u64,
     commit_num: u64,
+
     quorum: usize,
-    last_msg: TestMsg,
+    last_op: DynamicOp,
     backup_states: HashMap<Replica, BackupState>
 }
 
 impl Model {
-    pub fn new(replicas: Vec<Replica>, view: u64) -> Model {
-        let primary = compute_primary(1, &replicas);
-        let backups = init_backups(&primary, &replicas);
+    /// Create a new model and do the initial view change in first_op
+    pub fn new(replicas: Vec<Replica>, first_op: DynamicOp) -> Model {
+        assert_matches!(first_op, DynamicOp::ViewChange(_));
+        let backups = init_backups(&replicas);
         let quorum = replicas.len() / 2 + 1;
-        Model {
+        let mut model = Model {
             replicas: replicas.clone(),
-            primary: Some(primary),
+            primary: None,
             crashed_replicas: Vec::new(),
             live_replicas: replicas,
             backend: VrBackend::new(),
-            view: view,
+            view: 0,
             op: 0,
             commit_num: 0,
             quorum: quorum,
-            last_msg: TestMsg::Null,
+            last_op: first_op,
             backup_states: backups
-        }
+        };
+        model.do_view_change();
+        model
     }
 
     /// Client requests and commits only arrive when there is a primary. We can enforce this by
@@ -71,30 +75,29 @@ impl Model {
     /// coverage, since messages to a crashed replica would just be dropped anyway. When testing a
     /// client of course, not using an oracle to find the primary would be the proper course of
     /// action.
-    pub fn update(&mut self, msg: TestMsg) {
-        match msg {
-            TestMsg::ClientRequest(VrMsg::ClientRequest {ref op, ..}) => {
+    pub fn update(&mut self, op: &DynamicOp) {
+        match *op {
+            DynamicOp::ClientRequest(_, VrMsg::ClientRequest {ref op, ..}) => {
                 self.op += 1;
                 self.commit_num += 1;
                 self.backend.call(self.op, op.clone());
                 self.do_backup_prepare();
             },
-            TestMsg::Commit => {},
-            TestMsg::ViewChange(_) => self.do_view_change(),
-            TestMsg::Crash(ref replica, uuid) => {
+            DynamicOp::Commit(_) => {},
+            DynamicOp::ViewChange(_) => self.do_view_change(),
+            DynamicOp::Crash(ref replica) => {
                 let to_crash = self.live_replicas.pop().unwrap();
                 assert_eq!(to_crash, *replica);
-                self.crashed_replicas.push((to_crash, uuid));
+                self.crashed_replicas.push(to_crash);
                 if self.primary.is_some() && *replica == *(self.primary.as_ref().unwrap()) {
                     self.primary = None;
                 } else {
                     self.backup_states.remove(&replica);
                 }
             },
-            TestMsg::Restart(ref replica, ref uuid) => {
+            DynamicOp::Restart(ref replica) => {
                 match self.crashed_replicas.pop() {
-                    Some((to_restart, crash_uuid)) => {
-                        assert_eq!(crash_uuid, *uuid);
+                    Some(to_restart) => {
                         assert_eq!(to_restart, *replica);
                         self.live_replicas.push(to_restart);
                         let mut restarted = BackupState::new();
@@ -123,7 +126,7 @@ impl Model {
             },
             _ => unreachable!()
         };
-        self.last_msg = msg;
+        self.last_op = op.clone();
     }
 
     fn do_view_change(&mut self) {
@@ -142,39 +145,23 @@ impl Model {
     }
 
     pub fn check(&self, scheduler: &Scheduler) -> Result<(), String> {
-        match self.last_msg {
-            TestMsg::ClientRequest(VrMsg::ClientRequest {ref op, ..}) =>
-                self.assert_last_op_matches_primary_state(op.clone(), scheduler),
-            TestMsg::Commit => Ok(()),
-            TestMsg::ViewChange(_) => self.assert_view_change(scheduler),
-            TestMsg::Crash(_, _) => {
+        match self.last_op {
+            DynamicOp::ClientRequest(_, VrMsg::ClientRequest {ref op, ..}) =>
+                self.assert_last_op_matches_primary_state(op, scheduler),
+            DynamicOp::Commit(_) => Ok(()),
+            DynamicOp::ViewChange(_) => self.assert_view_change(scheduler),
+            DynamicOp::Crash(_) => {
                 // A crash doesn't cause any messages/side effects on it's own.
                 // It may affect the next message though.
                 Ok(())
             },
-            TestMsg::Restart(ref replica, _) => self.assert_replica_state(scheduler, replica),
-            TestMsg::Null => Ok(()),
+            DynamicOp::Restart(ref replica) => self.assert_replica_state(scheduler, replica),
             _ => unreachable!()
         }
     }
 
-    /// During shrinking some messages are invalid in a history and should be dropped before
-    /// processing. This message determines what to drop.
-    pub fn should_drop(&self, msg: &TestMsg) -> bool {
-        match *msg {
-            TestMsg::ClientRequest(_) => self.primary.is_none(),
-            TestMsg::Commit => self.primary.is_none(),
-            TestMsg::ViewChange(ref replica) => {
-                // Don't send a view change tick to the primary
-                self.primary.is_some() && *(self.primary.as_ref().unwrap()) == *replica
-            },
-            // Crashes and restarts are already covered by  causal ids
-            _ => false
-        }
-    }
-
     fn assert_last_op_matches_primary_state(&self,
-                                            op: VrApiReq,
+                                            op: &VrApiReq,
                                             scheduler: &Scheduler) -> Result<(), String>
     {
         let path = op.get_path();
@@ -269,12 +256,12 @@ impl Model {
         }
     }
 
-    pub fn choose_crashed_replica(&self) -> Option<(Replica, Uuid)> {
+    pub fn choose_crashed_replica(&self) -> Option<Replica> {
         self.crashed_replicas.iter().cloned().last()
     }
 
     fn is_crashed(&self, replica: &Replica) -> bool {
-        for &(ref r, _) in &self.crashed_replicas {
+        for r in &self.crashed_replicas {
             if *r == *replica { return true; }
         }
         false
@@ -298,12 +285,10 @@ fn compute_primary(view: u64, replicas: &Vec<Replica>) -> Replica {
     replicas[index].clone()
 }
 
-fn init_backups(primary: &Replica, replicas: &Vec<Replica>) -> HashMap<Replica, BackupState> {
+fn init_backups(replicas: &Vec<Replica>) -> HashMap<Replica, BackupState> {
     let mut backups = HashMap::new();
     for r in replicas {
-        if r != primary {
-            backups.insert(r.clone(), BackupState::new());
-        }
+        backups.insert(r.clone(), BackupState::new());
     }
     backups
 }
