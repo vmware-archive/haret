@@ -4,7 +4,8 @@ use std::io;
 use std::io::Read;
 use std::fs::File;
 use std::fmt::Write;
-use msgpack::{from_msgpack};
+use rustc_serialize::Decodable;
+use msgpack::Decoder;
 use fsm::Fsm;
 use v2r2::vr::{Replica, VrCtx, Envelope, VrTypes};
 use debugger_shared::{Scheduler, DynamicOp};
@@ -65,7 +66,8 @@ impl Debugger {
         let mut file = try!(File::open(filename));
         let mut encoded = Vec::new();
         try!(file.read_to_end(&mut encoded));
-        match from_msgpack(&encoded) {
+        let mut decoder = Decoder::new(&encoded[..]);
+        match Decodable::decode(&mut decoder) {
             Ok(schedule) => self.schedule = schedule,
             Err(_) => return Err(DbgError::Io("Improperly encoded msgpack data".to_string()))
         }

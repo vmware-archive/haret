@@ -2,7 +2,7 @@ extern crate uuid;
 extern crate rand;
 extern crate v2r2;
 extern crate time;
-extern crate msgpack;
+extern crate rmp_serialize as msgpack;
 extern crate rustc_serialize;
 extern crate distill;
 
