@@ -4,38 +4,28 @@ version = "0.1.0"
 authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 
 [dependencies]
-serde = "*"
-serde_macros = "*"
-serde_json = "*"
 libc = "0.1"
 rustc-serialize = "0.3"
 time = "*"
 uuid = "0.1"
 rand = "0.3"
-mio = "0.5.0"
 rmp-serialize = "0.7"
-
-fsm = { path = "../fsm" }
-orset = { path = "../orset"}
-distill = { path = "../distill"}
-
-[dependencies.msgpack]
-git = "https://github.com/mneumann/rust-msgpack.git"
-
-[dependencies.streaming-stats]
-git = "git://github.com/BurntSushi/rust-stats"
+slog = {version = "1", features = ["max_level_trace"]}
+slog-stdlog = "1"
+slog-term = "1.1"
+slog-envlogger = "0.5"
+amy = "0.6"
+funfsm = "0.1"
+orset = "0.1"
+rabble = "0.1"
 
 [dev-dependencies]
 assert_matches = "1.0"
+quickcheck = "0.4"
 
 [[bin]]
 name = "v2r2"
 path = "src/bin/v2r2.rs"
-test = false
-
-[[bin]]
-name = "v2r2-cli-client"
-path = "src/bin/v2r2-cli-client.rs"
 test = false
 
 [[bin]]
@@ -44,11 +34,11 @@ path = "src/bin/v2r2-admin.rs"
 test = false
 
 [[bin]]
-name = "devconfig"
-path = "src/bin/devconfig.rs"
+name = "v2r2-cli-client"
+path = "src/bin/v2r2-cli-client.rs"
 test = false
 
 [[bin]]
-name = "debugger_cli"
-path = "src/bin/debugger_cli.rs"
+name = "devconfig"
+path = "src/bin/devconfig.rs"
 test = false

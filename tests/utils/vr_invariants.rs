@@ -59,7 +59,7 @@ pub fn assert_quorum_of_logs_equal_up_to_smallest_commit(quorum: usize,
                 },
                 Some(s) => {
                     // Are the log prefixes the same?
-                    let _ = safe_assert_eq!(s, &ctx.log[0..smallest_commit as usize]);
+                    try!(safe_assert_eq!(s, &ctx.log[0..smallest_commit as usize]));
                     count += 1;
                 }
             }

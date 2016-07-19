@@ -1,43 +1,44 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Drain;
 use time::{SteadyTime, Duration};
-use super::replica::Replica;
-use super::VrMsg;
+use rabble::Pid;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct QuorumTracker {
+pub struct QuorumTracker<T> {
     quorum_size: usize,
-    start_time: SteadyTime,
-    replies: HashMap<Replica, VrMsg>
+    expiration: SteadyTime,
+    replies: HashMap<Pid, T>
 }
 
 /// Do we have a quorum when including the replica making the request?
-impl QuorumTracker {
-    pub fn new(quorum_size: usize) -> QuorumTracker {
+impl<T> QuorumTracker<T> {
+   pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker<T> {
         QuorumTracker {
             quorum_size: quorum_size,
-            start_time: SteadyTime::now(),
-            replies: HashMap::with_capacity(quorum_size)
+            expiration: SteadyTime::now() + *timeout,
+            replies: HashMap::with_capacity(quorum_size * 2)
         }
     }
 
-    pub fn insert(&mut self, replica: Replica, msg: VrMsg) {
-        self.replies.insert(replica, msg);
+    pub fn insert(&mut self, replica: Pid, val: T) {
+        self.replies.insert(replica, val);
     }
 
+    /// Quorum including this replica
     pub fn has_quorum(&self) -> bool {
         self.replies.len() >= (self.quorum_size - 1)
     }
 
+    /// Quorum not including this replica
     pub fn has_super_quorum(&self) -> bool {
         self.replies.len() >= self.quorum_size
     }
 
-    pub fn is_expired(&self, timeout: &Duration) -> bool {
-        SteadyTime::now() - self.start_time > *timeout
+    pub fn is_expired(&self) -> bool {
+        SteadyTime::now() > self.expiration
     }
 
-    pub fn drain(&mut self) -> Drain<Replica, VrMsg> {
+    pub fn drain(&mut self) -> Drain<Pid, T> {
         self.replies.drain()
     }
 }

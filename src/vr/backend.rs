@@ -5,14 +5,14 @@ use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::ElementType;
 
 // TODO: Parameterize data based on element type (i.e. don't ignore it)
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Element {
     pub op: u64,
     pub ty: ElementType,
     pub data: Vec<u8>
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub struct VrBackend {
     // only public for testing
     pub tree: BTreeMap<String, Element>,
@@ -26,84 +26,91 @@ impl VrBackend {
     }
 
     pub fn call(&mut self, op: u64, msg: VrApiReq) -> VrApiRsp {
-        let resp = match msg {
+        match msg {
              VrApiReq::Create {path, ty} => self.create_element(op, path, ty),
              VrApiReq::Put {path, data, cas_tag} => self.put(op, path, data, cas_tag),
              VrApiReq::Delete {path, cas_tag} => self.delete(op, path, cas_tag),
              VrApiReq::Get {path, cas} => self.get(path, cas),
              VrApiReq::List {path} => self.list(path),
-             VrApiReq::Null => Ok(VrApiRsp::Ok)
-        };
-        match resp {
-            Ok(msg) => msg,
-            Err(msg) => msg
+             VrApiReq::Null => VrApiRsp::Ok,
+             msg => {
+                 // This is really bad. Some message has made it through consensus to the baackend. We need to
+                 // save all state to disk and panic!.
+                 // TODO: Log this error
+                 // TODO: Take a snapshot and persist any other state
+                 panic!(format!("Backend received unknown msg {:?}", msg))
+             }
         }
     }
 
-    fn create_element(&mut self, op: u64, path: String, ty: ElementType) -> Result<VrApiRsp, VrApiRsp> {
-        try!(self.parent_exists(&path));
-        try!(self.does_not_exist(&path));
+    fn create_element(&mut self, op: u64, path: String, ty: ElementType) -> VrApiRsp {
+        if let Err(rsp) = self.parent_exists(&path) {
+            return rsp;
+        }
+        if let Err(rsp) = self.does_not_exist(&path) {
+            return rsp;
+        }
         let el = Element { op: op, ty: ty, data: Vec::new()};
         self.tree.insert(path, el);
-        Ok(VrApiRsp::Ok)
+        VrApiRsp::Ok
     }
 
-    fn get(&self, path: String, cas: bool) -> Result<VrApiRsp, VrApiRsp> {
+    fn get(&self, path: String, cas: bool) -> VrApiRsp {
         if let Some(element) = self.tree.get(&path) {
             if cas {
-                return Ok(VrApiRsp::Element {data: element.data.clone(),
-                                        cas_tag: Some(element.op.clone())})
+                return VrApiRsp::Element {data: element.data.clone(),
+                                        cas_tag: Some(element.op.clone())}
             }
-            Ok(VrApiRsp::Element {data: element.data.clone(), cas_tag: None})
+            VrApiRsp::Element {data: element.data.clone(), cas_tag: None}
         } else {
-            Err(VrApiRsp::ElementNotFoundError(path))
+            VrApiRsp::ElementNotFoundError(path)
         }
     }
 
-    fn list(&self, path: String) -> Result<VrApiRsp, VrApiRsp> {
+    fn list(&self, path: String) -> VrApiRsp {
         if &path != "/" && !self.tree.contains_key(&path) {
-            return Err(VrApiRsp::Error {msg: format!("{} does not exist", path)});
+            return VrApiRsp::Error {msg: format!("{} does not exist", path)};
         }
         let mut keys = Vec::new();
         for (ref key, _) in self.tree.range::<String, String>(Excluded(&path), Unbounded) {
             keys.push((*key).clone());
         }
-        Ok(VrApiRsp::KeyList {keys: keys})
+        VrApiRsp::KeyList {keys: keys}
     }
 
     fn delete(&mut self, _op: u64, path: String, cas_tag: Option<u64>)
-        -> Result<VrApiRsp, VrApiRsp> {
+        -> VrApiRsp {
 
         if let Some(element) = self.tree.remove(&path) {
             match cas_tag {
                 Some(tag) => {
                     if element.op == tag {
-                        Ok(VrApiRsp::Ok)
+                        VrApiRsp::Ok
                     } else {
                         self.tree.insert(path.clone(), element);
-                        Err(VrApiRsp::Error {msg: format!("Element {} does not exist", path)})
+                        VrApiRsp::Error {msg: format!("Element {} does not exist", path)}
                     }
                 },
-                None => Ok(VrApiRsp::Ok)
+                None => VrApiRsp::Ok
             }
         } else {
-            Err(VrApiRsp::Error {msg: format!("Element {} does not exist", path)})
+            VrApiRsp::Error {msg: format!("Element {} does not exist", path)}
         }
     }
 
     fn put(&mut self, op: u64, path: String, data: Vec<u8>, cas_tag: Option<u64>)
-        -> Result<VrApiRsp, VrApiRsp> {
+        -> VrApiRsp {
 
         match self.tree.get_mut(&path) {
-            None => Err(VrApiRsp::ElementNotFoundError(path.clone())),
+            None => VrApiRsp::ElementNotFoundError(path.clone()),
             Some(element) => match cas_tag {
                 Some(tag) => {
                     if element.op == tag {
                         VrBackend::put_always(element, op, data)
                     } else {
-                        Err(VrApiRsp::CasFailedError {path: path.clone(),
+                        VrApiRsp::CasFailedError {path: path.clone(),
                                                       expected: tag,
-                                                      actual: element.op})
+                                                      actual: element.op}
                     }
                 },
                 None => {
@@ -114,10 +121,10 @@ impl VrBackend {
     }
 
     // TODO: Try to convert data to it's proper type based on element.ty
-    fn put_always(element: &mut Element, op: u64, data: Vec<u8>) -> Result<VrApiRsp, VrApiRsp> {
+    fn put_always(element: &mut Element, op: u64, data: Vec<u8>) -> VrApiRsp {
         (*element).op = op;
         (*element).data = data;
-        Ok(VrApiRsp::Ok)
+        VrApiRsp::Ok
     }
 
     fn does_not_exist(&self, path: &str) -> Result<(), VrApiRsp> {
@@ -146,27 +153,19 @@ impl VrBackend {
 
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use vr::vr_api_messages::VrApiRsp;
     use vr::ElementType;
 
-    fn assert_ok(res: Result<VrApiRsp, VrApiRsp>) {
-        match res {
-            Ok(val) => assert_eq!(val, VrApiRsp::Ok),
-            Err(e) => {
-                println!("assert_ok failed with error: {:?}", e);
-                assert!(false)
-            }
-        }
+    fn assert_ok(res: VrApiRsp) {
+        assert_eq!(res, VrApiRsp::Ok)
     }
 
-    fn assert_err(res: Result<VrApiRsp, VrApiRsp>) {
-        match res {
-            Ok(_) => assert!(false),
-            Err(_) => assert!(true)
-        }
+    fn assert_err(res: VrApiRsp) {
+        assert!(res.is_err())
     }
 
     #[test]
@@ -197,18 +196,16 @@ mod tests {
         assert_err(backend.get("/foo".to_string(), true));
         assert_ok(backend.create_element(1, "/foo".to_string(), ElementType::Binary));
         let elem = backend.get("/foo".to_string(), false);
-        if let Ok(VrApiRsp::Element {cas_tag, ..}) = elem {
+        if let VrApiRsp::Element {cas_tag, ..} = elem {
             assert_eq!(cas_tag, None);
         } else {
             assert!(false);
         }
         let elem = backend.get("/foo".to_string(), true);
-        if let Ok(VrApiRsp::Element {cas_tag, ..}) = elem {
+        if let VrApiRsp::Element {cas_tag, ..} = elem {
             assert_eq!(cas_tag, Some(1));
         } else {
             assert!(false);
         }
     }
-
-
 }
