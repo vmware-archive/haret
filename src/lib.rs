@@ -19,24 +19,21 @@ extern crate stats;
 #[macro_use]
 extern crate fsm;
 extern crate orset;
+extern crate rabble;
 
 pub mod config;
-pub mod event_loop;
 pub mod admin;
 pub mod vr;
-pub mod frame;
 mod error;
 
-mod membership;
 mod debug_sender;
-mod timer_wheel;
-mod requests;
-mod timeout;
-mod shared_messages;
+mod session_msgs;
+mod session;
+mod namespace_mgr;
+mod namespace_msg;
+mod namespaces;
 
-pub use self::membership::Member;
-pub use self::timeout::Timeout;
-pub use self::shared_messages::{
+pub use self::session_messages::{
     NewSessionRequest,
     NewSessionReply
 };

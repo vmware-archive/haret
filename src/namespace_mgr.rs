@@ -104,6 +104,7 @@ impl NamespaceMgr {
 
     fn handle_admin_req(&mut self, req: AdminReq, correlation_id: Option<CorrelationId>) {
         match req {
+            AdminReq::Join(node_id) => self.node.join(&node_id),
             AdminReq::GetNamespaces =>
                 self.send_admin_rpy(AdminRpy::Namespaces(self.namespaces.clone()),
                                     correlation_id.unwrap());
