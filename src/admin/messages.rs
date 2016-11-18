@@ -1,37 +1,32 @@
-use mio::Token;
+use rabble::Pid;
+use namespaces::Namespaces;
 use uuid::Uuid;
 use shared_messages::NewSessionReply;
-use vr::{Replica, RawReplica, Tenants, VrCtx};
-use debug_sender::DebugSender;
+use vr::{RawReplica, VrCtx};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum AdminReq {
-    Join {token: Token, ipstr: String, reply_tx: DebugSender<AdminRpy>},
-    CreateTenant {
-        token: Token,
-        tenant: Uuid,
+    Join(ipstr: String),
+    CreateNamespace {
+        namespace: Uuid,
         replicas: Vec<RawReplica>,
-        reply_tx: DebugSender<AdminRpy>
     },
-    GetTenants {token: Token, reply_tx: DebugSender<AdminRpy>},
-    GetReplica {token: Token, replica: Replica, reply_tx: DebugSender<AdminRpy>},
-    GetVrStats {token: Token, reply_tx: DebugSender<AdminRpy>},
-    GetPrimary {token: Token, tenant_id: Uuid, reply_tx: DebugSender<AdminRpy>},
-    GetNewSessionReply {token: Token, tenant_id: Uuid, reply_tx: DebugSender<AdminRpy>}
+    GetNamespaces,
+    GetReplicaState(Pid),
+    GetPrimary(Uuid),
+    GetNewSessionReply(Uuid)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum AdminRpy {
-    Ok(Token),
-    Error(Token, String),
-    JoinReply {token: Token, reply: Result<(), String>},
-    TenantId {token: Token, id: Uuid},
-    Tenants {token: Token, tenants: Tenants},
-    Replica {token: Token, state: &'static str, ctx: VrCtx},
-    ReplicaNotFound {token: Token, replica: Replica},
-    VrStats {token: Token, stats: String},
-    Primary {token: Token, replica: Option<Replica>},
-    NewSessionReply {token: Token, reply: NewSessionReply}
+    Ok,
+    Error(String),
+    NamespaceId(Uuid),
+    Namespaces(Namespaces),
+    ReplicaState {state: &'static str, ctx: VrCtx},
+    ReplicaNotFound(Pid),
+    Primary(Option<Pid>),
+    NewSessionReply(NewSessionReply)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]

@@ -23,8 +23,6 @@ extern crate orset;
 pub mod config;
 pub mod event_loop;
 pub mod admin;
-pub mod cluster;
-pub mod state;
 pub mod vr;
 pub mod frame;
 mod error;

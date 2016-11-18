@@ -4,9 +4,9 @@ version = "0.1.0"
 authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 
 [dependencies]
-serde = "*"
-serde_macros = "*"
-serde_json = "*"
+serde = "0.8"
+#serde_macros = "0.8"
+serde_json = "0.8"
 libc = "0.1"
 rustc-serialize = "0.3"
 time = "*"
@@ -14,6 +14,7 @@ uuid = "0.1"
 rand = "0.3"
 mio = "0.5.0"
 rmp-serialize = "0.7"
+rabble = "0.1"
 
 fsm = { path = "../fsm" }
 orset = { path = "../orset"}

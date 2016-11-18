@@ -1,22 +1,26 @@
 extern crate v2r2;
+extern crate rabble;
 
 use std::sync::mpsc::channel;
-use v2r2::state::State;
+use v2r2::config::Config;
 use v2r2::admin::{AdminReq, AdminServer};
-use v2r2::cluster::ClusterServer;
-use v2r2::vr::Dispatcher;
+use v2r2::vr::VrMsg;
 
 fn main() {
-    let state = State::new();
 
-    // The cluster server needs to be able to receive admin requests
-    let (cluster_tx, cluster_rx) = channel::<AdminReq>();
+    let config = Config::read();
+    let node_id = NodeId {
+        name: config.node_name,
+        addr: config.cluster_host
+    };
+
+    let (node, handles) = rabble::rouse::<VrMsg>(node_id, None);
+
+
 
     let dispatcher = Dispatcher::new(&state);
     let dispatcher_tx = dispatcher.admin_tx.clone();
     let handles1 = dispatcher.run();
-    let cluster_server = ClusterServer::new(state.clone());
-    let handles2 = cluster_server.run(cluster_rx);
     let admin_server = AdminServer::new(state.clone(), dispatcher_tx.clone(), cluster_tx);
     let handles3 = admin_server.run();
 
