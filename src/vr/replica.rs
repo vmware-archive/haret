@@ -1,4 +1,4 @@
-use rabble::{self, Pid, CorrelationId};
+use rabble::{self, Pid, CorrelationId, Envelope};
 use msg::Msg;
 
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
@@ -6,13 +6,15 @@ use msg::Msg;
 struct Replica {
     pid: pid,
     fsm: Fsm<VrTypes>,
+    output: Vec<Envelope<Msg>>
 }
 
 impl Replica {
     fn new(pid: Pid, fsm: Fsm<VrTypes>) -> Replica {
         Replica {
             pid: Pid,
-            fsm: fsm
+            fsm: fsm,
+            output: Vec::with_capacity(1)
         }
     }
 }
@@ -21,7 +23,7 @@ impl Process for Replica {
     type Msg = Msg;
 
     fn init(&mut self, _: Pid) -> Vec<Envelope<Msg>> {
-        fsm.send(VrMsg::Tick)
+        self.fsm.send(VrMsg::Tick)
     }
 
     fn handle(&mut self,
@@ -29,6 +31,24 @@ impl Process for Replica {
               from: Pid,
               correlation_id: Option<CorrelationId>) -> &mut Vec<Envelope<Msg>>
     {
+        let correlation_id = correlation_id.unwrap();
+        match msg {
+            rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
+                let (state, ctx) = self.fsm.get_state();
+                let rpy = AdminRpy::ReplicaState {state: state, ctx: ctx};
+                let msg = rabble::Msg::User(Msg::AdminRpy(rpy));
+                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
+                self.output.push(envelope);
+            },
+            rabble::Msg::User(Msg::Vr(vrmsg)) =>
+                self.output.extend(self.fsm.send((vrmsg, correlation_id))),
+            _ => {
+                let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));
+                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
+                self.output.push(envelope);
+            }
+        }
+        &mut self.output
     }
 
 }

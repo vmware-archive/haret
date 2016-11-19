@@ -1,4 +1,11 @@
+use rabble::Pid;
 use super::ElementType;
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+pub enum VrClientMsg {
+    Req {pid: Pid, op: VrApiReq, request_num: u64},
+    Rpy {epoch: u64, view: u64, request_num: u64, value: VrApiRsp}
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum VrApiReq {

@@ -7,5 +7,5 @@ pub enum Msg {
     Namespace(NamespaceMsg)
     AdminReq(AdminReq),
     AdminRpy(AdminRpy),
-    Api(ApiMsg)
+    Error(String)
 }

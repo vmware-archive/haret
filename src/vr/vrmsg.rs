@@ -10,11 +10,9 @@ pub enum VrMsg {
     ClientRequest {
         /// The opaque api operation
         op: VrApiReq,
-        session_id: Uuid,
         request_num: u64
     },
     Reconfiguration {
-        session_id: Uuid,
         client_req_num: u64,
         epoch: u64,
         replicas: Vec<Replica>
@@ -51,7 +49,6 @@ pub enum VrMsg {
         epoch: u64,
         view: u64,
         op: u64,
-        session_id: Uuid,
         client_request_num: u64,
         client_op: VrApiReq,
         commit_num: u64

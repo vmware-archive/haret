@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use rabble::{Pid, Envelope, ConnectionMsg, ConnectionHandler};
 use msg::Msg;
 
+/// The connection handler for Admin Clients
 pub struct AdminConnectionHandler {
     pid: Pid,
     id: usize,
@@ -61,7 +62,6 @@ impl ConnectionHandler for AdminConnectionHandler {
         }
     }
 
-    /// TODO: Track request ids from correlation ids to put replies in order
     fn handle_envelope(&mut self, envelope: Envelope<Msg>) ->
         &mut Vec<ConnectionMsg<AdminConnectionHandler>>
     {
