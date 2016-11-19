@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use rabble::{Pid, Envelope, ConnectionMsg, ConnectionHandler};
+use rabble::{Pid, Envelope, ConnectionMsg, ConnectionHandler, ClusterStatus};
 use msg::Msg;
 
 /// The connection handler for Admin Clients
@@ -67,24 +67,17 @@ impl ConnectionHandler for AdminConnectionHandler {
     {
         let Envelope {msg, correlation_id, ..} = envelope;
         let correlation_id = correlation_id.unwrap();
-        match msg {
-            rabble::Msg::User(Msg::AdminRpy(rpy)) =>
-                if correlation_id.request == self.waiting_for {
-                    self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy))),
-                    self.write_successive_replies();
-                } else {
-                    self.out_of_order_replies.insert(correlation_id.request, rpy);
-                }
-            rabble::Msg::Timeout =>
-                if correlation_id.request == self.waiting_for {
-                    self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(AdminRpy::Timeout))),
-                } else {
-                    self.write_successive_replies();
-                    self.out_of_order_replies.insert(AdminRpy::Timeout);
-                }
-            _ => {
-                // TODO: Log error
-            }
+        let rpy = match msg {
+            rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy
+            rabble::Msg::ClusteStatus(status) => AdminRpy::ClusteStatus(status),
+            rabble::Msg::Timeout => AdminRpy::Timeout,
+            _ => unreachable!()
+        };
+        if correlation_id.request == self.waiting_for {
+            self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy))),
+            self.write_successive_replies();
+        } else {
+            self.out_of_order_replies.insert(correlation_id.request, rpy);
         }
         &mut self.output
     }

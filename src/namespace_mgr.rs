@@ -103,26 +103,36 @@ impl NamespaceMgr {
     }
 
     fn handle_admin_req(&mut self, req: AdminReq, correlation_id: Option<CorrelationId>) {
+        let correlation_id = correlation_id.unwrap();
         match req {
-            AdminReq::Join(node_id) => self.node.join(&node_id),
+            AdminReq::Join(node_id) => {
+                let _ = self.node.join(&node_id);
+                self.send_admin_rpy(AdminRpy::Ok, correlation_id);
+            }
             AdminReq::GetNamespaces =>
                 self.send_admin_rpy(AdminRpy::Namespaces(self.namespaces.clone()),
-                                    correlation_id.unwrap());
+                                    correlation_id);
             },
             AdminReq::CreateNamespace {namespace, replicas} => {
                 match self.create_namespace(namespace.clone(), replicas) {
-                    Ok(()) => reply_tx.send(AdminRpy::NamespaceId(namespace)),
-                    Err(e) => reply_tx.send(AdminRpy::Error(e))
+                    Ok(()) => self.send_admin_rpy(AdminRpy::NamespaceId(namespace), correlation_id),
+                    Err(e) => self.send_admin_rpy(AdminRpy::Error(e), correlation_id)
                 }
             },
-            AdminReq::GetPrimary(tenant_id) => {
-                let val = match self.tenants.primaries.get(&tenant_id) {
+            AdminReq::GetPrimary(namespace_id) => {
+                let primary = match self.namespaces.primaries.get(&namespace_id) {
                     Some(replica) => Some(replica.clone()),
                     None => None
                 };
-                reply_tx.send(AdminRpy::Primary {token: token, replica: val});
+                self.send_admin_rpy(AdminRpy::Primary(primary), correlation_id);
             },
-            _ => println!("Received unknown AdminReq in namespace_mgr: {:?}", req)
+            AdminReq::GetClusterStatus => {
+                let _ = self.node.cluster_status(correlation_id);
+            },
+            _ => {
+                // TODO: Logging
+                println!("Received unknown AdminReq in namespace_mgr: {:?}", req)
+            }
         }
     }
 
@@ -276,9 +286,10 @@ impl ServiceHandler<Msg> for NamespaceMgr {
     {
         let Envelope{msg, correlation_id, ..} = envelope;
         match msg {
-            rabble::Msg::User(Msg::AdminReq(req)) => self.handle_admin_req(req, correlation_id),
-            rabble::Msg::User(Msg::NamespaceMsg(msg)) => self.handle_namespace_msg(msg,
-                                                                                   correlation_id),
+            rabble::Msg::User(Msg::AdminReq(req)) =>
+                self.handle_admin_req(req, correlation_id),
+            rabble::Msg::User(Msg::NamespaceMsg(msg)) =>
+                self.handle_namespace_msg(msg, correlation_id),
             _ => unreachable!()
         }
     }

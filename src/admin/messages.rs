@@ -1,4 +1,4 @@
-use rabble::{Pid, NodeId};
+use rabble::{Pid, NodeId, ClusterStatus};
 use namespaces::Namespaces;
 use uuid::Uuid;
 use session_messages::NewSessionReply;
@@ -32,6 +32,7 @@ pub enum AdminRpy {
     Namespaces(Namespaces),
     ReplicaState {state: &'static str, ctx: VrCtx},
     ReplicaNotFound(Pid),
-    Primary(Option<Pid>)
+    Primary(Option<Pid>),
+    ClusterStatus(ClusterStatus)
 }
 
