@@ -40,8 +40,10 @@ impl Process for Replica {
                 let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
                 self.output.push(envelope);
             },
-            rabble::Msg::User(Msg::Vr(vrmsg)) =>
-                self.output.extend(self.fsm.send((vrmsg, correlation_id))),
+            rabble::Msg::User(Msg::Vr(vrmsg)) => {
+               let vr_envelope = VrEnvelope::new(self.pid.clone(), from, vrmsg, correlation_id);
+               self.output.extend(self.fsm.send(vr_envelope).map(|fsm_output| e.into()));
+            },
             _ => {
                 let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));
                 let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));

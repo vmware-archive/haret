@@ -17,12 +17,9 @@ pub use self::vr_fsm::{
     VrTypes
 };
 
-pub use self::vr_stats::VrStats;
-
 pub use self::dispatcher::Dispatcher;
 
 pub use self::replica::{
-    RawReplica,
     Replica,
     VersionedReplicas
 };

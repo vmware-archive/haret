@@ -227,8 +227,8 @@ impl NamespaceMgr {
                                 new_config.clone());
        ctx.idle_timeout_ms = self.idle_timeout_ms;
        ctx.primary_tick_ms = self.primary_tick_ms;
-       let fun = vr_fsm::startup_reconfiguration;
-       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(fun));
+       let state = vr_fsm::startup_reconfiguration;
+       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
        self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
        self.local_replicas.insert(pid);
    }
@@ -241,8 +241,8 @@ impl NamespaceMgr {
                                 new_config);
        ctx.idle_timeout_ms = self.idle_timeout_ms;
        ctx.primary_tick_ms = self.primary_tick_ms;
-       let fun = vr_fsm::startup_new_tenant;
-       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(fun));
+       let state = vr_fsm::startup_new_namespace;
+       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
        self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
        self.local_replicas.insert(pid);
     }
@@ -261,8 +261,8 @@ impl NamespaceMgr {
                                     new_config.clone());
            ctx.idle_timeout_ms = self.idle_timeout_ms;
            ctx.primary_tick_ms = self.primary_tick_ms;
-           let fun = vr_fsm::startup_recovery;
-           let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(fun));
+           let state = vr_fsm::startup_recovery;
+           let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
            self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
            self.local_replicas.insert(pid);
        }

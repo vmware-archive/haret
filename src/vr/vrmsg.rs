@@ -1,6 +1,57 @@
 use uuid::Uuid;
+use msg::Msg;
+use rabble::Envelope;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::{Replica, VersionedReplicas};
+
+pub enum FsmOutput {
+    Vr(VrEnvelope),
+    Announcement(NamespaceMsg, Pid)
+}
+
+/// Convert from FsmOuptput to Envelope with "self.into()" or Envelope::from(self)
+impl From<FsmOutput> for Envelope {
+    fn from(fsm_output: FsmOutput) -> Envelope {
+        match fsm_output {
+            Vr(vr_envelope) => vr_envelope.into(),
+            Announcement(namespace_msg, pid) => Envelope {
+                to: Pid {group: None, name: "namespace_mgr".to_string(), node: pid.node.clone()},
+                from: pid.clone(),
+                msg: rabble::Msg::User(Msg::Namespace(namespace_msg)),
+                correlation_id: CorrelationId::Pid(pid)
+            }
+        }
+    }
+}
+
+pub struct VrEnvelope {
+    to: Pid,
+    from: Pid,
+    msg: VrMsg,
+    correlation_id: CorrelationId
+}
+
+impl VrEnvelope {
+    fn new(to: Pid, from: Pid, msg: VrMsg, correlation_id: CorrelationId) -> VrEnvelope {
+        VrEnvelope {
+            to: to,
+            from: from,
+            msg: msg,
+            correlation_id: correlation_id
+        }
+    }
+}
+
+impl From<VrEnvelope> for Envelope {
+    fn from(vr_envelope: VrEnvelope) -> Envelope {
+        Envelope {
+            to: vr_envelope.to,
+            from: vr_envelope.from,
+            msg: rabble::Msg::User(Msg::Vr(vr_envelope.msg)),
+            correlation_id: correlation_id
+        }
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum VrMsg {
