@@ -12,6 +12,9 @@ use super::quorum_tracker::QuorumTracker;
 use super::prepare_requests::PrepareRequests;
 use super::vrmsg::VrMsg;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
+use super::vr_ctx::VrCtx;
+use super::fsm_output::FsmOutput;
+use super::vr_envelope::VrEnvelope;
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
 pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
@@ -47,7 +50,7 @@ macro_rules! check_view {
                 return next!($state);
             }
             if view > $ctx.view {
-                return super::states::view_change::handle_later_view($ctx, $msg, view);
+                return handle_later_view($ctx, $msg, view);
             }
         }
     }
@@ -62,20 +65,18 @@ macro_rules! handle_common {
 
 pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transition {
     if epoch == ctx.epoch + 1 {
+        ctx.last_received_time = SteadyTime::now();
+        ctx.epoch = epoch;
         match msg {
             VrMsg::Commit {commit_num, ..} if commit_num != ctx.op => {
-                ctx.last_received_time = SteadyTime::now();
-                ctx.epoch = epoch;
-                ctx.view = 0;
-                let output = ctx.start_state_transfer();
+                let output = ctx.start_state_transfer_reconfiguration();
                 return next!(reconfiguration_wait_for_new_state, output);
             },
 
             VrMsg::Commit {commit_num, ..} => {
-                ctx.last_received_time = SteadyTime::now();
-                ctx.epoch = epoch;
                 ctx.view = 0;
-                if ctx.backup_commit_replace_replica(commit_num) {
+                ctx.backup_commit(commit_num);
+                if ctx.is_leaving() {
                     return next!(leaving);
                 }
                 let output = ctx.send_epoch_started(ctx);
@@ -85,10 +86,10 @@ pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transit
                 next!(backup, output)
             },
 
-            VrMsg::StartEpoch {op, old_config, new_config, ..}
-                if ctx.op == op && ctx.last_log_entry_is_latest_reconfiguration(epoch, op) =>
+            VrMsg::StartEpoch {op, old_config, new_config, ..} if ctx.op == op &&
+                ctx.last_log_entry_is_latest_reconfiguration(epoch, op) =>
             {
-                ctx.set_state_new_epoch(epoch, old_config, new_config);
+                ctx.set_state_new_epoch(old_config, new_config);
                 ctx.backup_commit(op);
                 let output = ctx.send_epoch_started();
                 if ctx.is_primary() {
@@ -98,8 +99,8 @@ pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transit
             },
 
             VrMsg::StartEpoch {op, old_config, new_config, ..} => {
-                ctx.set_state_new_epoch(epoch, old_config, new_config);
-                let output = ctx.start_state_transfer();
+                ctx.set_state_new_epoch(old_config, new_config);
+                let output = ctx.start_state_transfer_reconfiguration();
                 next!(reconfiguration_wait_for_new_state, output)
             },
             // We have been partitioned and missed the reconfiguration. At least a quorum of new nodes
@@ -131,7 +132,11 @@ pub fn handle_later_view(ctx: &mut VrCtx, msg: VrMsg, new_view: u64) -> Transiti
             let output = ctx.become_backup(ctx, msg);
             return next!(backup, output);
         },
-        _ => ctx.start_state_transfer_new_view(ctx, new_view)
+        _ => {
+            ctx.view = new_view;
+            let output = vec![ctx.send_get_state_to_random_replica()];
+            next!(state_transfer, output)
+        }
     }
 }
 
@@ -147,16 +152,16 @@ pub fn startup_new_namespace(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
 }
 
 pub fn startup_recovery(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
-    ctx.start_recovery();
+    let envelopes = ctx.start_recovery();
+    next!(recovery, envelopes.map(|e| e.into()))
 }
 
 pub fn startup_reconfiguration(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
-    let output = ctx.start_state_transfer();
+    let output = ctx.start_state_transfer_reconfiguration();
     return next!(reconfiguration_wait_for_new_state, output);
 }
 
 /// This replica is currently the primary replica operating normally
-// @StateFn
 pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope.msg, primary);
     match envelope.msg {
@@ -169,10 +174,10 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             next!(primary, output)
         },
         VrMsg::Tick => {
-            if ctx.prepare_requests.expired() e
+            if ctx.prepare_requests.expired() {
                 return ctx.reset_and_start_view_change();
             }
-            if primary_idle_timeout(ctx) {
+            if ctx.primary_idle_timeout() {
                 let output = ctx.broadcast_commit_msg();
                 return next!(primary, output);
             }
@@ -198,7 +203,6 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 }
 
 /// This replica is currently a backup operating normally
-// @StateFn
 pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, msg, backup);
     ctx.last_received_time = SteadyTime::now();
@@ -208,7 +212,7 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             next!(backup, vec![prepare_ok_envelope])
         },
         VrMsg::Prepare {op, ..} if op > ctx.op + 1 => {
-            let output = ctx.send_get_state();
+            let output = vec![ctx.send_get_state_to_random_replica()];
             next!(state_transfer, output)
         },
         VrMsg::Commit {commit_num, ..} => if commit_num == ctx.commit_num {
@@ -221,11 +225,11 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
         VrMsg::Commit {commit_num, ..} => if commit_num > ctx.op {
             // Note that a primary cannot have a commit_num smaller than a backup by protocol
             // invariants
-            let output = ctx.send_get_state();
+            let output = ctx.send_get_state_to_random_replica();
             next!(state_transfer, output)
         },
         VrMsg::Tick => {
-            if idle_timeout(ctx) {
+            if ctx.idle_timeout() {
                 ctx.reset_and_start_view_change()
             } else {
                 next!(backup)
@@ -252,7 +256,6 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 /// A replica is in this state during view change. The replica remains in this state until view
 /// change is completed unless it is the proposed primary, which transitions to the `wait_for_do_view_change`
 /// state on receipt of a `DoViewChange` message.
-// @StateFn
 pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
     handle_common!(ctx, msg, view_change);
     match msg.clone() {
@@ -270,7 +273,7 @@ pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
         },
         VrMsg::Tick => {
             // We haven't changed views yet. The new primary must be down. Try again.
-            if ctx.quorum_tracker.is_expired(&u64_to_duration(ctx.idle_timeout_ms)) {
+            if ctx.quorum_tracker.is_expired(&ctx.idle_timeout) {
                 ctx.reset_and_start_view_change()
             } else {
                 next!(view_change)
@@ -289,8 +292,16 @@ pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
             }
             next!(view_change)
         },
-        VrMsg::Prepare {view, ..} => ctx.start_state_transfer_new_view(view),
-        VrMsg::Commit {view, ..} => ctx.start_state_transfer_new_view(view),
+        VrMsg::Prepare {view, ..} => {
+            ctx.view = view;
+            let output = vec![ctx.send_get_state_to_random_replica()];
+            next!(state_transfer, output)
+        },
+        VrMsg::Commit {view, ..} => {
+            ctx.view = view;
+            let output = vec![ctx.send_get_state_to_random_replica()];
+            next!(state_transfer, output)
+        }
         _ => next!(view_change)
     }
 }
@@ -299,7 +310,6 @@ pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 /// It has sent a `DoViewChange` message to the proposed primary for that view. In this state the
 /// proposed primary is waiting for a quorum of `DoViewChange` messages so that it can become the
 /// primary for that view.
-// @StateFn
 pub fn wait_for_do_view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
     handle_common!(ctx, msg, wait_for_do_view_change);
     match msg.clone() {
@@ -310,7 +320,6 @@ pub fn wait_for_do_view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 
 
 /// When a backup realizes it's behind it enters this state
-// @StateFn
 pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
     handle_common!(ctx, msg, state_transfer);
     match msg {
@@ -324,7 +333,6 @@ pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 
 /// This is the state of the primary after it has sent a Prepare message containing the client
 /// reconfiguration request.
-// @StateFn
 pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
     handle_common!(ctx, msg, wait_for_reconfiguration_prepare_ok);
     match msg {
@@ -351,7 +359,6 @@ pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, msg: VrMsg) -> Trans
     }
 }
 
-// @StateFn
 pub fn reconfiguration_wait_for_new_state(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
     handle_common!(ctx, msg, reconfiguration_wait_for_new_state);
     match msg {
@@ -368,8 +375,8 @@ pub fn reconfiguration_wait_for_new_state(ctx: &mut VrCtx, msg: VrMsg) -> Transi
         },
         VrMsg::Tick => {
             // If we haven't gotten a NewState in time then re-broadcast GetState
-            if idle_timeout(ctx) {
-                let output = ctx.start_state_transfer();
+            if ctx.idle_timeout() {
+                let output = ctx.start_state_transfer_reconfiguration();
                 return next!(reconfiguration_wait_for_new_state, output);
             }
             next!(reconfiguration_wait_for_new_state)
@@ -380,24 +387,16 @@ pub fn reconfiguration_wait_for_new_state(ctx: &mut VrCtx, msg: VrMsg) -> Transi
 
 
 /// A replica has just started back up and needs to recover its log from other replicas
-// @StateFn
 pub fn recovery(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
-    check_epoch!(ctx, envelope.msg, recovery);
     match envelope.msg {
-        VrMsg::RecoveryResponse {view,
-                                 ref op,
-                                 ref nonce,
-                                 ref from, ..} if Some(*nonce) == ctx.recovery_nonce => {
-            if let Some(output) =
-                ctx.maybe_recover(ctx, msg.clone(), view, op.is_some(), from.clone()) {
-                return next!(backup, output)
-            }
-            next!(recovery)
+        VrMsg::RecoveryResponse {..} => {
+            ctx.update_recovery_state(envelope.msg);
+            ctx.commit_recovery().map_or(next!(recovery), |output| next!(backup, vec![output]))
         },
         VrMsg::Tick => {
-            let timeout = u64_to_duration(ctx.idle_timeout_ms);
-            if ctx.quorum_tracker.is_expired(&timeout) {
-                ctx.start_recovery()
+            if ctx.recovery_expired() {
+                let envelopes = ctx.start_recovery();
+                next!(recovery, envelopes.map(|e| e.into()))
             } else {
                 next!(recovery)
             }
@@ -409,7 +408,6 @@ pub fn recovery(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 
 /// A replica is in this state after it has a reconfiguration request in its log and it is not in
 /// the new configuration. It is waiting for f' + 1 EpochStarted messages so that it can shutdown.
-// @StateFn
 pub fn leaving(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
     match msg {
         // TODO: What if epoch > ctx.epoch ?
@@ -424,8 +422,7 @@ pub fn leaving(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
             next!(leaving)
         },
         VrMsg::Tick => {
-            let timeout = u64_to_duration(ctx.idle_timeout_ms);
-            if ctx.quorum_tracker.is_expired(&timeout) {
+            if ctx.quorum_tracker.is_expired(&ctx.idle_timeout) {
                 let output = broadcast_start_epoch(ctx);
                 return next!(leaving, output);
             }
@@ -437,7 +434,6 @@ pub fn leaving(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 
 /// This replica has already told the dispatcher to shut it down. It just waits in this state and
 /// doesn't respond to any messages from this point out.
-// @StateFn
 pub fn shutdown(_ctx: &mut VrCtx, _: VrMsg) -> Transition {
     next!(shutdown)
 }
@@ -452,8 +448,3 @@ fn learn_config(_ctx: &mut VrCtx, _epoch: u64) -> Transition {
     // TODO: I think this is just an instance of state transfer to a new view, using the replica that informed us of a later epoch. Basically, we set our epoch than call start_state_transfer_new_view(). Talk to Justin about this. How is start_state_transfer_new_view() different from start_state_transfer_transitioning()?
     unimplemented!();
 }
-
-pub fn u64_to_duration(timeout: u64) -> Duration {
-    Duration::milliseconds(timeout as i64)
-}
-
