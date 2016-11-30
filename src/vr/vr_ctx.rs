@@ -254,18 +254,37 @@ impl VrCtx {
         self.view_change_state.map_or(false, |s| s.has_quorum())
     }
 
-    /// TODO: What happens if we commit a reconfiguration during backup commit ?
-    /// Once we add back in the global client table, we should probably just call primary_commit
-    /// after the transition.
     fn become_primary(&mut self) -> Vec<FsmOutput> {
-        let mut output = Vec::new();
         let last_commit_num = self.commit_num;
         self.set_latest_state();
-        output.extend_from_slice(&self.broadcast_start_view_msg());
-        self.backup_commit(self, last_commit_num);
+        let mut output = self.broadcast_start_view_msg();
         output.push(self.set_primary());
         println!("Elected {:?} as primary of view {}", self.primary, self.view);
+        output.extend(&self.new_primary_commit(self, last_commit_num));
         output
+    }
+
+    pub fn new_primary_commit(&mut self, last_commit_num: u64) -> Vec<FsmOutput> {
+        let mut output = Vec::new();
+        for i in last_commit_num..self.commit_num {
+            let msg = self.log[i as usize].clone();
+            match msg {
+                VrMsg::ClientRequest {ref op, request_num} {
+                    // The client likely hasn't reconnected, don't bother sending a reply here
+                    self.backend.call(i+1, op.clone());
+                },
+                VrMsg::Reconfiguration {client_req_num, epoch, ..} {
+                    let rsp = self.backend.call(i+1, VrApiReq::Null);
+                    self.update_self_for_new_epoch(i+1);
+                    output.push(self.announce_reconfiguration());
+                    output.extend_from_slice(&self.broadcast_commit_msg_old());
+                    // TODO: If we tracked VrEnvelope in the log instead of VrMsg, we would have a
+                    // proper correlation_id here.
+                    output.extend_from_slice(&self.send_epoch_started(CorrelationId::Pid(self.me.clone()));
+                }
+            }
+            output
+        }
     }
 
     fn set_latest_state(&mut self) {
@@ -326,13 +345,11 @@ impl VrCtx {
         }, self.me.clone())
     }
 
-    pub fn send_epoch_started(&mut self) -> Vec<Envelope>{
-        let mut output = Vec::new();
+    fn send_epoch_started(&mut self, c_id: CorrelationId) -> Vec<FsmOutput>{
         let msg = self.epoch_started_msg();
-        for r in replicas_to_replace(self) {
-            output.push(Envelope::Peer(PeerEnvelope::new(r, self.me.clone(), msg.clone())));
-        }
-        output
+        self.replicas_to_replace().iter().map(|r| {
+            FsmOutput::Vr(VrEnvelope::new(r, self.me.clone(), msg.clone(), c_id.clone()))
+        }).collect()
     }
 
     pub fn replicas_to_replace(&self) -> Vec<Pid> {
@@ -387,40 +404,41 @@ impl VrCtx {
 
 
     pub fn primary_commit_known_committed_ops(&mut self, last_commit_num: u64) -> Vec<Envelope> {
-    let mut output = Vec::new();
-    let iter = self.prepare_requests.remove(self.commit_num);
-    for i in last_commit_num..self.commit_num {
-        let request = iter.next().unwrap();
-        let msg = self.log[i as usize].clone();
-        match msg {
-            VrMsg::ClientRequest {ref op, request_num} {
-                let rsp = self.backend.call(i+1, op.clone());
-                let reply = self.client_reply_msg(request_num, rsp);
-                output.push(VrEnvelope::new(request.correlation_id.pid,
-                                            self.pid.clone(),
-                                            reply,
-                                            request.correlation_id));
-            },
-            VrMsg::Reconfiguration {client_req_num, epoch, ..} {
-                let rsp = self.backend.call(i+1, VrApiReq::Null);
-                let reply = VrMsg::ClientReply {
-                    epoch: epoch,
-                    view: 0,
-                    request_num: client_req_num,
-                    value: rsp
-                };
-                output.push(VrEnvelope::new(request.correlation_id.pid,
-                                            self.pid.clone(),
-                                            reply,
-                                            request.correlation_id));
-                self.update_self_for_new_epoch(i+1);
-                output.push(self.announce_reconfiguration(self));
-                output.extend_from_slice(&self.broadcast_commit_msg_old());
-                output.extend_from_slice(&self.send_epoch_started());
+        let mut output = Vec::new();
+        let iter = self.prepare_requests.remove(self.commit_num);
+        for i in last_commit_num..self.commit_num {
+            let request = iter.next().unwrap();
+            let msg = self.log[i as usize].clone();
+            match msg {
+                VrMsg::ClientRequest {ref op, request_num} {
+                    let rsp = self.backend.call(i+1, op.clone());
+                    let reply = self.client_reply_msg(request_num, rsp);
+                    output.push(VrEnvelope::new(request.correlation_id.pid,
+                                                self.pid.clone(),
+                                                reply,
+                                                request.correlation_id));
+                },
+                VrMsg::Reconfiguration {client_req_num, epoch, ..} {
+                    let rsp = self.backend.call(i+1, VrApiReq::Null);
+                    let reply = VrMsg::ClientReply {
+                        epoch: epoch,
+                        view: 0,
+                        request_num: client_req_num,
+                        value: rsp
+                    };
+                    output.push(VrEnvelope::new(request.correlation_id.pid,
+                                                self.pid.clone(),
+                                                reply,
+                                                request.correlation_id.clone()));
+                    self.update_self_for_new_epoch(i+1);
+                    output.push(self.announce_reconfiguration(self));
+                    output.extend_from_slice(&self.broadcast_commit_msg_old());
+                    output.extend_from_slice(&self.send_epoch_started(request.correlation_id));
+                }
             }
+            output
+        }
     }
-    output
-}
 
 fn update_self_for_new_epoch(&mut self, op: u64) {
     self.epoch += 1;
