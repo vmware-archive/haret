@@ -129,6 +129,10 @@ impl VrCtx {
         None
     }
 
+    pub fn view_change_expired(&self) -> bool {
+        self.view_change_state.responses.is_expired()
+    }
+
     pub fn recovery_expired(&self) -> bool {
         self.recovery_state.responses.is_expired()
     }
@@ -173,6 +177,11 @@ impl VrCtx {
         self.log.push(client_req);
         self.commit(commit_num);
         self.send_to_primary(self.prepare_ok_msg(), correlation_id)
+    }
+
+    pub fn send_do_view_change(&self) -> FsmOutput {
+        let c_id = CorrelationId::Pid(self.pid.clone());
+        FsmOutput::Vr(VrEnvelope::new(from, self.me.clone(), self.do_view_change_msg(op), c_id))
     }
 
     pub fn send_new_state(&mut self, op: u64, from: Pid, c_id: CorrelationId) -> FsmOutput {
@@ -241,8 +250,8 @@ impl VrCtx {
             .collect()
     }
 
-    pub fn has_do_view_change_quorum(&self) -> bool {
-        self.view_change_state.map_or(false, |s| s.do_view_change_msgs.has_quorum())
+    pub fn has_view_change_quorum(&self) -> bool {
+        self.view_change_state.map_or(false, |s| s.has_quorum())
     }
 
     /// TODO: What happens if we commit a reconfiguration during backup commit ?
@@ -282,9 +291,6 @@ impl VrCtx {
         ctx.view = view;
         ctx.op = op;
         ctx.log = log;
-        ctx.prepare_requests = PrepareRequests::new(ctx.new_config.replicas.len(),
-                                                    ctx.idle_timeout_ms);
-        ctx.quorum_tracker = QuorumTracker::new(ctx.quorum as usize);
         let mut output = Vec::new();
         output.push(set_primary(ctx));
         output.extend_from_slice(&send_prepare_ok_for_uncommitted_ops(ctx));
@@ -505,41 +511,22 @@ fn update_self_for_new_epoch(&mut self, op: u64) {
         self.view_change_state.as_ref().unwrap().responses.insert(from, msg);
     }
 
-    fn reset_view_change_state(&mut self, view: u64, from: Pid, msg: VrMsg) {
+    fn reset_view_change_state(&mut self, view: u64) -> Vec<FsmOutput> {
         self.last_received_time = SteadyTime::now();
         self.view = view;
         self.view_change_state = Some(ViewChangeState::new(self.quorum, self.idle_timeout));
-        self.insert_view_change_message(from, msg);
+        vec![self.clear_primary()]
     }
 
-    fn reset_and_start_view_change(&mut self) -> Transition {
-        self.last_received_time = SteadyTime::now();
-        self.view += 1;
-        self.prepare_requests = PrepareRequests::new(self.new_config.replicas.len(),
-        self.idle_timeout_ms);
-        self.quorum_tracker = QuorumTracker::new(self.quorum as usize);
-        let envelope = clear_primary(self);
-        self.start_view_change(vec![envelope])
+    fn reset_and_start_view_change(&mut self) -> Vec<FsmOutput> {
+        let mut output = self.reset_view_change_state(self.view + 1);
+        output.extend(self.start_view_change());
+        output
     }
 
-    fn start_view_change(self: &mut VrCtx, mut output: Vec<Envelope>) -> Transition {
-        output.extend(self.broadcast(self.start_view_change_msg()));
-        maybe_send_do_view_change(self, output)
+    fn start_view_change(self: &mut VrCtx) -> Vec<FsmOutput> {
+        self.broadcast(self.start_view_change_msg())
     }
-
-    pub fn maybe_send_do_view_change(&mut self, mut output: Vec<Envelope>) -> Transition {
-        if self.quorum_tracker.has_quorum() {
-            output.push(self.set_primary());
-            let primary = self.primary.clone().unwrap();
-            if primary == self.me {
-                return next!(wait_for_do_view_change, output);
-            }
-            let do_view_change = self.do_view_change_msg();
-            output.push(Envelope::Peer(PeerEnvelope::new(primary, self.me.clone(), do_view_change)));
-        }
-        next!(view_change, output)
-    }
-
 
     /*************************************************************************/
     /*******   CONSTRUCT VR MESSAGES   ****/

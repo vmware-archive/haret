@@ -33,7 +33,6 @@ impl ViewChangeState {
         self.responses.has_quorum()
     }
 
-    // TODO: This should match vr_ctx.set_latest_state
     pub compute_latest_state(&mut self, current: Latest) -> Latest {
         self.responses.drain()
             .map(|(_, msg)| convert_do_view_change_msg_to_latest(msg))
