@@ -4,24 +4,24 @@ use time::{SteadyTime, Duration};
 use rabble::Pid;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct QuorumTracker {
+pub struct QuorumTracker<T> {
     quorum_size: usize,
     expiration: SteadyTime,
-    replies: HashSet<Pid>
+    replies: HashSet<Pid, T>
 }
 
 /// Do we have a quorum when including the replica making the request?
-impl QuorumTracker {
+impl<T> QuorumTracker<T> {
     pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker {
         QuorumTracker {
             quorum_size: quorum_size,
             expiration: SteadyTime::now() + *timeout,
-            replies: HashSet::with_capacity(quorum_size * 2)
+            replies: HashMap::with_capacity(quorum_size * 2)
         }
     }
 
-    pub fn insert(&mut self, replica: Pid) {
-        self.replies.insert(replica);
+    pub fn insert(&mut self, replica: Pid, val: T) {
+        self.replies.insert(replica, val);
     }
 
     /// Quorum including this replica
@@ -38,7 +38,7 @@ impl QuorumTracker {
         SteadyTime::now() > self.expiration
     }
 
-    pub fn drain(&mut self) -> Drain<Pid> {
+    pub fn drain(&mut self) -> Drain<Pid, T> {
         self.replies.drain()
     }
 }

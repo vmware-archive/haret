@@ -31,26 +31,26 @@ impl FsmTypes for VrTypes {
 }
 
 macro_rules! check_epoch {
-    ($ctx:ident, $msg:ident, $state:ident) => {
-        if let Some(epoch) = $msg.get_epoch() {
+    ($ctx:ident, $envelope:ident, $state:ident) => {
+        if let Some(epoch) = $envelope.msg.get_epoch() {
             if epoch < $ctx.epoch {
                 return next!($state);
             }
             if epoch > $ctx.epoch {
-                return start_reconfiguration($ctx, $msg, epoch);
+                return start_reconfiguration($ctx, $envelope.msg, epoch);
             }
         }
     }
 }
 
 macro_rules! check_view {
-    ($ctx:ident, $msg:ident, $state:ident) => {
-        if let Some(view) = $msg.get_view() {
+    ($ctx:ident, $envelope:ident, $state:ident) => {
+        if let Some(view) = $envelope.msg.get_view() {
             if view < $ctx.view {
                 return next!($state);
             }
             if view > $ctx.view {
-                return handle_later_view($ctx, $msg, view);
+                return handle_later_view($ctx, $envelope, view);
             }
         }
     }
@@ -118,15 +118,15 @@ pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transit
     learn_config(ctx, epoch)
 }
 
-pub fn handle_later_view(ctx: &mut VrCtx, msg: VrMsg, new_view: u64) -> Transition {
-    match msg.clone() {
-        VrMsg::StartViewChange {ref from, ..} => {
-            ctx.reset_quorum(new_view, from.clone(), msg);
+pub fn handle_later_view(ctx: &mut VrCtx, envelope: VrEnvelope, new_view: u64) -> Transition {
+    match envelope.msg.clone() {
+        VrMsg::StartViewChange {from, ..} => {
+            ctx.reset_view_change_state(new_view, from, envelope.msg);
             return start_view_change(ctx, Vec::new());
         },
-        VrMsg::DoViewChange {ref from, ..} => {
-            ctx.reset_quorum(new_view, from.clone(), msg.clone());
-            return ctx.maybe_become_primary(ctx, from.clone(), msg);
+        VrMsg::DoViewChange {from, ..} => {
+            ctx.reset_view_change_state(new_view, from, envelope.msg);
+            next!(wait_for_do_view_change);
         },
         VrMsg::StartView{view, op, log, commit_num, ..} => {
             let output = ctx.become_backup(ctx, msg);
@@ -134,7 +134,7 @@ pub fn handle_later_view(ctx: &mut VrCtx, msg: VrMsg, new_view: u64) -> Transiti
         },
         _ => {
             ctx.view = new_view;
-            let output = vec![ctx.send_get_state_to_random_replica()];
+            let output = vec![ctx.send_get_state_to_random_replica(envelopes.correlation_id)];
             next!(state_transfer, output)
         }
     }
@@ -169,8 +169,8 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             let output =  ctx.send_prepare(envelope);
             next!(primary, output)
         },
-        VrMsg::PrepareOk {op, ref from, ..} op > ctx.commit_num => {
-            let output = ctx.maybe_commit(op, from.clone(), envelope.correlation_id)
+        VrMsg::PrepareOk {op, from, ..} op > ctx.commit_num => {
+            let output = ctx.maybe_commit(op, from, envelope.correlation_id)
             next!(primary, output)
         },
         VrMsg::Tick => {
@@ -183,13 +183,13 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             }
             next!(primary)
         },
-        VrMsg::GetState{..} => {
-            let output = ctx.send_new_state(msg);
+        VrMsg::GetState{op, from, ..} => {
+            let output = ctx.send_new_state(op, from, envelope.correlation_id);
             next!(primary, output)
         },
-        VrMsg::Recovery{..} => {
-            let output = ctx.send_primary_recovery_response(msg);
-            next!(primary, output)
+        VrMsg::Recovery{from, nonce} => {
+            let output = ctx.send_recovery_response(from, nonce, envelope.correlation_id);
+            next!(primary, vec![output])
         },
         VrMsg::Reconfiguration{..} => {
             if let Some(err_envelope) = ctx.validate_reconfig(&envelope) {
@@ -204,15 +204,16 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 
 /// This replica is currently a backup operating normally
 pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
-    handle_common!(ctx, msg, backup);
+    handle_common!(ctx, envelope, backup);
     ctx.last_received_time = SteadyTime::now();
     match envelope.msg {
         VrMsg::Prepare {op, client_op, commit_num, client_request_num, ...} if op == ctx.op + 1 => {
-            let prepare_ok_envelope = ctx.send_prepare_ok(client_op, commit_num, request_num);
+            let prepare_ok_envelope = ctx.send_prepare_ok(client_op, commit_num, request_num,
+                                                          envelope.correlation_id);
             next!(backup, vec![prepare_ok_envelope])
         },
         VrMsg::Prepare {op, ..} if op > ctx.op + 1 => {
-            let output = vec![ctx.send_get_state_to_random_replica()];
+            let output = vec![ctx.send_get_state_to_random_replica(envelope.correlation_id)];
             next!(state_transfer, output)
         },
         VrMsg::Commit {commit_num, ..} => if commit_num == ctx.commit_num {
@@ -225,7 +226,7 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
         VrMsg::Commit {commit_num, ..} => if commit_num > ctx.op {
             // Note that a primary cannot have a commit_num smaller than a backup by protocol
             // invariants
-            let output = ctx.send_get_state_to_random_replica();
+            let output = ctx.send_get_state_to_random_replica(envelope.correlation_id);
             next!(state_transfer, output)
         },
         VrMsg::Tick => {
@@ -236,14 +237,14 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             }
         },
         VrMsg::GetState{op, from, ..} => {
-            let output = ctx.send_new_state(op, from);
+            let output = ctx.send_new_state(op, from, envelope.correlation_id);
             next!(backup, output)
         },
         VrMsg::Recovery{from, nonce} => {
             if *ctx.primary.as_ref().unwrap() == from {
                 return ctx.reset_and_start_view_change()
             }
-            let output = ctx.send_backup_recovery_response(from, nonce);
+            let output = ctx.send_recovery_response(from, nonce, envelope.correlation_id);
             return next!(backup, vec![output]);
         },
         _ => {
@@ -256,16 +257,16 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 /// A replica is in this state during view change. The replica remains in this state until view
 /// change is completed unless it is the proposed primary, which transitions to the `wait_for_do_view_change`
 /// state on receipt of a `DoViewChange` message.
-pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
-    handle_common!(ctx, msg, view_change);
-    match msg.clone() {
+pub fn view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
+    handle_common!(ctx, envelope, view_change);
+    match envelope.msg.clone() {
         VrMsg::StartViewChange{ref from, ..} => {
             ctx.quorum_tracker.insert(from.clone(), msg.clone());
             ctx.maybe_send_do_view_change(ctx, Vec::new())
         },
-        VrMsg::DoViewChange {view, ref from, ..} => {
-            ctx.reset_quorum(view, from.clone(), msg.clone());
-            return ctx.maybe_become_primary(from.clone(), msg);
+        VrMsg::DoViewChange {view, from, ..} => {
+            ctx.reset_view_change_state(view, from, envelope.msg);
+            next!(wait_for_do_view_change)
         },
         VrMsg::StartView{view, op, log, commit_num, ..} => {
             let output = ctx.become_backup(view, op, log, commit_num);
@@ -294,12 +295,12 @@ pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
         },
         VrMsg::Prepare {view, ..} => {
             ctx.view = view;
-            let output = vec![ctx.send_get_state_to_random_replica()];
+            let output = vec![ctx.send_get_state_to_random_replica(envelope.correlation_id)];
             next!(state_transfer, output)
         },
         VrMsg::Commit {view, ..} => {
             ctx.view = view;
-            let output = vec![ctx.send_get_state_to_random_replica()];
+            let output = vec![ctx.send_get_state_to_random_replica(envelope.correlation_id)];
             next!(state_transfer, output)
         }
         _ => next!(view_change)
@@ -310,10 +311,17 @@ pub fn view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 /// It has sent a `DoViewChange` message to the proposed primary for that view. In this state the
 /// proposed primary is waiting for a quorum of `DoViewChange` messages so that it can become the
 /// primary for that view.
-pub fn wait_for_do_view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
-    handle_common!(ctx, msg, wait_for_do_view_change);
-    match msg.clone() {
-        VrMsg::DoViewChange{from, ..} => ctx.maybe_become_primary(from, msg),
+pub fn wait_for_do_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
+    handle_common!(ctx, envelope, wait_for_do_view_change);
+    match envelope.msg.clone() {
+        VrMsg::DoViewChange{from, ..} => {
+            ctx.insert_view_change_message(from, envelope.msg)
+            if ctx.has_do_view_change_quorum() {
+                let output = ctx.become_primary()
+                return next!(primary, output);
+            }
+            next!(wait_for_do_view_change, output)
+        }
         _ => next!(wait_for_do_view_change)
     }
 }
@@ -321,7 +329,7 @@ pub fn wait_for_do_view_change(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 
 /// When a backup realizes it's behind it enters this state
 pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
-    handle_common!(ctx, msg, state_transfer);
+    handle_common!(ctx, envelope, state_transfer);
     match msg {
         VrMsg::NewState {..} => {
             let output = vec![ctx.set_state(msg)];
@@ -334,7 +342,7 @@ pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 /// This is the state of the primary after it has sent a Prepare message containing the client
 /// reconfiguration request.
 pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
-    handle_common!(ctx, msg, wait_for_reconfiguration_prepare_ok);
+    handle_common!(ctx, envelope, wait_for_reconfiguration_prepare_ok);
     match msg {
         VrMsg::PrepareOk {op, ref from, ..} if op == ctx.op => {
             let output = maybe_commit(ctx, op, from);
@@ -360,7 +368,7 @@ pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, msg: VrMsg) -> Trans
 }
 
 pub fn reconfiguration_wait_for_new_state(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
-    handle_common!(ctx, msg, reconfiguration_wait_for_new_state);
+    handle_common!(ctx, envelope, reconfiguration_wait_for_new_state);
     match msg {
         VrMsg::NewState {op, ..} if op >= ctx.new_config.op => {
             let mut output = vec![ctx.set_state(msg)];

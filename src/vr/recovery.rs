@@ -10,7 +10,7 @@ pub struct RecoveryState {
     pub nonce: Uuid,
     // Primary from the latest view we've heard from
     pub primary: Option<RecoveryPrimary>,
-    pub responses: QuorumTracker,
+    pub responses: QuorumTracker<()>,
 }
 
 impl RecoveryState {
