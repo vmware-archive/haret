@@ -161,8 +161,8 @@ impl VrCtx {
         let (api_op, request_num) = get_prepare_client_data(envelope.msg.clone());
         let prepare = self.prepare_msg(request_num, api_op);
         self.log.push(envelope.msg);
-        self.prepare_requests.new_prepare(self.op);
-        broadcast(self, prepare, envelope.correlation_id)
+        self.prepare_requests.new_prepare(self.op, envelope.correlation_id.clone());
+        self.broadcast(prepare, envelope.correlation_id)
     }
 
     pub fn send_prepare_ok(&mut self,
@@ -175,7 +175,7 @@ impl VrCtx {
         // Reconstruct Client Request, since the log stores VrMsgs
         let client_req = VrMsg::ClientRequest {op: client_op, request_num: client_request_num};
         self.log.push(client_req);
-        self.commit(commit_num);
+        self.backup_commit(commit_num);
         self.send_to_primary(self.prepare_ok_msg(), correlation_id)
     }
 
@@ -212,15 +212,15 @@ impl VrCtx {
     }
 
     pub fn broadcast_start_epoch(&self) -> Vec<FsmOutput> {
-        self.broadcast(self.start_epoch_msg())
+        self.broadcast(self.start_epoch_msg(), CorrelationId::Pid(self.pid))
     }
 
     fn broadcast_start_view_msg(&self) -> Vec<FsmOutput> {
         self.broadcast(self.start_view_msg(), CorrelationId::Pid(self.pid))
     }
 
-    fn broadcast_commit(&self) -> Vec<FsmOutput> {
-        self.broadcast(self.commit_msg())
+    pub fn broadcast_commit_msg(&self) -> Vec<FsmOutput> {
+        self.broadcast(self.commit_msg(), CorrelationId::Pid(self.pid))
     }
 
     pub fn rebroadcast_reconfig(&self) -> Vec<FsmOutput> {
@@ -256,7 +256,7 @@ impl VrCtx {
 
     fn become_primary(&mut self) -> Vec<FsmOutput> {
         let last_commit_num = self.commit_num;
-        self.set_latest_state();
+        self.set_primary_state();
         let mut output = self.broadcast_start_view_msg();
         output.push(self.set_primary());
         println!("Elected {:?} as primary of view {}", self.primary, self.view);
@@ -287,7 +287,7 @@ impl VrCtx {
         }
     }
 
-    fn set_latest_state(&mut self) {
+    fn set_primary_state(&mut self) {
         let current = Latest {
             last_normal_view: self.last_normal_view,
             commit_num: self.commit_num,
@@ -388,25 +388,15 @@ impl VrCtx {
         unreachable!()
     }
 
-    pub fn maybe_commit(&mut self, op: u64, from: Pid, correlation_id: CorrelationId)
-        -> Vec<VrEnvelope>
-        {
-            self.prepare_requests.insert(op, from.clone());
-            if self.prepare_requests.has_quorum(op) {
-                let last_commit_num = self.commit_num;
-                self.commit_num = op;
-                primary_commit_known_committed_ops(self, last_commit_num)
-            } else {
-                Vec::new()
-            }
+    pub fn has_commit_quorum(&mut self, op: u64, from: Pid) -> bool {
+        self.prepare_requests.insert(op, from);
+        self.prepare_requests.has_quorum(op)
+    }
 
-        }
-
-
-    pub fn primary_commit_known_committed_ops(&mut self, last_commit_num: u64) -> Vec<Envelope> {
+    pub fn primary_commit(&mut self, op: u64) -> Vec<Envelope> {
         let mut output = Vec::new();
         let iter = self.prepare_requests.remove(self.commit_num);
-        for i in last_commit_num..self.commit_num {
+        for i in self.commit_num..op {
             let request = iter.next().unwrap();
             let msg = self.log[i as usize].clone();
             match msg {
@@ -432,23 +422,27 @@ impl VrCtx {
                                                 request.correlation_id.clone()));
                     self.update_self_for_new_epoch(i+1);
                     output.push(self.announce_reconfiguration(self));
+                    output.push(self.set_primary());
                     output.extend_from_slice(&self.broadcast_commit_msg_old());
                     output.extend_from_slice(&self.send_epoch_started(request.correlation_id));
                 }
             }
-            output
         }
+        self.commit_num = op;
+        output
     }
 
 fn update_self_for_new_epoch(&mut self, op: u64) {
+    self.last_received_time = SteadyTime::now();
     self.epoch += 1;
     self.view = 0;
+    self.last_normal_view = 0;
     self.old_config = self.new_config.clone();
     // Get the reconfiguration from the log. This always succeeds.
     if let VrMsg::Reconfiguration {ref replicas, ..} = self.log[(op-1) as usize] {
         self.new_config = VersionedReplicas {epoch: self.epoch,
-                                            op: self.op,
-                                            replicas: replicas.clone()};
+                                             op: self.op,
+                                             replicas: replicas.clone()};
     }
     unreachable!();
 }

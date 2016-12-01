@@ -121,18 +121,18 @@ pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transit
 pub fn handle_later_view(ctx: &mut VrCtx, envelope: VrEnvelope, new_view: u64) -> Transition {
     match envelope.msg.clone() {
         VrMsg::StartViewChange {from, ..} => {
-            let output = ctx.reset_view_change_state(view);
+            let output = ctx.reset_view_change_state(new_view);
             ctx.insert_view_change_message(from, envelope.msg);
             output.extend(ctx.start_view_change());
             next!(wait_for_start_view_change, output)
         },
         VrMsg::DoViewChange {from, ..} => {
-            let output = ctx.reset_view_change_state(view);
+            let output = ctx.reset_view_change_state(new_view);
             ctx.insert_view_change_message(from, envelope.msg);
             next!(wait_for_do_view_change, output);
         },
         VrMsg::StartView{view, op, log, commit_num, ..} => {
-            let output = ctx.become_backup(view, op, log, commit_num);
+            let output = ctx.become_backup(new_view, op, log, commit_num);
             return next!(backup, output);
         },
         _ => {
@@ -149,19 +149,22 @@ pub fn handle_later_view(ctx: &mut VrCtx, envelope: VrEnvelope, new_view: u64) -
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Startup states always receive a tick message to kick things off
 
+/// Start this FSM as part of a newly created namespace
 pub fn startup_new_namespace(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
-    ctx.view += 1;
-    super::view_change::start(ctx, Vec::new())
+    let output = ctx.reset_and_start_view_change();
+    next!(wait_for_start_view_change, output)
 }
 
+/// Start this FSM in recovery mode
 pub fn startup_recovery(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
-    let envelopes = ctx.start_recovery();
-    next!(recovery, envelopes.map(|e| e.into()))
+    let output = ctx.start_recovery();
+    next!(recovery, output)
 }
 
+/// This node was started as part of a reconfiguration. It's a new member to the group.
 pub fn startup_reconfiguration(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
     let output = ctx.start_state_transfer_reconfiguration();
-    return next!(reconfiguration_wait_for_new_state, output);
+    next!(reconfiguration_wait_for_new_state, output)
 }
 
 /// This replica is currently the primary replica operating normally
@@ -173,8 +176,13 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             next!(primary, output)
         },
         VrMsg::PrepareOk {op, from, ..} op > ctx.commit_num => {
-            let output = ctx.maybe_commit(op, from, envelope.correlation_id)
-            next!(primary, output)
+            if ctx.has_commit_quorum(op, from) {
+                // We'll never actually commit a Reconfiguration here. That always happens in
+                // wait_for_reconfiguration_prepare_ok.
+                let output = ctx.primary_commit(op);
+                next!(primary, output)
+            }
+            next!(primary)
         },
         VrMsg::Tick => {
             if ctx.prepare_requests.expired() {
@@ -187,15 +195,15 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             }
             next!(primary)
         },
-        VrMsg::GetState{op, from, ..} => {
+        VrMsg::GetState {op, from, ..} => {
             let output = ctx.send_new_state(op, from, envelope.correlation_id);
-            next!(primary, output)
+            next!(primary, vec![output])
         },
-        VrMsg::Recovery{from, nonce} => {
+        VrMsg::Recovery {from, nonce} => {
             let output = ctx.send_recovery_response(from, nonce, envelope.correlation_id);
             next!(primary, vec![output])
         },
-        VrMsg::Reconfiguration{..} => {
+        VrMsg::Reconfiguration {..} => {
             if let Some(err_envelope) = ctx.validate_reconfig(&envelope) {
                 return next!(primary, vec![err_envelope]);
             }
@@ -260,7 +268,7 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     }
 }
 
-/// The first phase of a view change. Here a replica is waiting for a quorum of StartViewChange
+/// The first phase of a view change. This replica is waiting for a quorum of StartViewChange
 /// messages.
 pub fn wait_for_start_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, view_change);
@@ -390,6 +398,7 @@ pub fn wait_for_start_view(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition 
 
 
 /// When a backup realizes it's behind it enters this state
+// TODO: Resend state_transfer messages on timeout
 pub fn state_transfer(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
     handle_common!(ctx, envelope, state_transfer);
     match msg {
@@ -407,15 +416,15 @@ pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, msg: VrMsg) -> Trans
     handle_common!(ctx, envelope, wait_for_reconfiguration_prepare_ok);
     match msg {
         VrMsg::PrepareOk {op, ref from, ..} if op == ctx.op => {
-            let output = maybe_commit(ctx, op, from);
-            if output.is_empty() {
-                return next!(wait_for_reconfiguration_prepare_ok);
+            if ctx.has_commit_quorum(op, from) {
+                let output = ctx.primary_commit(op);
+                // We committed the reconfiguration request
+                if ctx.is_primary() {
+                    return next!(primary, output);
+                }
+                return next!(backup, output)
             }
-            // We committed the reconfiguration request
-            if ctx.is_primary() {
-                return next!(primary, output);
-            }
-            next!(backup, output)
+            next!(wait_for_reconfiguration_prepare_ok);
         },
         VrMsg::Tick => {
             // If we haven't received quorum of PrepareOk in time then re-broadcast Prepare
