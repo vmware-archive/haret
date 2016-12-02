@@ -27,7 +27,6 @@ mod error;
 
 mod debug_sender;
 mod session_msgs;
-mod session;
 mod namespace_mgr;
 mod namespace_msg;
 mod namespaces;

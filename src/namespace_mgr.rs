@@ -96,7 +96,7 @@ impl NamespaceMgr {
             NamespaceMsg::Stop(pid) =>
                 self.stop(&pid),
             NamespaceMsg::NewPrimary(pid) =>
-                self.namespaces.primaries.insert(Uuid::from(&pid.group), pid);
+                self.namespaces.primaries.insert(Uuid::from(&pid.group), pid),
             NamespaceMsg::ClearPrimary(namespace_id) =>
                 self.namespaces.primaries.remove(&namespace_id)
         }
@@ -108,8 +108,8 @@ impl NamespaceMgr {
             AdminReq::Join(node_id) => {
                 let _ = self.node.join(&node_id);
                 self.send_admin_rpy(AdminRpy::Ok, correlation_id);
-            }
-            AdminReq::GetNamespaces =>
+            },
+            AdminReq::GetNamespaces => {
                 self.send_admin_rpy(AdminRpy::Namespaces(self.namespaces.clone()),
                                     correlation_id);
             },
@@ -267,7 +267,6 @@ impl NamespaceMgr {
            self.local_replicas.insert(pid);
        }
     }
-
 }
 
 impl ServiceHandler<Msg> for NamespaceMgr {

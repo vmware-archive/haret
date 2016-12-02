@@ -20,7 +20,7 @@ pub struct AdminConnectionHandler {
 impl AdminConnectionHandler {
     pub fn make_envelope(&self, pid: Pid, req: AdminReq) -> Envelope {
         let c_id = CorrelationId::Request(self.pid.clone(), self.id, self.total_requests);
-        self.total_requests++;
+        self.total_requests += 1;
         Envelope {
             to: pid,
             from: self.pid.clone(),
@@ -33,7 +33,7 @@ impl AdminConnectionHandler {
         self.waiting_for += 1;
         while self.waiting_for != self.total_requests {
             if let Some(rpy) = self.out_of_order_replies.remove(self.waiting_for) {
-                self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy))),
+                self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy)));
             } else {
                 break;
             }
@@ -68,13 +68,13 @@ impl ConnectionHandler for AdminConnectionHandler {
         let Envelope {msg, correlation_id, ..} = envelope;
         let correlation_id = correlation_id.unwrap();
         let rpy = match msg {
-            rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy
+            rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy,
             rabble::Msg::ClusteStatus(status) => AdminRpy::ClusteStatus(status),
             rabble::Msg::Timeout => AdminRpy::Timeout,
             _ => unreachable!()
         };
         if correlation_id.request == self.waiting_for {
-            self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy))),
+            self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy)));
             self.write_successive_replies();
         } else {
             self.out_of_order_replies.insert(correlation_id.request, rpy);
@@ -90,7 +90,7 @@ impl ConnectionHandler for AdminConnectionHandler {
                 self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid));
             } else {
                 self.make_envelope(self.namespace_mgr.clone(), req);
-            }
+            };
             self.output.push(ConnectionMsg::Envelope(envelope));
         } else {
             let msg = AdminMsg::Rpy(AdminRpy::Error("Invalid Admin Request".to_string()));

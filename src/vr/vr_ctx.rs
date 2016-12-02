@@ -32,12 +32,15 @@ pub struct VrCtx {
     /// Only used during view change
     pub view_change_state: Option<ViewChangeState>,
 
+    /// Only used when a replica is shutting down
+    pub epoch_started_msgs: QuorumTracker<VrMsg>,
+
     /// Backups wait `idle_timeout` between messages from the primary before initiating a view
     /// change.
     pub idle_timeout: Duration,
 
     /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
-    /// message to the backups. `idle_timeout_ms` should be at least twice as large as this value.
+    /// message to the backups. `idle_timeout` should be at least twice as large as this value.
     pub primary_tick_ms: u64,
 }
 
@@ -62,7 +65,7 @@ impl VrCtx {
             new_config: new_config,
             recovery_state: None,
             view_change_state: None,
-            idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
+            idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
             primary_tick_ms: DEFAULT_PRIMARY_TICK_MS
         }
     }
@@ -137,8 +140,8 @@ impl VrCtx {
         self.recovery_state.responses.is_expired()
     }
 
-    pub fn clear_quorum_tracker(&mut self) {
-        self.quorum_tracker = QuorumTracker::new(self.quorum as usize);
+    pub fn clear_epoch_started_msgs(&mut self) {
+        self.epoch_started_msgs = QuorumTracker::new(self.quorum as usize, &self.idle_timeout);
     }
 
     pub fn compute_primary(&self) -> Pid {
@@ -292,7 +295,7 @@ impl VrCtx {
                     output.extend_from_slice(&self.broadcast_commit_msg_old());
                     // TODO: If we tracked VrEnvelope in the log instead of VrMsg, we would have a
                     // proper correlation_id here.
-                    output.extend_from_slice(&self.send_epoch_started(CorrelationId::Pid(self.me.clone()));
+                    output.extend_from_slice(&self.broadcast_epoch_started(CorrelationId::Pid(self.me.clone()));
                 }
             }
             output
@@ -361,7 +364,12 @@ impl VrCtx {
         }, self.me.clone())
     }
 
-    fn send_epoch_started(&mut self, c_id: CorrelationId) -> Vec<FsmOutput>{
+    fn send_epoch_started(&mut self, envelope: VrEnvelope) -> Vec<FsmOutput>  {
+        let msg = self.epoch_started_msg();
+        vec![FsmOutput::Vr(VrEnvelope::new(envelope.from, self.me.clone(), msg, envelope.c_id))]
+    }
+
+    fn broadcast_epoch_started(&mut self, c_id: CorrelationId) -> Vec<FsmOutput>{
         let msg = self.epoch_started_msg();
         self.replicas_to_replace().iter().map(|r| {
             FsmOutput::Vr(VrEnvelope::new(r, self.me.clone(), msg.clone(), c_id.clone()))
@@ -440,7 +448,7 @@ impl VrCtx {
                     output.push(self.announce_reconfiguration(self));
                     output.push(self.set_primary());
                     output.extend_from_slice(&self.broadcast_commit_msg_old());
-                    output.extend_from_slice(&self.send_epoch_started(request.correlation_id));
+                    output.extend_from_slice(&self.broadcast_epoch_started(request.correlation_id));
                 }
             }
         }
@@ -462,7 +470,7 @@ impl VrCtx {
     /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
     /// here since the values are so small.
     fn idle_timeout(&self) -> bool {
-        SteadyTime::now() - self.last_received_time > Duration::milliseconds(self.idle_timeout_ms as i64)
+        SteadyTime::now() - self.last_received_time > self.idle_timeout
     }
 
     #[inline]
@@ -483,16 +491,6 @@ impl VrCtx {
 
     pub fn is_leaving(&self) -> bool {
         self.replicas_to_replace().contains(&self.me)
-    }
-
-    pub fn set_state_new_epoch(&mut self,
-                               old_config: VersionedReplicas,
-                               new_config: VersionedReplicas) {
-
-        self.last_received_time = SteadyTime::now();
-        self.view = 0;
-        self.old_config = old_config;
-        self.new_config = new_config;
     }
 
     pub fn set_from_new_state_msg(&mut self, msg: VrMsg) -> Vec<FsmOutput> {

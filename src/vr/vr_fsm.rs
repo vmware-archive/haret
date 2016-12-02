@@ -70,41 +70,34 @@ macro_rules! handle_common {
     }
 }
 
+/// A new epoch was just seen in the message. If it's a commit message with a `commit_num` equal to
+/// the `op`, it means that it's the reconfiguration being committed and this backup is up to
+/// date. If it's not an up to date config message then we don't know the new nodes. Let's try to
+/// learn those in learn_config before doing state transfer.
+///
+/// Note that this function will never run on newly created replicas in the new group. New
+/// replicas are started knowing the old and new configuration and immediately start state transfer,
+/// thus skipping the need to run this function.
+///
+/// Since this runs only on old nodes
 pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transition {
     ctx.last_received_time = SteadyTime::now();
     ctx.epoch = epoch;
     match msg {
-        VrMsg::Commit {commit_num, ..} if commit_num != ctx.op => {
-            let output = ctx.start_state_transfer_reconfiguration();
-            return next!(reconfiguration_wait_for_new_state, output);
-        },
-        VrMsg::Commit {commit_num, ..} => {
+        VrMsg::Commit {commit_num, ..} if commit_num == ctx.op => {
+            // We only handle requests when we have the reconfiguration in the log. Backup commit
+            // will play it and we'll learn the new members.
             ctx.view = 0;
             let mut output = ctx.backup_commit(commit_num);
             if ctx.is_leaving() {
+                ctx.clear_epoch_started_msgs();
                 return next!(leaving, output);
             }
-            output.extend(&ctx.send_epoch_started(ctx));
+            output.extend(&ctx.broadcast_epoch_started(ctx));
             if ctx.is_primary() {
                 return next!(primary, output);
             }
             next!(backup, output)
-        },
-        VrMsg::StartEpoch {op, old_config, new_config, ..} if ctx.op == op &&
-            ctx.last_log_entry_is_latest_reconfiguration(epoch, op) =>
-        {
-            ctx.set_state_new_epoch(old_config, new_config);
-            let mut output = ctx.backup_commit(op);
-            output.extend(&ctx.send_epoch_started());
-            if ctx.is_primary() {
-                return next!(primary, output)
-            }
-            return next!(backup, output)
-        },
-        VrMsg::StartEpoch {op, old_config, new_config, ..} => {
-            ctx.set_state_new_epoch(old_config, new_config);
-            let output = ctx.start_state_transfer_reconfiguration();
-            next!(reconfiguration_wait_for_new_state, output)
         },
         // We have been partitioned and missed the reconfiguration. At least a quorum of new nodes
         // is normally processing requests, and the leaving replicas may have shut down.
@@ -171,7 +164,7 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             let output =  ctx.send_prepare(envelope);
             next!(primary, output)
         },
-        VrMsg::PrepareOk {op, from, ..} op > ctx.commit_num => {
+        VrMsg::PrepareOk {op, from, ..} if op > ctx.commit_num => {
             if ctx.has_commit_quorum(op, from) {
                 // We'll never actually commit a Reconfiguration here. That always happens in
                 // wait_for_reconfiguration_prepare_ok.
@@ -203,8 +196,12 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             if let Some(err_envelope) = ctx.validate_reconfig(&envelope) {
                 return next!(primary, vec![err_envelope]);
             }
-            let output = ctx.send_prepare(envelope.clone());
+            let output = ctx.send_prepare(envelope);
             next!(wait_for_reconfiguration_prepare_ok, output)
+        },
+        VrMsg::StartEpoch {..} => {
+            let output = ctx.send_epoch_started(envelope);
+            next!(primary, output);
         },
         _ => next!(primary)
     }
@@ -215,7 +212,7 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, backup);
     ctx.last_received_time = SteadyTime::now();
     match envelope.msg {
-        VrMsg::Prepare {op, client_op, commit_num, client_request_num, ...} if op == ctx.op + 1 => {
+        VrMsg::Prepare {op, client_op, commit_num, client_request_num, ..} if op == ctx.op + 1 => {
             let prepare_ok_envelope = ctx.send_prepare_ok(client_op, commit_num, request_num,
                                                           envelope.correlation_id);
             next!(backup, vec![prepare_ok_envelope])
@@ -256,6 +253,10 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             }
             let output = ctx.send_recovery_response(from, nonce, envelope.correlation_id);
             return next!(backup, vec![output]);
+        },
+        VrMsg::StartEpoch {..} => {
+            let output = ctx.send_epoch_started(envelope);
+            next!(backup, output);
         },
         _ => {
             println!("Re-entering backup state {:?}", ctx.me.name);
@@ -338,9 +339,9 @@ pub fn wait_for_do_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transit
     handle_common!(ctx, envelope, wait_for_do_view_change);
     match envelope.msg.clone() {
         VrMsg::DoViewChange{from, ..} => {
-            ctx.insert_view_change_message(from, envelope.msg)
+            ctx.insert_view_change_message(from, envelope.msg);
             if ctx.has_view_change_quorum() {
-                let output = ctx.become_primary()
+                let output = ctx.become_primary();
                 return next!(primary, output);
             }
             next!(wait_for_do_view_change, output)
@@ -446,10 +447,11 @@ pub fn reconfiguration_wait_for_new_state(ctx: &mut VrCtx, msg: VrMsg) -> Transi
     match msg {
         VrMsg::NewState {op, ..} if op >= ctx.new_config.op => {
             let mut output = vec![ctx.set_from_new_state_msg(msg)];
-            if ctx.replicas_to_replace().contains(&ctx.me) {
+            if ctx.is_leaving() {
+                ctx.clear_epoch_started_msgs();
                 return next!(leaving, output)
             }
-            output.extend_from_slice(&ctx.send_epoch_started(ctx));
+            output.extend_from_slice(&ctx.broadcast_epoch_started(ctx));
             if ctx.is_primary() {
                 return next!(primary, output)
             }
@@ -496,7 +498,7 @@ pub fn leaving(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
         VrMsg::EpochStarted {epoch, ref from, ..} if epoch == ctx.epoch => {
             ctx.quorum_tracker.insert(from.clone(), msg.clone());
             if ctx.quorum_tracker.has_quorum() {
-                clear_quorum_tracker(ctx);
+                ctx.clear_epoch_started_msgs();
                 let output = vec![FsmOutput::Announcement(NamespaceMsg::Stop(ctx.me.clone()),
                                                           ctx.me.clone())];
                 return next!(shutdown, output)
@@ -516,7 +518,7 @@ pub fn leaving(ctx: &mut VrCtx, msg: VrMsg) -> Transition {
 
 /// This replica has already told the dispatcher to shut it down. It just waits in this state and
 /// doesn't respond to any messages from this point out.
-pub fn shutdown(_ctx: &mut VrCtx, _: VrMsg) -> Transition {
+pub fn shutdown(_ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
     next!(shutdown)
 }
 
