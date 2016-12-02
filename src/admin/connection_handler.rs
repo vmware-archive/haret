@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use rabble::{Pid, Envelope, ConnectionMsg, ConnectionHandler, ClusterStatus};
+use rabble::{self, Pid, Envelope, ConnectionMsg, ConnectionHandler, ClusterStatus, CorrelationId};
 use msg::Msg;
+use super::messages::{AdminMsg, AdminReq, AdminRpy};
 
 /// The connection handler for Admin Clients
 pub struct AdminConnectionHandler {
@@ -18,7 +19,7 @@ pub struct AdminConnectionHandler {
 }
 
 impl AdminConnectionHandler {
-    pub fn make_envelope(&self, pid: Pid, req: AdminReq) -> Envelope {
+    pub fn make_envelope(&self, pid: Pid, req: AdminReq) -> Envelope<Msg> {
         let c_id = CorrelationId::Request(self.pid.clone(), self.id, self.total_requests);
         self.total_requests += 1;
         Envelope {

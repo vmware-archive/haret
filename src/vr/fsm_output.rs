@@ -1,19 +1,20 @@
-use rabble::{Pid, CorrelationId, Envelope};
+use rabble::{self, Pid, CorrelationId, Envelope};
 use msg::Msg;
 use namespace_msg::NamespaceMsg;
 use super::vr_envelope::VrEnvelope;
 
+#[derive(Debug, Clone)]
 pub enum FsmOutput {
     Vr(VrEnvelope),
     Announcement(NamespaceMsg, Pid)
 }
 
 /// Convert from FsmOuptput to Envelope with "self.into()" or Envelope::from(self)
-impl From<FsmOutput> for Envelope {
-    fn from(fsm_output: FsmOutput) -> Envelope {
+impl From<FsmOutput> for Envelope<Msg> {
+    fn from(fsm_output: FsmOutput) -> Envelope<Msg> {
         match fsm_output {
-            Vr(vr_envelope) => vr_envelope.into(),
-            Announcement(namespace_msg, pid) => Envelope {
+            FsmOutput::Vr(vr_envelope) => vr_envelope.into(),
+            FsmOutput::Announcement(namespace_msg, pid) => Envelope {
                 to: Pid {group: None, name: "namespace_mgr".to_string(), node: pid.node.clone()},
                 from: pid.clone(),
                 msg: rabble::Msg::User(Msg::Namespace(namespace_msg)),

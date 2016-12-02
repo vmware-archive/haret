@@ -1,18 +1,22 @@
 use std::collections::{HashSet, HashMap};
+use std::fmt::Debug;
+use uuid::Uuid;
 use amy::{Registrar, Notification, Event, Timer};
-use rabble::{Pid, Node, Envelope};
-use fsm::Fsm;
+use rabble::{self, Pid, Node, Envelope, CorrelationId, ServiceHandler};
+use rustc_serialize::{Encodable, Decodable};
+use fsm::{Fsm, StateFn};
 use msg::Msg;
-use replica::VersionedReplicas;
-use namespace_msg::{NamespaceMsg, NewSessionReply};
+use vr::{VrMsg, Replica, VersionedReplicas};
+use namespace_msg::NamespaceMsg;
 use namespaces::Namespaces;
-use vr::vr_fsm::{self, VrCtx, VrTypes, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+use vr::vr_fsm::{self, VrTypes};
+use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 use admin::{AdminReq, AdminRpy};
 
 const MANAGEMENT_TICK_MS: u64 = 10000; // 10s
 
-pub struct NamespaceMgr<T: Encodable + Decodable + Debug + Clone> {
-    node: Node,
+pub struct NamespaceMgr {
+    node: Node<Msg>,
     pid: Pid,
     /// Dispatchers on other nodes
     peers: HashSet<Pid>,
@@ -44,14 +48,14 @@ pub struct NamespaceMgr<T: Encodable + Decodable + Debug + Clone> {
 }
 
 impl NamespaceMgr {
-    pub fn new(node: Node) -> NamespaceMgr {
+    pub fn new(node: Node<Msg>) -> NamespaceMgr {
         let pid = Pid {
             group: None,
             name: "namespace_mgr".to_string(),
             node: node.id
         };
         NamespaceMgr {
-            node: Node,
+            node: node,
             pid: pid,
             peers: HashSet::new(),
             namespaces: Namespaces::new(),
@@ -181,14 +185,14 @@ impl NamespaceMgr {
             let mut found = false;
             for member in orset.elements().iter() {
                 if *member == pid.node {
-                    pid.group = namespace.clone().to_string(),
+                    pid.group = namespace.clone().to_string();
                     new_replicas.push(pid);
                     found = true;
                     break;
                 }
             }
             if !found {
-                return Err(format!("Node {} is not a member of the cluster", raw.node.name));
+                return Err(format!("Node {} is not a member of the cluster", pid.node.name));
             }
         }
         new_replicas.sort();
@@ -222,7 +226,7 @@ impl NamespaceMgr {
                              pid: &Pid,
                              old_config: &VersionedReplicas,
                              new_config: &VersionedReplicas) {
-       let mut ctx = VrCtx::new(replica.clone(),
+       let mut ctx = VrCtx::new(pid.clone(),
                                 old_config.clone(),
                                 new_config.clone());
        ctx.idle_timeout_ms = self.idle_timeout_ms;
@@ -270,7 +274,7 @@ impl NamespaceMgr {
 }
 
 impl ServiceHandler<Msg> for NamespaceMgr {
-    fn init(&mut self, registrar: &Registrar, _: &Node<Msg>) -> Result<()> {
+    fn init(&mut self, registrar: &Registrar, _: &Node<Msg>) -> rabble::Result<()> {
         self.fsm_timer = try!(registrar.set_interval(self.tick_period)
                               .chain_err(|| "Failed to register request timer"));
         self.management_timer = try!(registrar.set_interval(MANAGEMENT_TICK_MS)
@@ -281,7 +285,7 @@ impl ServiceHandler<Msg> for NamespaceMgr {
     fn handle_envelope(&mut self,
                        _: &Node<Msg>,
                        envelope: Envelope<Msg>,
-                       _: &Registrar) -> Result<()>
+                       _: &Registrar) -> rabble::Result<()>
     {
         let Envelope{msg, correlation_id, ..} = envelope;
         match msg {
@@ -297,7 +301,7 @@ impl ServiceHandler<Msg> for NamespaceMgr {
     fn handle_notification(&mut self,
                            _: &Node<Msg>,
                            notification: Notification,
-                           _: &Registrar) -> Result<()>
+                           _: &Registrar) -> rabble::Result<()>
     {
 
         if notification.id == self.fsm_timer.get_id() {

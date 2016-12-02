@@ -4,7 +4,6 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
-use super::Timeout;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -13,7 +12,7 @@ pub enum VrError {
     AlreadyExists,
     BadEncoding(&'static str),
     Eof,
-    Timeout(Timeout)
+    Timeout
 }
 
 impl Error for VrError {
@@ -23,7 +22,7 @@ impl Error for VrError {
             VrError::AlreadyExists => "resource already exists",
             VrError::BadEncoding(_)  => "could not read encoded data",
             VrError::Eof => "end of file",
-            VrError::Timeout(_) => "timeout"
+            VrError::Timeout => "timeout"
         }
     }
 }
@@ -36,7 +35,7 @@ impl fmt::Display for VrError {
             VrError::BadEncoding(encoding_type) => write!(f, "Could not read data encoded with {}",
                                                           encoding_type),
             VrError::Eof => write!(f, "Error: End Of File"),
-            VrError::Timeout(ref timeout) => write!(f, "{}", timeout)
+            VrError::Timeout => write!(f, "Error: Timeout")
         }
     }
 }

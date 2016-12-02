@@ -1,7 +1,6 @@
 use rabble::{Pid, NodeId, ClusterStatus};
 use namespaces::Namespaces;
 use uuid::Uuid;
-use session_messages::NewSessionReply;
 use vr::VrCtx;
 
 #[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]

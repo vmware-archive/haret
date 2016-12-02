@@ -1,5 +1,5 @@
 #![feature(custom_derive, plugin)]
-#![plugin(serde_macros)]
+//#![plugin(serde_macros)]
 #![feature(mpsc_select)]
 #![feature(btree_range, collections_bound)]
 
@@ -19,6 +19,7 @@ extern crate stats;
 extern crate fsm;
 extern crate orset;
 extern crate rabble;
+extern crate amy;
 
 pub mod config;
 pub mod admin;
@@ -30,8 +31,4 @@ mod session_msgs;
 mod namespace_mgr;
 mod namespace_msg;
 mod namespaces;
-
-pub use self::session_messages::{
-    NewSessionRequest,
-    NewSessionReply
-};
+mod msg;

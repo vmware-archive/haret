@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::collections::hash_map::Drain;
 use time::{SteadyTime, Duration};
 use rabble::Pid;
@@ -7,12 +7,12 @@ use rabble::Pid;
 pub struct QuorumTracker<T> {
     quorum_size: usize,
     expiration: SteadyTime,
-    replies: HashSet<Pid, T>
+    replies: HashMap<Pid, T>
 }
 
 /// Do we have a quorum when including the replica making the request?
 impl<T> QuorumTracker<T> {
-    pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker {
+    pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker<T> {
         QuorumTracker {
             quorum_size: quorum_size,
             expiration: SteadyTime::now() + *timeout,

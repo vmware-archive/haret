@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use uuid::Uuid;
-use super::replica::{Replica, VersionedReplicas};
+use vr::{Replica, VersionedReplicas};
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Namespaces {

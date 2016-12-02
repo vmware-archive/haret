@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::hash_set::Drain;
 use time::{SteadyTime, Duration};
-use super::replica::Replica;
+use rabble::{Pid, CorrelationId};
 
 /// Metadata for an individual prepare request
 ///
@@ -17,7 +18,7 @@ pub struct PrepareRequests {
     timeout: Duration,
     // The smallest op number for all outstanding Prepare requests
     lowest_op: u64,
-    request: VecDeque<Request>
+    requests: VecDeque<Request>
 }
 
 impl PrepareRequests {
@@ -26,7 +27,7 @@ impl PrepareRequests {
             quorum_size: num_replicas/2 + 1,
             timeout: Duration::milliseconds(timeout_ms as i64),
             lowest_op: 0,
-            request: VecDeque::new(),
+            requests: VecDeque::new(),
         }
     }
 
@@ -36,7 +37,7 @@ impl PrepareRequests {
         }
         self.requests.push_back(Request {
             replies: HashSet::with_capacity(self.quorum_size),
-            correlation_id: CorrelationId,
+            correlation_id: correlation_id,
             timeout: SteadyTime::now() + self.timeout
         });
     }
@@ -44,7 +45,7 @@ impl PrepareRequests {
     // Returns true if the id exists, false otherwise
     pub fn insert(&mut self, op: u64, replica: Pid) -> bool {
         if op >= self.lowest_op && self.requests.len() != 0 {
-            let request = self.requests[op - lowest_op];
+            let request = self.requests[op - self.lowest_op];
             request.replies.insert(replica);
             return true;
         }

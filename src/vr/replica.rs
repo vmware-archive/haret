@@ -1,10 +1,15 @@
-use rabble::{self, Pid, CorrelationId, Envelope};
+use rabble::{self, Process, Pid, CorrelationId, Envelope};
+use fsm::Fsm;
 use msg::Msg;
+use super::vr_fsm::VrTypes;
+use super::vr_envelope::VrEnvelope;
+use super::vrmsg::VrMsg;
+use super::super::admin::{AdminReq, AdminRpy};
 
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
 /// It also takes care to only pass messages of type VrMsg to the FSM.
-struct Replica {
-    pid: pid,
+pub struct Replica {
+    pid: Pid,
     fsm: Fsm<VrTypes>,
     output: Vec<Envelope<Msg>>
 }
@@ -12,7 +17,7 @@ struct Replica {
 impl Replica {
     fn new(pid: Pid, fsm: Fsm<VrTypes>) -> Replica {
         Replica {
-            pid: Pid,
+            pid: pid,
             fsm: fsm,
             output: Vec::with_capacity(1)
         }
@@ -42,7 +47,7 @@ impl Process for Replica {
             },
             rabble::Msg::User(Msg::Vr(vrmsg)) => {
                let vr_envelope = VrEnvelope::new(self.pid.clone(), from, vrmsg, correlation_id);
-               self.output.extend(self.fsm.send(vr_envelope).map(|fsm_output| e.into()));
+               self.output.extend(self.fsm.send(vr_envelope));
             },
             _ => {
                 let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));

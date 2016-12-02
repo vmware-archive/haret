@@ -1,6 +1,7 @@
 use uuid::Uuid;
 use rabble::Pid;
 use namespaces::Namespaces;
+use vr::VersionedReplicas;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum NamespaceMsg {

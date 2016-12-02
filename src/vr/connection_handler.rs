@@ -1,20 +1,21 @@
 use std::collections::HashMap;
-use rabble::{Pid, Envelope, ConnectionMsg, ConnectionHandler};
-use super::vr_api_messages::VrClientMsg;
-use msg::Msg;
+use rabble::{self, Pid, Envelope, ConnectionMsg, ConnectionHandler, CorrelationId};
+use super::vr_api_messages::{VrClientMsg, VrApiReq, VrApiRsp};
+use super::vrmsg::VrMsg;
+use super::super::msg::Msg;
 
 /// The connection handler for VR API clients
 pub struct VrConnectionHandler {
-    pid: pid,
+    pid: Pid,
     id: usize,
     total_requests: usize,
     output: Vec<ConnectionMsg<VrConnectionHandler>>
 }
 
 impl VrConnectionHandler {
-    pub fn make_envelope(&self, pid: Pid, msg: VrMsg) -> Envelope {
+    pub fn make_envelope(&self, pid: Pid, msg: VrMsg) -> Envelope<Msg> {
         let c_id = CorrelationId::Request(self.pid.clone(), self.id, self.total_requests);
-        self.total_requests++;
+        self.total_requests += 1;
         Envelope {
             to: pid,
             from: self.pid.clone(),
@@ -84,7 +85,7 @@ impl ConnectionHandler for VrConnectionHandler {
             self.output.push(ConnectionMsg::Envelope(envelope));
         } else {
             let err = VrApiRsp::Error {msg: "Invalid VR Client Msg".to_string()};
-            let msg = VrClientMsg::Rpy {epoch: 0, view: 0, request_num: request_num, value: err};
+            let msg = VrClientMsg::Rpy {epoch: 0, view: 0, request_num: 0, value: err};
             // CorrelationId doesn't matter here
             self.output.push(ConnectionMsg::ClientMsg(msg, CorrelationId::Pid(self.pid)));
         }

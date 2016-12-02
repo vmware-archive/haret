@@ -1,7 +1,8 @@
 use msg::Msg;
-use rabble::{Pid, CorrelationId};
+use rabble::{self, Envelope, Pid, CorrelationId};
 use super::vrmsg::VrMsg;
 
+#[derive(Debug, Clone)]
 pub struct VrEnvelope {
     to: Pid,
     from: Pid,
@@ -20,13 +21,13 @@ impl VrEnvelope {
     }
 }
 
-impl From<VrEnvelope> for Envelope {
-    fn from(vr_envelope: VrEnvelope) -> Envelope {
+impl From<VrEnvelope> for Envelope<Msg> {
+    fn from(vr_envelope: VrEnvelope) -> Envelope<Msg> {
         Envelope {
             to: vr_envelope.to,
             from: vr_envelope.from,
             msg: rabble::Msg::User(Msg::Vr(vr_envelope.msg)),
-            correlation_id: correlation_id
+            correlation_id: vr_envelope.correlation_id
         }
     }
 }

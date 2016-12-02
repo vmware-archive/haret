@@ -1,3 +1,7 @@
+use time::{SteadyTime, Duration};
+use super::vrmsg::VrMsg;
+use super::quorum_tracker::QuorumTracker;
+
 pub struct Latest {
     pub last_normal_view: u64,
     pub commit_num: u64,
@@ -33,7 +37,7 @@ impl ViewChangeState {
         self.responses.has_quorum()
     }
 
-    pub compute_latest_state(&mut self, current: Latest) -> Latest {
+    pub fn compute_latest_state(&mut self, current: Latest) -> Latest {
         self.responses.drain()
             .map(|(_, msg)| convert_do_view_change_msg_to_latest(msg))
             .fold(current, |mut latest, other| {
@@ -42,10 +46,10 @@ impl ViewChangeState {
                 {
                    latest.last_normal_view = other.last_normal_view;
                    latest.op = other.op;
-                   latest.log = log;
+                   latest.log = other.log;
                 }
                 if other.commit_num > latest.commit_num {
-                    latest.commit_num = commit_num;
+                    latest.commit_num = other.commit_num;
                 }
             })
     }
