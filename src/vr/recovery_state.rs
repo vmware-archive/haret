@@ -1,9 +1,10 @@
 use rabble::Pid;
 use uuid::Uuid;
-use time::Duration;
 use super::quorum_tracker::QuorumTracker;
 use super::vrmsg::VrMsg;
+use super::encodable_steady_time::EncodableDuration;
 
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct RecoveryPrimary {
     pub pid: Pid,
     pub view: u64,
@@ -12,6 +13,7 @@ pub struct RecoveryPrimary {
     pub log: Vec<VrMsg>
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct RecoveryState {
     pub nonce: Uuid,
     // Primary from the latest view we've heard from
@@ -20,16 +22,16 @@ pub struct RecoveryState {
 }
 
 impl RecoveryState {
-    pub fn new(quorum: u64, timeout: Duration) -> RecoveryState {
+    pub fn new(quorum: u64, timeout: EncodableDuration) -> RecoveryState {
         RecoveryState {
             nonce: Uuid::new_v4(),
             primary: None,
-            responses: QuorumTracker::new(quorum, timeout)
+            responses: QuorumTracker::new(quorum as usize, &timeout)
         }
     }
 
     pub fn has_quorum(&self, current_view: u64) -> bool {
-        self.responses.has_super_quorum() && self.primary.map_or(false, |p| p.view == current_view)
+        self.responses.has_super_quorum() && self.primary.as_ref().map_or(false, |p| p.view == current_view)
     }
 }
 

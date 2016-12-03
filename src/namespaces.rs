@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use uuid::Uuid;
-use vr::{Replica, VersionedReplicas};
+use vr::VersionedReplicas;
+use rabble::Pid;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Namespaces {
     pub map: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>,
-    pub primaries: HashMap<Uuid, Replica>
+    pub primaries: HashMap<Uuid, Pid>
 }
 
 impl Namespaces {
@@ -35,18 +36,18 @@ impl Namespaces {
 
     /// Save the new namespace configuration and return the new replicas that need starting
     pub fn reconfigure(&mut self, namespace: &Uuid, old: VersionedReplicas, new: VersionedReplicas) ->
-        Vec<Replica>
+        Vec<Pid>
     {
         if let Some(&mut(ref mut saved_old_config, ref mut saved_new_config)) =
             self.map.get_mut(&namespace)
         {
             // This is an old reconfig message, nothing to start
             if new.epoch <= saved_new_config.epoch { return Vec::new() }
-            let new_set = HashSet::<Replica>::from_iter(new.replicas.clone());
+            let new_set = HashSet::<Pid>::from_iter(new.replicas.clone());
             // We want to use the actual running nodes here because we are trying to determine which
             // nodes to start locally
-            let old_set = HashSet::<Replica>::from_iter(saved_new_config.replicas.clone());
-            let to_start: Vec<Replica> = new_set.difference(&old_set).cloned().collect();
+            let old_set = HashSet::<Pid>::from_iter(saved_new_config.replicas.clone());
+            let to_start: Vec<Pid> = new_set.difference(&old_set).cloned().collect();
             *saved_old_config = old;
             *saved_new_config = new;
             to_start

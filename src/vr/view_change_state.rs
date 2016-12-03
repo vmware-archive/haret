@@ -1,7 +1,9 @@
-use time::{SteadyTime, Duration};
+use time::{SteadyTime};
 use super::vrmsg::VrMsg;
 use super::quorum_tracker::QuorumTracker;
+use super::encodable_steady_time::EncodableDuration;
 
+#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub struct Latest {
     pub last_normal_view: u64,
     pub commit_num: u64,
@@ -20,15 +22,16 @@ impl Latest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub struct ViewChangeState {
     pub responses: QuorumTracker<VrMsg>,
     latest: Latest,
 }
 
 impl ViewChangeState {
-    pub fn new(quorum: u64, timeout: Duration) -> ViewChangeState {
+    pub fn new(quorum: u64, timeout: EncodableDuration) -> ViewChangeState {
         ViewChangeState {
-            responses: QuorumTracker::new(quorum, timeout),
+            responses: QuorumTracker::new(quorum as usize, &timeout),
             latest: Latest::new()
         }
     }
@@ -42,7 +45,7 @@ impl ViewChangeState {
             .map(|(_, msg)| convert_do_view_change_msg_to_latest(msg))
             .fold(current, |mut latest, other| {
                 if (other.last_normal_view > latest.last_normal_view) ||
-                    (other.last_normal_view = latest.last_normal_view && other.op > latest.op)
+                    (other.last_normal_view == latest.last_normal_view && other.op > latest.op)
                 {
                    latest.last_normal_view = other.last_normal_view;
                    latest.op = other.op;
@@ -51,12 +54,13 @@ impl ViewChangeState {
                 if other.commit_num > latest.commit_num {
                     latest.commit_num = other.commit_num;
                 }
+                latest
             })
     }
 }
 
 fn convert_do_view_change_msg_to_latest(msg: VrMsg) -> Latest {
-    if let VrMsg::DoViewChange{op, last_normal_view, commit_num, log} = msg {
+    if let VrMsg::DoViewChange{op, last_normal_view, commit_num, log, ..} = msg {
         return Latest {
             last_normal_view: last_normal_view,
             commit_num: commit_num,

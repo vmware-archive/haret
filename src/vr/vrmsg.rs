@@ -1,8 +1,8 @@
 use uuid::Uuid;
 use msg::Msg;
-use rabble::Envelope;
+use rabble::{Envelope, Pid};
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
-use super::replica::{Replica, VersionedReplicas};
+use super::replica::VersionedReplicas;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum VrMsg {
@@ -17,7 +17,7 @@ pub enum VrMsg {
     Reconfiguration {
         client_req_num: u64,
         epoch: u64,
-        replicas: Vec<Replica>
+        replicas: Vec<Pid>
     },
     ClientReply {
         epoch: u64,
@@ -29,13 +29,13 @@ pub enum VrMsg {
         epoch: u64,
         view: u64,
         op: u64,
-        from: Replica
+        from: Pid
     },
     DoViewChange {
         epoch: u64,
         view: u64,
         op: u64,
-        from: Replica,
+        from: Pid,
         last_normal_view: u64,
         log: Vec<VrMsg>,
         commit_num: u64
@@ -59,7 +59,7 @@ pub enum VrMsg {
         epoch: u64,
         view: u64,
         op: u64,
-        from: Replica
+        from: Pid
     },
     Commit {
         epoch: u64,
@@ -70,25 +70,25 @@ pub enum VrMsg {
         epoch: u64,
         view: u64,
         op: u64,
-        from: Replica
+        from: Pid
     },
     NewState {
         epoch: u64,
         view: u64,
         op: u64,
-        primary: Option<Replica>,
+        primary: Option<Pid>,
         commit_num: u64,
         log_tail: Vec<VrMsg>,
     },
     Recovery {
-        from: Replica,
+        from: Pid,
         nonce: Uuid
     },
     RecoveryResponse {
         epoch: u64,
         view: u64,
         nonce: Uuid,
-        from: Replica,
+        from: Pid,
         // The following fields are only valid when sent by the Primary
         op: Option<u64>,
         commit_num: Option<u64>,
@@ -102,7 +102,7 @@ pub enum VrMsg {
     },
     EpochStarted {
         epoch: u64,
-        from: Replica
+        from: Pid
     }
 }
 

@@ -15,7 +15,7 @@ pub struct Replica {
 }
 
 impl Replica {
-    fn new(pid: Pid, fsm: Fsm<VrTypes>) -> Replica {
+    pub fn new(pid: Pid, fsm: Fsm<VrTypes>) -> Replica {
         Replica {
             pid: pid,
             fsm: fsm,
@@ -27,8 +27,11 @@ impl Replica {
 impl Process for Replica {
     type Msg = Msg;
 
-    fn init(&mut self, _: Pid) -> Vec<Envelope<Msg>> {
-        self.fsm.send(VrMsg::Tick)
+    fn init(&mut self, from: Pid) -> Vec<Envelope<Msg>> {
+        let c_id = CorrelationId::pid(self.pid.clone());
+        let envelope = VrEnvelope::new(self.pid.clone(), from, VrMsg::Tick, c_id);
+        // Convert Vec<FsmOuput> to Vec<Envelope<Msg>>
+        self.fsm.send(envelope).into_iter().map(|e| e.into()).collect()
     }
 
     fn handle(&mut self,
@@ -40,14 +43,14 @@ impl Process for Replica {
         match msg {
             rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
                 let (state, ctx) = self.fsm.get_state();
-                let rpy = AdminRpy::ReplicaState {state: state, ctx: ctx};
+                let rpy = AdminRpy::ReplicaState {state: state.to_string(), ctx: ctx};
                 let msg = rabble::Msg::User(Msg::AdminRpy(rpy));
                 let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
                 self.output.push(envelope);
             },
             rabble::Msg::User(Msg::Vr(vrmsg)) => {
                let vr_envelope = VrEnvelope::new(self.pid.clone(), from, vrmsg, correlation_id);
-               self.output.extend(self.fsm.send(vr_envelope));
+               self.output.extend(self.fsm.send(vr_envelope).into_iter().map(|e| e.into()));
             },
             _ => {
                 let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));

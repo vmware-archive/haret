@@ -7,20 +7,20 @@ use super::super::msg::Msg;
 /// The connection handler for VR API clients
 pub struct VrConnectionHandler {
     pid: Pid,
-    id: usize,
-    total_requests: usize,
+    id: u64,
+    total_requests: u64,
     output: Vec<ConnectionMsg<VrConnectionHandler>>
 }
 
 impl VrConnectionHandler {
-    pub fn make_envelope(&self, pid: Pid, msg: VrMsg) -> Envelope<Msg> {
-        let c_id = CorrelationId::Request(self.pid.clone(), self.id, self.total_requests);
+    pub fn make_envelope(&mut self, pid: Pid, msg: VrMsg) -> Envelope<Msg> {
+        let c_id = CorrelationId::request(self.pid.clone(), self.id, self.total_requests);
         self.total_requests += 1;
         Envelope {
             to: pid,
             from: self.pid.clone(),
             msg: rabble::Msg::User(Msg::Vr(msg)),
-            correlation_id: c_id
+            correlation_id: Some(c_id)
         }
     }
 }
@@ -29,7 +29,7 @@ impl ConnectionHandler for VrConnectionHandler {
     type Msg = Msg;
     type ClientMsg = VrClientMsg;
 
-    fn new(pid: Pid, id: usize) -> VrConnectionHandler {
+    fn new(pid: Pid, id: u64) -> VrConnectionHandler {
         VrConnectionHandler {
             pid: pid,
             id: id,
@@ -51,7 +51,7 @@ impl ConnectionHandler for VrConnectionHandler {
                     request_num: request_num,
                     value: value
                 };
-                self.output.push(ConnectionMsg::ClientMsg(msg));
+                self.output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::Timeout => {
                 let msg = VrClientMsg::Rpy {
@@ -62,10 +62,10 @@ impl ConnectionHandler for VrConnectionHandler {
                     // across connections. TODO: I'm leaning toward removing the request count
                     // altogether from clients as it provides little value without a global client
                     // table, which itself is trouble because of garbage collection issues.
-                    request_num: correlation_id.request,
+                    request_num: correlation_id.request.unwrap(),
                     value: VrApiRsp::Timeout
                 };
-                self.output.push(ConnectionMsg::ClientMsg(msg, correlation_id));
+                self.output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             _ => {
                 // TODO: Log Error
@@ -87,7 +87,7 @@ impl ConnectionHandler for VrConnectionHandler {
             let err = VrApiRsp::Error {msg: "Invalid VR Client Msg".to_string()};
             let msg = VrClientMsg::Rpy {epoch: 0, view: 0, request_num: 0, value: err};
             // CorrelationId doesn't matter here
-            self.output.push(ConnectionMsg::ClientMsg(msg, CorrelationId::Pid(self.pid)));
+            self.output.push(ConnectionMsg::Client(msg, CorrelationId::pid(self.pid.clone())));
         }
         &mut self.output
     }

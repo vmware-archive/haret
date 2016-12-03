@@ -6,35 +6,37 @@ use super::messages::{AdminMsg, AdminReq, AdminRpy};
 /// The connection handler for Admin Clients
 pub struct AdminConnectionHandler {
     pid: Pid,
-    id: usize,
+    id: u64,
     namespace_mgr: Pid,
-    total_requests: usize,
+    total_requests: u64,
     output: Vec<ConnectionMsg<AdminConnectionHandler>>,
 
     // The next reply we are waiting for
-    waiting_for: usize,
+    waiting_for: u64,
 
     // Map of request ids to received responses. Responses received out of order are saved here.
-    out_of_order_replies: HashMap<usize, AdminRpy>
+    out_of_order_replies: HashMap<u64, AdminRpy>
 }
 
 impl AdminConnectionHandler {
-    pub fn make_envelope(&self, pid: Pid, req: AdminReq) -> Envelope<Msg> {
-        let c_id = CorrelationId::Request(self.pid.clone(), self.id, self.total_requests);
+    pub fn make_envelope(&mut self, pid: Pid, req: AdminReq) -> Envelope<Msg> {
+        let c_id = CorrelationId::request(self.pid.clone(), self.id, self.total_requests);
         self.total_requests += 1;
         Envelope {
             to: pid,
             from: self.pid.clone(),
             msg: rabble::Msg::User(Msg::AdminReq(req)),
-            correlation_id: c_id
+            correlation_id: Some(c_id)
         }
     }
 
     pub fn write_successive_replies(&mut self) {
         self.waiting_for += 1;
         while self.waiting_for != self.total_requests {
-            if let Some(rpy) = self.out_of_order_replies.remove(self.waiting_for) {
-                self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy)));
+            if let Some(rpy) = self.out_of_order_replies.remove(&self.waiting_for) {
+                let c_id = CorrelationId::request(self.pid.clone(), self.id, self.waiting_for);
+                self.output.push(ConnectionMsg::Client(AdminMsg::Rpy(rpy), c_id));
+                self.waiting_for += 1;
             } else {
                 break;
             }
@@ -46,7 +48,7 @@ impl ConnectionHandler for AdminConnectionHandler {
     type Msg = Msg;
     type ClientMsg = AdminMsg;
 
-    fn new(pid: Pid, id: usize) -> AdminConnectionHandler {
+    fn new(pid: Pid, id: u64) -> AdminConnectionHandler {
         let namespace_mgr = Pid {
             name: "namespace_mgr".to_string(),
             group: None,
@@ -70,15 +72,15 @@ impl ConnectionHandler for AdminConnectionHandler {
         let correlation_id = correlation_id.unwrap();
         let rpy = match msg {
             rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy,
-            rabble::Msg::ClusteStatus(status) => AdminRpy::ClusteStatus(status),
+            rabble::Msg::ClusterStatus(status) => AdminRpy::ClusterStatus(status),
             rabble::Msg::Timeout => AdminRpy::Timeout,
             _ => unreachable!()
         };
-        if correlation_id.request == self.waiting_for {
-            self.output.push(ConnectionMsg::ClientMsg(AdminMsg::Rpy(rpy)));
+        if correlation_id.request == Some(self.waiting_for) {
+            self.output.push(ConnectionMsg::Client(AdminMsg::Rpy(rpy), correlation_id));
             self.write_successive_replies();
         } else {
-            self.out_of_order_replies.insert(correlation_id.request, rpy);
+            self.out_of_order_replies.insert(correlation_id.request.unwrap(), rpy);
         }
         &mut self.output
     }
@@ -88,15 +90,16 @@ impl ConnectionHandler for AdminConnectionHandler {
     {
         if let AdminMsg::Req(req) = msg {
             let envelope = if let AdminReq::GetReplicaState(pid) = req {
-                self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid));
+                self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid))
             } else {
-                self.make_envelope(self.namespace_mgr.clone(), req);
+                let pid = self.namespace_mgr.clone();
+                self.make_envelope(pid, req)
             };
             self.output.push(ConnectionMsg::Envelope(envelope));
         } else {
             let msg = AdminMsg::Rpy(AdminRpy::Error("Invalid Admin Request".to_string()));
             // CorrelationId doesn't matter here
-            self.output.push(ConnectionMsg::ClientMsg(msg, CorrelationId::Pid(self.pid)));
+            self.output.push(ConnectionMsg::Client(msg, CorrelationId::pid(self.pid.clone())));
         }
         &mut self.output
     }

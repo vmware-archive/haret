@@ -18,7 +18,7 @@ impl From<FsmOutput> for Envelope<Msg> {
                 to: Pid {group: None, name: "namespace_mgr".to_string(), node: pid.node.clone()},
                 from: pid.clone(),
                 msg: rabble::Msg::User(Msg::Namespace(namespace_msg)),
-                correlation_id: CorrelationId::Pid(pid)
+                correlation_id: Some(CorrelationId::pid(pid))
             }
         }
     }

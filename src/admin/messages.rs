@@ -29,7 +29,7 @@ pub enum AdminRpy {
     Error(String),
     NamespaceId(Uuid),
     Namespaces(Namespaces),
-    ReplicaState {state: &'static str, ctx: VrCtx},
+    ReplicaState {state: String, ctx: VrCtx},
     ReplicaNotFound(Pid),
     Primary(Option<Pid>),
     ClusterStatus(ClusterStatus)

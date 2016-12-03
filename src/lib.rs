@@ -1,5 +1,4 @@
 #![feature(custom_derive, plugin)]
-//#![plugin(serde_macros)]
 #![feature(mpsc_select)]
 #![feature(btree_range, collections_bound)]
 
@@ -7,7 +6,6 @@
 extern crate rand;
 extern crate libc;
 extern crate serde;
-extern crate serde_json;
 extern crate mio;
 extern crate rustc_serialize;
 extern crate time;

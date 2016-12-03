@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::io::{Result, Read, Write, Error, ErrorKind};
-use serde_json;
+use rustc_serialize::json;
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Debug)]
 pub struct Config {
     pub node_name: String,
     pub cluster_name: String,
@@ -26,14 +26,14 @@ impl Config {
         let mut file = File::open(path).unwrap();
         let mut string = String::new();
         file.read_to_string(&mut string).unwrap();
-        let config: Config = serde_json::from_str(&string).unwrap();
+        let config: Config = json::decode(&string).unwrap();
         config
     }
 
     // TODO: return errors instead of crashing
     pub fn write_path(&self, path: &str) {
         let mut file = File::create(path).unwrap();
-        let string = serde_json::to_string(&self).unwrap().into_bytes();
+        let string = json::encode(&self).unwrap().into_bytes();
         file.write_all(&string).unwrap();
     }
 

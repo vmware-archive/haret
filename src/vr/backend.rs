@@ -5,14 +5,14 @@ use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::ElementType;
 
 // TODO: Parameterize data based on element type (i.e. don't ignore it)
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Element {
     pub op: u64,
     pub ty: ElementType,
     pub data: Vec<u8>
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub struct VrBackend {
     // only public for testing
     pub tree: BTreeMap<String, Element>,

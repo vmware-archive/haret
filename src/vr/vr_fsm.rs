@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::iter::FromIterator;
 use uuid::Uuid;
 use time::{SteadyTime, Duration};
 use rand::{thread_rng, Rng};
@@ -15,6 +14,7 @@ use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::vr_ctx::VrCtx;
 use super::fsm_output::FsmOutput;
 use super::vr_envelope::VrEnvelope;
+use super::encodable_steady_time::EncodableSteadyTime;
 
 pub type Transition = (StateFn<VrTypes>, Vec<FsmOutput>);
 
@@ -34,7 +34,7 @@ macro_rules! check_epoch {
                 return next!($state);
             }
             if epoch == $ctx.epoch + 1 {
-                return start_reconfiguration($ctx, $envelope.msg, epoch);
+                return start_reconfiguration($ctx, $envelope, epoch);
             }
             if epoch > $ctx.epoch + 1 {
                 // We have been partitioned for one or multiple reconfigurations. We need to catch up.
@@ -77,10 +77,10 @@ macro_rules! handle_common {
 /// thus skipping the need to run this function.
 ///
 /// Since this runs only on old nodes
-pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transition {
-    ctx.last_received_time = SteadyTime::now();
+pub fn start_reconfiguration(ctx: &mut VrCtx, envelope: VrEnvelope, epoch: u64) -> Transition {
+    ctx.last_received_time = EncodableSteadyTime::now();
     ctx.epoch = epoch;
-    match msg {
+    match envelope.msg {
         VrMsg::Commit {commit_num, ..} if commit_num == ctx.op => {
             // We only handle requests when we have the reconfiguration in the log. Backup commit
             // will play it and we'll learn the new members.
@@ -90,7 +90,7 @@ pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transit
                 ctx.clear_epoch_started_msgs();
                 return next!(leaving, output);
             }
-            output.extend(&ctx.broadcast_epoch_started(ctx));
+            output.extend_from_slice(&ctx.broadcast_epoch_started(envelope.correlation_id));
             if ctx.is_primary() {
                 return next!(primary, output);
             }
@@ -108,7 +108,7 @@ pub fn start_reconfiguration(ctx: &mut VrCtx, msg: VrMsg, epoch: u64) -> Transit
 pub fn handle_later_view(ctx: &mut VrCtx, envelope: VrEnvelope, new_view: u64) -> Transition {
     match envelope.msg.clone() {
         VrMsg::StartViewChange {from, ..} => {
-            let output = ctx.reset_view_change_state(new_view);
+            let mut output = ctx.reset_view_change_state(new_view);
             ctx.insert_view_change_message(from, envelope.msg);
             output.extend(ctx.start_view_change());
             next!(wait_for_start_view_change, output)
@@ -116,11 +116,11 @@ pub fn handle_later_view(ctx: &mut VrCtx, envelope: VrEnvelope, new_view: u64) -
         VrMsg::DoViewChange {from, ..} => {
             let output = ctx.reset_view_change_state(new_view);
             ctx.insert_view_change_message(from, envelope.msg);
-            next!(wait_for_do_view_change, output);
+            next!(wait_for_do_view_change, output)
         },
         VrMsg::StartView{op, log, commit_num, ..} => {
             let output = ctx.become_backup(new_view, op, log, commit_num);
-            return next!(backup, output);
+            next!(backup, output)
         },
         _ => {
             // We've missed the view change and are likely out of date
@@ -161,19 +161,19 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             let output =  ctx.send_prepare(envelope);
             next!(primary, output)
         },
-        VrMsg::PrepareOk {op, from, ..} if op > ctx.commit_num => {
-            if ctx.has_commit_quorum(op, from) {
+        VrMsg::PrepareOk {op, ref from, ..} if op > ctx.commit_num => {
+            if ctx.has_commit_quorum(op, from.clone()) {
                 // We'll never actually commit a Reconfiguration here. That always happens in
                 // wait_for_reconfiguration_prepare_ok.
                 let output = ctx.primary_commit(op);
-                next!(primary, output)
+                return next!(primary, output);
             }
             next!(primary)
         },
         VrMsg::Tick => {
             if ctx.prepare_requests.expired() {
                 let output = ctx.reset_and_start_view_change();
-                next!(wait_for_start_view_change, output)
+                return next!(wait_for_start_view_change, output);
             }
             if ctx.primary_idle_timeout() {
                 let output = ctx.broadcast_commit_msg();
@@ -198,7 +198,7 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
         },
         VrMsg::StartEpoch {..} => {
             let output = ctx.send_epoch_started(envelope);
-            next!(primary, output);
+            next!(primary, output)
         },
         _ => next!(primary)
     }
@@ -207,25 +207,27 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 /// This replica is currently a backup operating normally
 pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, backup);
-    ctx.last_received_time = SteadyTime::now();
+    ctx.last_received_time = EncodableSteadyTime::now();
     match envelope.msg {
-        VrMsg::Prepare {op, client_op, commit_num, client_request_num, ..} if op == ctx.op + 1 => {
-            let prepare_ok_envelope = ctx.send_prepare_ok(client_op, commit_num, client_request_num,
+        VrMsg::Prepare {op, ref client_op, commit_num, client_request_num, ..} if op == ctx.op + 1 => {
+            let prepare_ok_envelope = ctx.send_prepare_ok(client_op.clone(),
+                                                          commit_num,
+                                                          client_request_num,
                                                           envelope.correlation_id);
-            next!(backup, vec![prepare_ok_envelope])
+            next!(backup, prepare_ok_envelope)
         },
         VrMsg::Prepare {op, ..} if op > ctx.op + 1 => {
             let output = vec![ctx.send_get_state_to_random_replica(envelope.correlation_id)];
             next!(state_transfer, output)
         },
-        VrMsg::Commit {commit_num, ..} => if commit_num == ctx.commit_num {
+        VrMsg::Commit {commit_num, ..} if commit_num == ctx.commit_num => {
             next!(backup)
         },
-        VrMsg::Commit {commit_num, ..} => if commit_num == ctx.op {
-            let output = ctx.backup_commit();
+        VrMsg::Commit {commit_num, ..} if commit_num == ctx.op => {
+            let output = ctx.backup_commit(commit_num);
             next!(backup, output)
         },
-        VrMsg::Commit {commit_num, ..} => if commit_num > ctx.op {
+        VrMsg::Commit {commit_num, ..} if commit_num > ctx.op => {
             // Note that a primary cannot have a commit_num smaller than a backup by protocol
             // invariants
             let output = vec![ctx.send_get_state_to_random_replica(envelope.correlation_id)];
@@ -240,23 +242,23 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             }
         },
         VrMsg::GetState{op, from, ..} => {
-            let output = ctx.send_new_state(op, from, envelope.correlation_id);
+            let output = vec![ctx.send_new_state(op, from, envelope.correlation_id)];
             next!(backup, output)
         },
         VrMsg::Recovery {from, nonce} => {
             if *ctx.primary.as_ref().unwrap() == from {
                 let output = ctx.reset_and_start_view_change();
-                next!(wait_for_start_view_change, output)
+                return next!(wait_for_start_view_change, output);
             }
             let output = ctx.send_recovery_response(from, nonce, envelope.correlation_id);
-            return next!(backup, vec![output]);
+            next!(backup, vec![output])
         },
         VrMsg::StartEpoch {..} => {
             let output = ctx.send_epoch_started(envelope);
-            next!(backup, output);
+            next!(backup, output)
         },
         _ => {
-            println!("Re-entering backup state {:?}", ctx.me.name);
+            println!("Re-entering backup state {:?}", ctx.pid.name);
             next!(backup)
         }
     }
@@ -267,10 +269,10 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 pub fn wait_for_start_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, wait_for_start_view_change);
     match envelope.msg.clone() {
-        VrMsg::StartViewChange{ref from, ..} => {
+        VrMsg::StartViewChange{from, ..} => {
             ctx.insert_view_change_message(from, envelope.msg);
             if ctx.has_view_change_quorum() {
-                if ctx.compute_primary() == ctx.me {
+                if ctx.compute_primary() == ctx.pid {
                     return next!(wait_for_do_view_change)
                 }
                 let output = ctx.send_do_view_change();
@@ -305,22 +307,23 @@ pub fn wait_for_start_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Tran
             // new view change immediately rather than waiting. It's possible this is an old
             // recovery message lost in the network, but an extra view change is still safe.  It's
             // impossible that the recovery message is old when using TCP as transport.
-            if let Some(primary) = ctx.compute_primary() {
-                if primary == *from {
-                    let output = ctx.reset_and_start_view_change();
-                    return next!(wait_for_start_view_change, output);
-                }
+            let primary = ctx.compute_primary();
+            if primary == *from {
+                let output = ctx.reset_and_start_view_change();
+                return next!(wait_for_start_view_change, output);
             }
             next!(wait_for_start_view_change)
         },
         VrMsg::Prepare {..} => {
             // Another replica was already elected primary for this view.
-            let output = ctx.start_state_transfer_new_view(ctx.view, envelope.correlation_id);
+            let view = ctx.view;
+            let output = ctx.start_state_transfer_new_view(view, envelope.correlation_id);
             next!(state_transfer, output)
         },
         VrMsg::Commit {..} => {
             // Another replica was already elected primary for this view.
-            let output = ctx.start_state_transfer_new_view(ctx.view, envelope.correlation_id);
+            let view = ctx.view;
+            let output = ctx.start_state_transfer_new_view(view, envelope.correlation_id);
             next!(state_transfer, output)
         }
         _ => next!(wait_for_start_view_change)
@@ -362,6 +365,7 @@ pub fn wait_for_do_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transit
 /// message to all new backups. This replica is waiting for that `StartView` message.
 pub fn wait_for_start_view(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, wait_for_start_view);
+    let view = ctx.view;
     match envelope.msg.clone() {
         VrMsg::StartView {view, op, log, commit_num, ..} => {
             let output = ctx.become_backup(view, op, log, commit_num);
@@ -378,12 +382,12 @@ pub fn wait_for_start_view(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition 
         },
         VrMsg::Prepare {..} => {
             // We missed the StartView message
-            let output = ctx.start_state_transfer_new_view(ctx.view, envelope.correlation_id);
+            let output = ctx.start_state_transfer_new_view(view, envelope.correlation_id);
             next!(state_transfer, output)
         },
         VrMsg::Commit {..} => {
             // We missed the StartView message
-            let output = ctx.start_state_transfer_new_view(ctx.view, envelope.correlation_id);
+            let output = ctx.start_state_transfer_new_view(view, envelope.correlation_id);
             next!(state_transfer, output)
         }
         _ => next!(wait_for_start_view)
@@ -396,7 +400,7 @@ pub fn state_transfer(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, state_transfer);
     match envelope.msg {
         VrMsg::NewState {..} => {
-            let output = vec![ctx.set_from_new_state_msg(envelope.msg)];
+            let output = ctx.set_from_new_state_msg(envelope.msg);
             next!(backup, output)
         },
         VrMsg::Tick => {
@@ -417,7 +421,7 @@ pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, envelope: VrEnvelope
     handle_common!(ctx, envelope, wait_for_reconfiguration_prepare_ok);
     match envelope.msg {
         VrMsg::PrepareOk {op, ref from, ..} if op == ctx.op => {
-            if ctx.has_commit_quorum(op, from) {
+            if ctx.has_commit_quorum(op, from.clone()) {
                 let output = ctx.primary_commit(op);
                 // We committed the reconfiguration request
                 if ctx.is_primary() {
@@ -425,7 +429,7 @@ pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, envelope: VrEnvelope
                 }
                 return next!(backup, output)
             }
-            next!(wait_for_reconfiguration_prepare_ok);
+            next!(wait_for_reconfiguration_prepare_ok)
         },
         VrMsg::Tick => {
             // If we haven't received quorum of PrepareOk in time then re-broadcast Prepare
@@ -443,12 +447,12 @@ pub fn reconfiguration_wait_for_new_state(ctx: &mut VrCtx, envelope: VrEnvelope)
     handle_common!(ctx, envelope, reconfiguration_wait_for_new_state);
     match envelope.msg {
         VrMsg::NewState {op, ..} if op >= ctx.new_config.op => {
-            let mut output = vec![ctx.set_from_new_state_msg(envelope.msg)];
+            let mut output = ctx.set_from_new_state_msg(envelope.msg);
             if ctx.is_leaving() {
                 ctx.clear_epoch_started_msgs();
                 return next!(leaving, output)
             }
-            output.extend_from_slice(&ctx.broadcast_epoch_started(ctx));
+            output.extend_from_slice(&ctx.broadcast_epoch_started(envelope.correlation_id));
             if ctx.is_primary() {
                 return next!(primary, output)
             }
@@ -472,12 +476,12 @@ pub fn recovery(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     match envelope.msg {
         VrMsg::RecoveryResponse {..} => {
             ctx.update_recovery_state(envelope.msg);
-            ctx.commit_recovery().map_or(next!(recovery), |output| next!(backup, vec![output]))
+            ctx.commit_recovery().map_or(next!(recovery), |output| next!(backup, output))
         },
         VrMsg::Tick => {
             if ctx.recovery_expired() {
-                let envelopes = ctx.start_recovery();
-                next!(recovery, envelopes.map(|e| e.into()))
+                let output = ctx.start_recovery();
+                next!(recovery, output)
             } else {
                 next!(recovery)
             }
@@ -493,18 +497,18 @@ pub fn leaving(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     match envelope.msg {
         // TODO: What if epoch > ctx.epoch ?
         VrMsg::EpochStarted {epoch, ref from, ..} if epoch == ctx.epoch => {
-            ctx.quorum_tracker.insert(from.clone(), envelope.msg.clone());
-            if ctx.quorum_tracker.has_quorum() {
+            ctx.epoch_started_msgs.insert(from.clone(), envelope.msg.clone());
+            if ctx.epoch_started_msgs.has_quorum() {
                 ctx.clear_epoch_started_msgs();
-                let output = vec![FsmOutput::Announcement(NamespaceMsg::Stop(ctx.me.clone()),
-                                                          ctx.me.clone())];
+                let output = vec![FsmOutput::Announcement(NamespaceMsg::Stop(ctx.pid.clone()),
+                                                          ctx.pid.clone())];
                 return next!(shutdown, output)
             }
             next!(leaving)
         },
         VrMsg::Tick => {
-            if ctx.quorum_tracker.is_expired(&ctx.idle_timeout) {
-                let output = ctx.broadcast_start_epoch(ctx);
+            if ctx.epoch_started_msgs.is_expired() {
+                let output = ctx.broadcast_start_epoch();
                 return next!(leaving, output);
             }
             next!(leaving)
