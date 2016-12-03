@@ -1,5 +1,4 @@
 #![feature(custom_derive, plugin)]
-#![feature(mpsc_select)]
 #![feature(btree_range, collections_bound)]
 
 // Crates we don't manage
@@ -24,7 +23,6 @@ pub mod admin;
 pub mod vr;
 mod error;
 
-mod debug_sender;
 mod session_msgs;
 mod namespace_mgr;
 mod namespace_msg;

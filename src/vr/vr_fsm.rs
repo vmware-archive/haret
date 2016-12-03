@@ -1,16 +1,6 @@
-use std::collections::{HashMap, HashSet};
-use uuid::Uuid;
-use time::{SteadyTime, Duration};
-use rand::{thread_rng, Rng};
 use fsm::{FsmTypes, StateFn};
-use rabble::{self, Envelope, Pid, CorrelationId};
 use namespace_msg::NamespaceMsg;
-use super::replica::VersionedReplicas;
-use super::VrBackend;
-use super::quorum_tracker::QuorumTracker;
-use super::prepare_requests::PrepareRequests;
 use super::vrmsg::VrMsg;
-use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::vr_ctx::VrCtx;
 use super::fsm_output::FsmOutput;
 use super::vr_envelope::VrEnvelope;

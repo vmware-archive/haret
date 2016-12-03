@@ -1,7 +1,6 @@
 mod replica;
 mod backend;
 mod element;
-mod vr_stats;
 mod quorum_tracker;
 mod prepare_requests;
 mod vrmsg;

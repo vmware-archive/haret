@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use rabble::{self, Pid, Envelope, ConnectionMsg, ConnectionHandler, CorrelationId};
-use super::vr_api_messages::{VrClientMsg, VrApiReq, VrApiRsp};
+use super::vr_api_messages::{VrClientMsg, VrApiRsp};
 use super::vrmsg::VrMsg;
 use super::super::msg::Msg;
 

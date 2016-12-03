@@ -1,6 +1,5 @@
 use uuid::Uuid;
-use msg::Msg;
-use rabble::{Envelope, Pid};
+use rabble::Pid;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::VersionedReplicas;
 

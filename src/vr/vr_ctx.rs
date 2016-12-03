@@ -319,12 +319,12 @@ impl VrCtx {
         for i in last_commit_num..self.commit_num {
             let msg = self.log[i as usize].clone();
             match msg {
-                VrMsg::ClientRequest {ref op, request_num} => {
+                VrMsg::ClientRequest {ref op, .. } => {
                     // The client likely hasn't reconnected, don't bother sending a reply here
                     self.backend.call(i+1, op.clone());
                 },
-                VrMsg::Reconfiguration {client_req_num, epoch, replicas, ..} => {
-                    let rsp = self.backend.call(i+1, VrApiReq::Null);
+                VrMsg::Reconfiguration {replicas, ..} => {
+                    self.backend.call(i+1, VrApiReq::Null);
                     self.update_for_new_epoch(i+1, replicas);
                     output.push(self.announce_reconfiguration());
                     output.push(self.set_primary());

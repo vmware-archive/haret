@@ -1,10 +1,8 @@
-use std::collections::{HashSet, HashMap};
-use std::fmt::Debug;
+use std::collections::HashSet;
 use uuid::Uuid;
-use amy::{Registrar, Notification, Event, Timer};
+use amy::{Registrar, Notification, Timer};
 use rabble::{self, Pid, Node, Envelope, CorrelationId, ServiceHandler};
 use rabble::errors::ChainErr;
-use rustc_serialize::{Encodable, Decodable};
 use fsm::{Fsm, StateFn};
 use msg::Msg;
 use vr::{VrMsg, Replica, VersionedReplicas};
@@ -94,7 +92,7 @@ impl NamespaceMgr {
         }
     }
 
-    fn handle_namespace_msg(&mut self, msg: NamespaceMsg, correlation_id: Option<CorrelationId>) {
+    fn handle_namespace_msg(&mut self, msg: NamespaceMsg, _correlation_id: Option<CorrelationId>) {
         match msg {
             NamespaceMsg::Namespaces(namespaces) =>
                 self.check_namespaces(namespaces),
@@ -154,7 +152,7 @@ impl NamespaceMgr {
             msg: rabble::Msg::User(Msg::AdminRpy(reply)),
             correlation_id: Some(correlation_id)
         };
-        self.node.send(envelope);
+        let _ = self.node.send(envelope);
     }
 
     /// Receive a copy of current namespaces from another node and see if the local copy is
@@ -241,8 +239,8 @@ impl NamespaceMgr {
        ctx.idle_timeout = self.idle_timeout.clone();
        ctx.primary_tick_ms = self.primary_tick_ms;
        let state = vr_fsm::startup_reconfiguration;
-       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
+       let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
+       let _ = self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
        self.local_replicas.insert(pid.clone());
    }
 
@@ -255,15 +253,15 @@ impl NamespaceMgr {
        ctx.idle_timeout = self.idle_timeout.clone();
        ctx.primary_tick_ms = self.primary_tick_ms;
        let state = vr_fsm::startup_new_namespace;
-       let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
+       let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
+       let _ = self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
        self.local_replicas.insert(pid);
     }
 
     /// Should only be called outside this module during tests
     pub fn stop(&mut self, pid: &Pid) {
         self.local_replicas.remove(pid);
-        self.node.stop(pid);
+        let _ = self.node.stop(pid);
     }
 
     /// Should only be called outside this module during tests
@@ -276,8 +274,8 @@ impl NamespaceMgr {
            ctx.idle_timeout = self.idle_timeout.clone();
            ctx.primary_tick_ms = self.primary_tick_ms;
            let state = vr_fsm::startup_recovery;
-           let mut fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
-           self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
+           let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
+           let _ = self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
            self.local_replicas.insert(pid);
        }
     }

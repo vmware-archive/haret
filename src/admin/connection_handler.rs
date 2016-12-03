@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use rabble::{self, Pid, Envelope, ConnectionMsg, ConnectionHandler, ClusterStatus, CorrelationId};
+use rabble::{self, Pid, Envelope, ConnectionMsg, ConnectionHandler, CorrelationId};
 use msg::Msg;
 use super::messages::{AdminMsg, AdminReq, AdminRpy};
 

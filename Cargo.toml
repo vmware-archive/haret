@@ -19,7 +19,6 @@ amy = "0.6"
 
 fsm = { path = "../fsm" }
 orset = { path = "../orset"}
-distill = { path = "../distill"}
 rabble = { path = "../rabble"}
 
 [dependencies.streaming-stats]

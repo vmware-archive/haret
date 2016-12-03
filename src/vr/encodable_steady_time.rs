@@ -1,7 +1,5 @@
-use time::{self, SteadyTime, Duration};
+use time::{SteadyTime, Duration};
 use rustc_serialize::{Encoder, Encodable, Decoder, Decodable};
-
-const TIME_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S.%f";
 
 /// We need to create this so we can manually serialize a SteadyTime
 ///
@@ -20,7 +18,6 @@ impl EncodableSteadyTime {
 
 impl Encodable for EncodableSteadyTime {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        let EncodableSteadyTime(time) = *self;
         s.emit_tuple_struct("EncodableSteadyTime", 1, |s| {
             try!(s.emit_tuple_arg(0, |s| {
                 s.emit_str("")
@@ -36,7 +33,7 @@ impl Encodable for EncodableSteadyTime {
 impl Decodable for EncodableSteadyTime {
     fn decode<D: Decoder>(d: &mut D) -> Result<EncodableSteadyTime, D::Error> {
         d.read_tuple_struct("EncodableSteadyTime", 1, |d| {
-            let s = try!(d.read_tuple_arg(0, |d| { d.read_str() }));
+            try!(d.read_tuple_arg(0, |d| { d.read_str() }));
             Ok(EncodableSteadyTime(SteadyTime::now()))
         })
     }
@@ -59,7 +56,6 @@ impl EncodableDuration {
 
 impl Encodable for EncodableDuration {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        let EncodableDuration(time) = *self;
         s.emit_tuple_struct("EncodableDuration", 1, |s| {
             try!(s.emit_tuple_arg(0, |s| {
                 s.emit_str("")
@@ -75,7 +71,7 @@ impl Encodable for EncodableDuration {
 impl Decodable for EncodableDuration {
     fn decode<D: Decoder>(d: &mut D) -> Result<EncodableDuration, D::Error> {
         d.read_tuple_struct("EncodableDuration", 1, |d| {
-            let s = try!(d.read_tuple_arg(0, |d| { d.read_str() }));
+            try!(d.read_tuple_arg(0, |d| { d.read_str() }));
             Ok(EncodableDuration(Duration::milliseconds(0)))
         })
     }

@@ -1,5 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::collections::vec_deque::Drain;
+use std::collections::{HashSet, VecDeque};
 use time::Duration;
 use rabble::{Pid, CorrelationId};
 use super::encodable_steady_time::EncodableSteadyTime;

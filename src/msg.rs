@@ -1,4 +1,3 @@
-use namespaces::Namespaces;
 use namespace_msg::NamespaceMsg;
 use vr::VrMsg;
 use admin::{AdminReq, AdminRpy};

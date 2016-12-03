@@ -1,4 +1,3 @@
-use time::{SteadyTime};
 use super::vrmsg::VrMsg;
 use super::quorum_tracker::QuorumTracker;
 use super::encodable_steady_time::EncodableDuration;

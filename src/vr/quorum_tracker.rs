@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Drain;
-use time::{self, SteadyTime};
+use time::SteadyTime;
 use rabble::Pid;
 use super::encodable_steady_time::{EncodableSteadyTime, EncodableDuration};
 

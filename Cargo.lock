@@ -4,7 +4,6 @@ version = "0.1.0"
 dependencies = [
  "amy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "assert_matches 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "distill 0.2.0",
  "fsm 0.1.0",
  "libc 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -105,16 +104,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi-build 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "distill"
-version = "0.2.0"
-dependencies = [
- "rmp-serialize 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc-serialize 0.3.21 (registry+https://github.com/rust-lang/crates.io-index)",
- "time 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
- "uuid 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
