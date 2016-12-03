@@ -4,8 +4,6 @@
 // Crates we don't manage
 extern crate rand;
 extern crate libc;
-extern crate serde;
-extern crate mio;
 extern crate rustc_serialize;
 extern crate time;
 extern crate uuid;
@@ -28,3 +26,6 @@ mod namespace_mgr;
 mod namespace_msg;
 mod namespaces;
 mod msg;
+
+pub use msg::Msg;
+pub use namespace_mgr::NamespaceMgr;

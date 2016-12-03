@@ -34,7 +34,8 @@ pub use self::vrmsg::VrMsg;
 
 pub use self::vr_api_messages::{
     VrApiReq,
-    VrApiRsp
+    VrApiRsp,
+    VrClientMsg
 };
 
 pub use self::backend::{Element, VrBackend};
@@ -44,3 +45,5 @@ pub use self::encodable_steady_time::{
     EncodableSteadyTime,
     EncodableDuration
 };
+
+pub use self::connection_handler::VrConnectionHandler;

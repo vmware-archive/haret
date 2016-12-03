@@ -17,7 +17,7 @@ const MANAGEMENT_TICK_MS: u64 = 10000; // 10s
 
 pub struct NamespaceMgr {
     node: Node<Msg>,
-    pid: Pid,
+    pub pid: Pid,
     /// Dispatchers on other nodes
     peers: HashSet<Pid>,
     namespaces: Namespaces,
