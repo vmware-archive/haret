@@ -6,6 +6,7 @@ use rabble::{self, Pid, Node, Envelope, CorrelationId, ServiceHandler};
 use rabble::errors::ChainErr;
 use fsm::{Fsm, StateFn};
 use msg::Msg;
+use config::Config;
 use vr::{VrMsg, Replica, VersionedReplicas};
 use namespace_msg::NamespaceMsg;
 use namespaces::Namespaces;
@@ -16,6 +17,7 @@ use admin::{AdminReq, AdminRpy};
 const MANAGEMENT_TICK_MS: u64 = 10000; // 10s
 
 pub struct NamespaceMgr {
+    config: Config,
     node: Node<Msg>,
     pub pid: Pid,
     /// Dispatchers on other nodes
@@ -48,13 +50,14 @@ pub struct NamespaceMgr {
 }
 
 impl NamespaceMgr {
-    pub fn new(node: Node<Msg>) -> NamespaceMgr {
+    pub fn new(node: Node<Msg>, config: Config) -> NamespaceMgr {
         let pid = Pid {
             group: None,
             name: "namespace_mgr".to_string(),
             node: node.id.clone()
         };
         NamespaceMgr {
+            config: config,
             node: node,
             pid: pid,
             peers: HashSet::new(),
@@ -112,6 +115,10 @@ impl NamespaceMgr {
     fn handle_admin_req(&mut self, req: AdminReq, correlation_id: Option<CorrelationId>) {
         let correlation_id = correlation_id.unwrap();
         match req {
+            AdminReq::GetConfig => {
+                let config = self.config.clone();
+                self.send_admin_rpy(AdminRpy::Config(config), correlation_id);
+            },
             AdminReq::Join(node_id) => {
                 let _ = self.node.join(&node_id);
                 self.send_admin_rpy(AdminRpy::Ok, correlation_id);
@@ -138,8 +145,8 @@ impl NamespaceMgr {
                 let _ = self.node.cluster_status(correlation_id);
             },
             _ => {
-                // TODO: Logging
-                println!("Received unknown AdminReq in namespace_mgr: {:?}", req)
+                self.send_admin_rpy(AdminRpy::Error("Unknown Admin Message".to_string()),
+                                    correlation_id);
             }
         }
     }

@@ -1,16 +1,21 @@
 extern crate v2r2;
 extern crate uuid;
 extern crate rabble;
+extern crate rustc_serialize;
+extern crate rmp_serialize as msgpack;
 
 use std::env;
 use std::env::Args;
 use std::io;
 use std::process::exit;
-use std::io::{Result, Error, ErrorKind, Write};
+use std::io::{Read, Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
+use std::mem;
+use msgpack::{Encoder, Decoder};
+use rustc_serialize::{Encodable, Decodable};
 use uuid::Uuid;
-use rabble::{Pid, NodeId, MsgpackSerializer, Serialize};
+use rabble::{Pid, NodeId};
 use v2r2::admin::{AdminReq, AdminRpy, AdminMsg};
 
 fn main() {
@@ -171,11 +176,9 @@ fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminReq> {
 }
 
 fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
-    let mut serializer = MsgpackSerializer::new();
-    serializer.set_writable();
-    serializer.write_msgs(sock, Some(&AdminMsg::Req(req)));
-    match serializer.read_msg(sock) {
-        Ok(Some(AdminMsg::Rpy(rpy))) => {
+    try!(write_msg(req, sock));
+    match try!(read_msg(sock)) {
+        AdminMsg::Rpy(rpy) => {
             match rpy {
                 AdminRpy::Ok => Ok("ok".to_string()),
                 AdminRpy::Timeout => Ok("timeout".to_string()),
@@ -190,12 +193,35 @@ fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
                 AdminRpy::ClusterStatus(status) => Ok(format!("{:#?}", status))
             }
         },
-        Ok(Some(_)) => unreachable!(),
-        Ok(None) => unreachable!(),
-        Err(_) =>
-            Err(Error::new(ErrorKind::Other, "Failed to read response from server"))
+        msg => Err(Error::new(ErrorKind::InvalidData,
+                              format!("Invalid reply from server: {:?}", msg)))
     }
 }
+
+fn read_msg(sock: &mut TcpStream) -> Result<AdminMsg> {
+    let mut header = [0; 4];
+    try!(sock.read_exact(&mut header));
+    let len = unsafe { u32::from_be(mem::transmute(header)) };
+    let mut buf = vec![0; len as usize];
+    try!(sock.read_exact(&mut buf));
+    let mut decoder = Decoder::new(&buf[..]);
+    Decodable::decode(&mut decoder).map_err(|e| {
+        Error::new(ErrorKind::InvalidData, e.to_string())
+    })
+}
+
+fn write_msg(req: AdminReq, sock: &mut TcpStream) -> Result<()> {
+    let mut encoded = Vec::new();
+    try!(AdminMsg::Req(req).encode(&mut Encoder::new(&mut encoded)).map_err(|_| {
+        Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data")
+    }));
+    let len: u32 = encoded.len() as u32;
+    // 4 byte len header
+    let header: [u8; 4] = unsafe { mem::transmute(len.to_be()) };
+    try!(sock.write_all(&header));
+    sock.write_all(&encoded)
+}
+
 
 fn help() -> Error {
     let string  =

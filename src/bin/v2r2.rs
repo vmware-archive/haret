@@ -20,8 +20,8 @@ fn main() {
 
     let config = Config::read();
     let node_id = NodeId {
-        name: config.node_name,
-        addr: config.cluster_host
+        name: config.node_name.clone(),
+        addr: config.cluster_host.clone()
     };
     /// Set up logging to go to the terminal and be configured via `RUST_LOG`
     let drain = slog_term::streamer().async().full().build();
@@ -31,7 +31,7 @@ fn main() {
     let (node, mut handles) = rabble::rouse::<Msg>(node_id.clone(), Some(logger.clone()));
 
     // Create and start the namespace manager
-    let namespace_mgr = NamespaceMgr::new(node.clone());
+    let namespace_mgr = NamespaceMgr::new(node.clone(), config.clone());
     info!(logger, "Starting Namespace Manager"; "pid" => namespace_mgr.pid.to_string());
     let mut namespace_mgr_service = Service::new(namespace_mgr.pid.clone(), node.clone(), namespace_mgr).unwrap();
     handles.push(thread::spawn(move || {
