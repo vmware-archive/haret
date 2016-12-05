@@ -31,3 +31,13 @@ assert_matches = "1.0"
 name = "v2r2"
 path = "src/bin/v2r2.rs"
 test = false
+
+[[bin]]
+name = "v2r2-admin"
+path = "src/bin/v2r2-admin.rs"
+test = false
+
+[[bin]]
+name = "devconfig"
+path = "src/bin/devconfig.rs"
+test = false

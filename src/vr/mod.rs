@@ -10,7 +10,7 @@ mod vr_envelope;
 mod view_change_state;
 mod recovery_state;
 mod connection_handler;
-mod encodable_steady_time;
+mod vr_ctx_summary;
 
 pub mod vr_fsm;
 pub mod vr_ctx;
@@ -23,6 +23,8 @@ pub use self::vr_ctx::{
     VrCtx
 };
 
+pub use self::vr_ctx_summary::VrCtxSummary;
+
 pub use self::replica::{
     Replica,
     VersionedReplicas
@@ -30,7 +32,6 @@ pub use self::replica::{
 
 
 pub use self::vrmsg::VrMsg;
-
 
 pub use self::vr_api_messages::{
     VrApiReq,
@@ -40,10 +41,5 @@ pub use self::vr_api_messages::{
 
 pub use self::backend::{Element, VrBackend};
 pub use self::element::ElementType;
-
-pub use self::encodable_steady_time::{
-    EncodableSteadyTime,
-    EncodableDuration
-};
 
 pub use self::connection_handler::VrConnectionHandler;

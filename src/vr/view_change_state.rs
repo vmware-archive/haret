@@ -1,8 +1,8 @@
+use time::Duration;
 use super::vrmsg::VrMsg;
 use super::quorum_tracker::QuorumTracker;
-use super::encodable_steady_time::EncodableDuration;
 
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Latest {
     pub last_normal_view: u64,
     pub commit_num: u64,
@@ -21,14 +21,14 @@ impl Latest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ViewChangeState {
     pub responses: QuorumTracker<VrMsg>,
     latest: Latest,
 }
 
 impl ViewChangeState {
-    pub fn new(quorum: u64, timeout: EncodableDuration) -> ViewChangeState {
+    pub fn new(quorum: u64, timeout: Duration) -> ViewChangeState {
         ViewChangeState {
             responses: QuorumTracker::new(quorum as usize, &timeout),
             latest: Latest::new()

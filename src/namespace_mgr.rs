@@ -1,3 +1,4 @@
+use time::Duration;
 use std::collections::HashSet;
 use uuid::Uuid;
 use amy::{Registrar, Notification, Timer};
@@ -10,7 +11,6 @@ use namespace_msg::NamespaceMsg;
 use namespaces::Namespaces;
 use vr::vr_fsm::{self, VrTypes};
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
-use vr::EncodableDuration;
 use admin::{AdminReq, AdminRpy};
 
 const MANAGEMENT_TICK_MS: u64 = 10000; // 10s
@@ -28,7 +28,7 @@ pub struct NamespaceMgr {
     // themselves. For now stick to the original strategy in the old dispatcher code.
 
     /// Timeout configuration for VR Fsms
-    idle_timeout: EncodableDuration,
+    idle_timeout: Duration,
     primary_tick_ms: u64,
 
     /// The amount of time between VrMsg::Tick messages being sent to replicas. By default this
@@ -60,7 +60,7 @@ impl NamespaceMgr {
             peers: HashSet::new(),
             namespaces: Namespaces::new(),
             local_replicas: HashSet::new(),
-            idle_timeout: EncodableDuration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
+            idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
             primary_tick_ms: DEFAULT_PRIMARY_TICK_MS,
             tick_period: DEFAULT_PRIMARY_TICK_MS / 3,
             fsm_timer: Timer {id: 0, fd: 0}, // Dummy timer for now. Will be set in init()
@@ -121,9 +121,9 @@ impl NamespaceMgr {
                 self.send_admin_rpy(AdminRpy::Namespaces(namespaces),
                                     correlation_id);
             },
-            AdminReq::CreateNamespace {namespace, replicas} => {
-                match self.create_namespace(namespace.clone(), replicas) {
-                    Ok(()) => self.send_admin_rpy(AdminRpy::NamespaceId(namespace), correlation_id),
+            AdminReq::CreateNamespace(replicas) => {
+                match self.create_namespace(replicas) {
+                    Ok(namespace) => self.send_admin_rpy(AdminRpy::NamespaceId(namespace), correlation_id),
                     Err(e) => self.send_admin_rpy(AdminRpy::Error(e), correlation_id)
                 }
             },
@@ -176,7 +176,8 @@ impl NamespaceMgr {
         }
     }
 
-    fn create_namespace(&mut self, namespace: Uuid, ungrouped_pids: Vec<Pid>) -> Result<(), String> {
+    fn create_namespace(&mut self, ungrouped_pids: Vec<Pid>) -> Result<Uuid, String> {
+        let namespace = Uuid::new_v4();
         let mut new_replicas = Vec::new();
         for mut pid in ungrouped_pids {
             let mut found = false;
@@ -202,7 +203,7 @@ impl NamespaceMgr {
                 self.start_replica_initial_config(r, new_config.clone());
             }
         }
-        Ok(())
+        Ok(namespace)
     }
 
    fn reconfigure(&mut self,

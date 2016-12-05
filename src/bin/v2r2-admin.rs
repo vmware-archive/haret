@@ -1,6 +1,6 @@
 extern crate v2r2;
 extern crate uuid;
-extern crate msgpack;
+extern crate rabble;
 
 use std::env;
 use std::env::Args;
@@ -9,11 +9,9 @@ use std::process::exit;
 use std::io::{Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
-use msgpack::{Encoder, from_msgpack};
 use uuid::Uuid;
-use v2r2::admin::{AdminClientReq, AdminClientRpy};
-use v2r2::frame::{ReadState, WriteState};
-use v2r2::vr::{Replica};
+use rabble::{Pid, NodeId, MsgpackSerializer, Serialize};
+use v2r2::admin::{AdminReq, AdminRpy, AdminMsg};
 
 fn main() {
     let mut args = env::args();
@@ -74,10 +72,10 @@ fn prompt() {
     stdout.flush().unwrap();
 }
 
-fn parse(command: &str) -> Result<AdminClientReq> {
+fn parse(command: &str) -> Result<AdminReq> {
     let mut iter = command.split_whitespace();
     match iter.next() {
-        Some("config") => parse_config(&mut iter),
+        Some("config") => parse_no_args("config", &mut iter).map(|_| AdminReq::GetConfig),
         Some("cluster") => parse_cluster(&mut iter),
         Some("vr") => parse_vr(&mut iter),
         Some(_) => Err(help()),
@@ -85,63 +83,48 @@ fn parse(command: &str) -> Result<AdminClientReq> {
     }
 }
 
-fn parse_config(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
-    match iter.next() {
-        Some("set") => {
-            let args: Vec<_> = iter.collect();
-            if args.len() != 2 { return Err(help()); }
-            let key = args[0].to_string();
-            let val = args[1].to_string();
-            Ok(AdminClientReq::ConfigSet(key, val))
-        },
-        Some("get") => {
-            let args: Vec<_> = iter.collect();
-            if args.len() != 1 { return Err(help()); }
-            let key = args[0].to_string();
-            Ok(AdminClientReq::ConfigGet(key))
-        },
-        Some(_) => Err(help()),
-        None => Err(help())
+fn parse_no_args(header: &'static str, iter: &mut SplitWhitespace) -> Result<()> {
+    if iter.count() != 0 {
+        println!("'{}' takes no parameters", header);
+        return Err(help());
     }
+    Ok(())
 }
 
-fn parse_cluster(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+fn parse_cluster(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some("join") => {
             let args: Vec<_> = iter.collect();
-            if args.len() != 1 { return Err(help()); }
-            let ipstr = args[0].to_string();
-            Ok(AdminClientReq::ClusterJoin(ipstr))
-        },
-        Some("members") => {
-            if iter.count() != 0 { return Err(help()); }
-            Ok(AdminClientReq::ClusterMembers)
+            if args.len() != 1 {
+                println!("'join' takes a single argument");
+                return Err(help());
+            }
+            NodeId::from_str(args[0]).map(|node_id| AdminReq::Join(node_id))
+                                     .map_err(|s| Error::new(ErrorKind::InvalidInput, s))
         },
         Some("status") => {
-            if iter.count() != 0 { return Err(help()); }
-            Ok(AdminClientReq::ClusterStatus)
+            parse_no_args("cluster status", &mut iter).map(|_| AdminReq::GetClusterStatus)
         },
         Some(_) => Err(help()),
         None => Err(help())
     }
 }
 
-fn parse_vr(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+fn parse_vr(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some("create") => parse_vr_create(iter),
-        Some("tenants") => Ok(AdminClientReq::VrTenants),
+        Some("namespaces") => parse_no_args("vr namespaces", &mut iter).map(|_| AdminReq::GetNamespaces),
         Some("replica") => parse_vr_replica(iter),
-        Some("stats") => Ok(AdminClientReq::VrStats),
         Some("primary") => parse_vr_primary(iter),
         _ => Err(help())
     }
 }
 
-fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some(string) => {
-            match Replica::from_str(&string) {
-                Ok(replica) => Ok(AdminClientReq::VrReplica(replica)),
+            match Pid::from_str(&string) {
+                Ok(replica) => Ok(AdminReq::GetReplicaState(replica)),
                 Err(_) => {
                     println!("Error: Couldn't parse replica");
                     Err(help())
@@ -152,13 +135,13 @@ fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
     }
 }
 
-fn parse_vr_primary(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+fn parse_vr_primary(iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some(string) => {
             match Uuid::parse_str(string) {
-                Ok(uuid) => Ok(AdminClientReq::VrPrimary(uuid)),
+                Ok(uuid) => Ok(AdminReq::GetPrimary(uuid)),
                 Err(_) => {
-                    println!("Error: Couldn't parse tenant id as UUID");
+                    println!("Error: Couldn't parse namespace id as UUID");
                     Err(help())
                 }
             }
@@ -168,67 +151,50 @@ fn parse_vr_primary(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
 }
 
 
-fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminClientReq> {
+fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
-        Some("tenant") => {
+        Some("namespace") => {
             let args: Vec<&str> = iter.collect();
             if args.len() != 1 {
-                println!("No spaces allowed in RawReplica list");
+                println!("No spaces allowed in UngroupedPid list");
                 return Err(help());
             }
-            Ok(AdminClientReq::VrCreateTenant(args[0].to_string()))
+            let mut pidopts = args[0].split(",").map(|s| Pid::from_str(s));
+            let pids = match pidopts.find(|p| p.is_err()) {
+                Some(Err(s)) => return Err(Error::new(ErrorKind::InvalidInput, s)),
+                _ =>  pidopts.map(|p| p.unwrap())
+            };
+            Ok(AdminReq::CreateNamespace(pids.collect()))
         },
         _ => Err(help())
     }
 }
 
-fn exec(req: AdminClientReq, sock: &mut TcpStream) -> Result<String> {
-    let mut writer = WriteState::new();
-    writer = writer.push(Encoder::to_msgpack(&req).unwrap());
-    loop {
-        if let Ok((more_to_write, new_writer)) = writer.write(sock) {
-            if !more_to_write { break; }
-            writer = new_writer;
-        } else {
-            return Err(Error::new(ErrorKind::Other, "Failed to send request to server"))
-        }
+fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
+    let mut serializer = MsgpackSerializer::new();
+    serializer.set_writable();
+    serializer.write_msgs(sock, Some(&AdminMsg::Req(req)));
+    match serializer.read_msg(sock) {
+        Ok(Some(AdminMsg::Rpy(rpy))) => {
+            match rpy {
+                AdminRpy::Ok => Ok("ok".to_string()),
+                AdminRpy::Timeout => Ok("timeout".to_string()),
+                AdminRpy::Error(string) => Err(Error::new(ErrorKind::Other, &string[..])),
+                AdminRpy::Config(config) => Ok(format!("{:#?}", config)),
+                AdminRpy::NamespaceId(uuid) => Ok(uuid.to_string()),
+                AdminRpy::Namespaces(namespaces) => Ok(format!("{:#?}", namespaces)),
+                AdminRpy::ReplicaState(state) => Ok(format!("{:#?}", state)),
+                AdminRpy::ReplicaNotFound(pid) => Err(Error::new(ErrorKind::NotFound,
+                                                                 pid.to_string())),
+                AdminRpy::Primary(pid) => Ok(pid.map_or("None".to_string(), |p| p.to_string())),
+                AdminRpy::ClusterStatus(status) => Ok(format!("{:#?}", status))
+            }
+        },
+        Ok(Some(_)) => unreachable!(),
+        Ok(None) => unreachable!(),
+        Err(_) =>
+            Err(Error::new(ErrorKind::Other, "Failed to read response from server"))
     }
-
-    let mut reader = ReadState::new();
-    loop {
-        match reader.read(sock) {
-            (_, Ok(Some(data))) => {
-                let reply = match from_msgpack(&data).unwrap() {
-                    AdminClientRpy::Ok => Ok("ok".to_string()),
-                    AdminClientRpy::Error(string) => Err(Error::new(ErrorKind::Other, &string[..])),
-                    AdminClientRpy::Timeout => Ok("timeout".to_string()),
-                    AdminClientRpy::Config(_, val) => Ok(val),
-                    AdminClientRpy::Members(string) => Ok(string),
-                    AdminClientRpy::MemberStatus(status) => Ok(status),
-                    AdminClientRpy::VrTenantId(uuid) => Ok(uuid.to_string()),
-                    AdminClientRpy::VrTenants(tenants) => Ok(format!("{:#?}", tenants)),
-                    AdminClientRpy::VrReplica(state, ctx) => Ok(format_replica_state(state, ctx)),
-                    AdminClientRpy::VrStats(stats) => Ok(stats),
-                    AdminClientRpy::VrPrimary(Some(replica)) => Ok(replica.to_string()),
-                    AdminClientRpy::VrPrimary(None) => Ok("None".to_string())
-                };
-                return reply;
-            },
-            (new_reader, Ok(None)) =>  {
-                reader = new_reader;
-            },
-            (_, Err(_)) =>
-                return Err(Error::new(ErrorKind::Other, "Failed to read response from server"))
-        }
-    }
-}
-
-fn format_replica_state(state: String, ctx: String) -> String {
-    let mut s = "state: ".to_string();
-    s.push_str(&state);
-    s.push_str("\n");
-    s.push_str(&ctx);
-    s
 }
 
 fn help() -> Error {
@@ -236,16 +202,13 @@ fn help() -> Error {
 "Usage: v2r2-admin <IpAddress> [-e <command>]
 
     Commands:
-        config set <Key> <Val>
-        config get <Key>
-        cluster join <Ip:Port>
-        cluster members
+        cluster join <NodeId>
         cluster status
-        vr create tenant <RawReplica1,RawReplica2,..,RawReplicaN>
-        vr tenants
-        vr replica <Replica>
-        vr stats
-        vr primary <TenantId>
+        vr create namespace <UngroupedPid1,UngroupedPid2,..,UngroupedPidN>
+        vr namespaces
+        vr replica <Pid>
+        vr primary <NamespaceId>
+        config
 
     Flags:
         -e <Command>   Non-interactive mode
@@ -259,12 +222,12 @@ fn help() -> Error {
 
     Argument formats:
         Uuid           see: https://doc.rust-lang.org/uuid/uuid/index.html
-        RawReplica     replica_name::node_name
-        Replica        tenant_uuid::replica_name::node_name
+        UngroupedPid   replica_name::node_name
+        Pid            namespace_uuid::replica_name::node_name
 
     Examples:
-        Get the name of the current node in non-interactive mode:
-            v2r2-admin 127.0.0.1:2001 -e 'config get node'
+        Get the cluster status in non-interactive mode:
+            v2r2-admin 127.0.0.1:2001 -e 'cluster status'
     ";
     Error::new(ErrorKind::InvalidInput, string)
 }

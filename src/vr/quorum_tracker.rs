@@ -1,23 +1,21 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Drain;
-use time::SteadyTime;
+use time::{SteadyTime, Duration};
 use rabble::Pid;
-use super::encodable_steady_time::{EncodableSteadyTime, EncodableDuration};
 
-
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct QuorumTracker<T> {
     quorum_size: usize,
-    expiration: EncodableSteadyTime,
+    expiration: SteadyTime,
     replies: HashMap<Pid, T>
 }
 
 /// Do we have a quorum when including the replica making the request?
 impl<T> QuorumTracker<T> {
-    pub fn new(quorum_size: usize, timeout: &EncodableDuration) -> QuorumTracker<T> {
+   pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker<T> {
         QuorumTracker {
             quorum_size: quorum_size,
-            expiration: EncodableSteadyTime(SteadyTime::now() + (*timeout).0),
+            expiration: SteadyTime::now() + *timeout,
             replies: HashMap::with_capacity(quorum_size * 2)
         }
     }
@@ -37,7 +35,7 @@ impl<T> QuorumTracker<T> {
     }
 
     pub fn is_expired(&self) -> bool {
-        SteadyTime::now() > self.expiration.0
+        SteadyTime::now() > self.expiration
     }
 
     pub fn drain(&mut self) -> Drain<Pid, T> {

@@ -1,19 +1,18 @@
 use std::collections::{HashSet, VecDeque};
-use time::Duration;
+use time::{Duration, SteadyTime};
 use rabble::{Pid, CorrelationId};
-use super::encodable_steady_time::EncodableSteadyTime;
 
 /// Metadata for an individual prepare request
 ///
 /// Metdata is stored in a VecDeque where the index is the operation number.
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Request {
     pub correlation_id: CorrelationId,
     replies: HashSet<Pid>,
-    timeout: EncodableSteadyTime
+    timeout: SteadyTime
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PrepareRequests {
     quorum_size: usize,
     timeout_ms: i64,
@@ -39,8 +38,7 @@ impl PrepareRequests {
         self.requests.push_back(Request {
             replies: HashSet::with_capacity(self.quorum_size),
             correlation_id: correlation_id,
-            timeout: EncodableSteadyTime(EncodableSteadyTime::now().0 +
-                                         Duration::milliseconds(self.timeout_ms))
+            timeout: SteadyTime::now() + Duration::milliseconds(self.timeout_ms)
         });
     }
 
@@ -73,7 +71,7 @@ impl PrepareRequests {
 
     pub fn expired(&self) -> bool {
         match self.requests.front() {
-            Some(request) => request.timeout.0 > EncodableSteadyTime::now().0,
+            Some(request) => request.timeout > SteadyTime::now(),
             None => false
         }
     }

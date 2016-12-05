@@ -4,7 +4,7 @@ use rand::{thread_rng, Rng};
 use std::collections::HashSet;
 use std::mem;
 use std::iter::FromIterator;
-use time::Duration;
+use time::{Duration, SteadyTime};
 use super::vrmsg::VrMsg;
 use super::replica::VersionedReplicas;
 use super::fsm_output::FsmOutput;
@@ -15,8 +15,7 @@ use super::quorum_tracker::QuorumTracker;
 use super::view_change_state::{ViewChangeState, Latest};
 use super::recovery_state::{RecoveryState, RecoveryPrimary};
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
-use super::super::namespace_msg::NamespaceMsg;
-use super::encodable_steady_time::{EncodableSteadyTime, EncodableDuration};
+use namespace_msg::NamespaceMsg;
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
 pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
@@ -24,7 +23,7 @@ pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
 
 /// The internal state of the VR FSM. Note that fields are only made public for visibility,
 /// debugging and testing purposes.
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VrCtx {
     pub pid: Pid,
     pub primary: Option<Pid>,
@@ -32,7 +31,7 @@ pub struct VrCtx {
     pub view: u64,
     pub op: u64,
     pub commit_num: u64,
-    pub last_received_time: EncodableSteadyTime,
+    pub last_received_time: SteadyTime,
     pub last_normal_view: u64,
 
     /// The number of replicas needed to provide quorum
@@ -57,7 +56,7 @@ pub struct VrCtx {
 
     /// Backups wait `idle_timeout` between messages from the primary before initiating a view
     /// change.
-    pub idle_timeout: EncodableDuration,
+    pub idle_timeout: Duration,
 
     /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
     /// message to the backups. `idle_timeout` should be at least twice as large as this value.
@@ -67,7 +66,7 @@ pub struct VrCtx {
 impl VrCtx {
     pub fn new(me: Pid, old_config: VersionedReplicas, new_config: VersionedReplicas) -> VrCtx {
         let quorum = new_config.replicas.len() / 2 + 1;
-        let idle_timeout = EncodableDuration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
+        let idle_timeout = Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
         VrCtx {
             pid: me,
             primary: None,
@@ -75,7 +74,7 @@ impl VrCtx {
             view: 0,
             op: 0,
             commit_num: 0,
-            last_received_time: EncodableSteadyTime::now(),
+            last_received_time: SteadyTime::now(),
             last_normal_view: 0,
             quorum: quorum as u64,
             prepare_requests: PrepareRequests::new(new_config.replicas.len(),
@@ -178,7 +177,7 @@ impl VrCtx {
                                          new_view: u64,
                                          c_id: CorrelationId) -> Vec<FsmOutput>
     {
-        self.last_received_time = EncodableSteadyTime::now();
+        self.last_received_time = SteadyTime::now();
         self.view = new_view;
         self.op = self.commit_num;
         self.log.truncate(self.op as usize);
@@ -186,7 +185,7 @@ impl VrCtx {
     }
 
     pub fn start_state_transfer_reconfiguration(&mut self) -> Vec<FsmOutput> {
-        self.last_received_time = EncodableSteadyTime::now();
+        self.last_received_time = SteadyTime::now();
         self.view = 0;
         self.op = self.commit_num;
         self.log.truncate(self.op as usize);
@@ -195,7 +194,7 @@ impl VrCtx {
 
     /// For a valid VrMsg::ClientRequest | VrMsg::Reconfiguration, broadcast a prepare msg
     pub fn send_prepare(&mut self, envelope: VrEnvelope) -> Vec<FsmOutput> {
-        self.last_received_time = EncodableSteadyTime::now();
+        self.last_received_time = SteadyTime::now();
         self.op += 1;
         let (api_op, request_num) = get_prepare_client_data(envelope.msg.clone());
         let prepare = self.prepare_msg(request_num, api_op);
@@ -209,7 +208,7 @@ impl VrCtx {
                            commit_num: u64,
                            request_num: u64,
                            correlation_id: CorrelationId) -> Vec<FsmOutput> {
-        self.last_received_time = EncodableSteadyTime::now();
+        self.last_received_time = SteadyTime::now();
         self.op += 1;
         // Reconstruct Client Request, since the log stores VrMsgs
         let client_req = VrMsg::ClientRequest {op: client_op, request_num: request_num};
@@ -498,7 +497,7 @@ impl VrCtx {
     }
 
     fn update_for_new_epoch(&mut self, op: u64, replicas: Vec<Pid>) {
-        self.last_received_time = EncodableSteadyTime::now();
+        self.last_received_time = SteadyTime::now();
         self.epoch += 1;
         self.view = 0;
         self.last_normal_view = 0;
@@ -511,14 +510,14 @@ impl VrCtx {
     /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
     /// here since the values are so small.
     pub fn idle_timeout(&self) -> bool {
-        EncodableSteadyTime::now().0 - self.last_received_time.0 > self.idle_timeout.0
+        SteadyTime::now() - self.last_received_time > self.idle_timeout
     }
 
     #[inline]
     /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
     /// here since the values are so small.
     pub fn primary_idle_timeout(&self) -> bool {
-        EncodableSteadyTime::now().0 - self.last_received_time.0 > Duration::milliseconds(self.primary_tick_ms as i64)
+        SteadyTime::now() - self.last_received_time > Duration::milliseconds(self.primary_tick_ms as i64)
     }
 
     pub fn last_log_entry_is_latest_reconfiguration(&self, epoch: u64, op: u64) -> bool {
@@ -566,7 +565,7 @@ impl VrCtx {
     }
 
     pub fn reset_view_change_state(&mut self, view: u64) -> Vec<FsmOutput> {
-        self.last_received_time = EncodableSteadyTime::now();
+        self.last_received_time = SteadyTime::now();
         self.view = view;
         self.view_change_state = Some(ViewChangeState::new(self.quorum, self.idle_timeout.clone()));
         vec![self.clear_primary()]

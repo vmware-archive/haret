@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Result, Read, Write, Error, ErrorKind};
 use rustc_serialize::json;
 
-#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Config {
     pub node_name: String,
     pub cluster_name: String,

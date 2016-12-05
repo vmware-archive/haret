@@ -1,10 +1,10 @@
+use time::SteadyTime;
 use fsm::{FsmTypes, StateFn};
 use namespace_msg::NamespaceMsg;
 use super::vrmsg::VrMsg;
 use super::vr_ctx::VrCtx;
 use super::fsm_output::FsmOutput;
 use super::vr_envelope::VrEnvelope;
-use super::encodable_steady_time::EncodableSteadyTime;
 
 pub type Transition = (StateFn<VrTypes>, Vec<FsmOutput>);
 
@@ -68,7 +68,7 @@ macro_rules! handle_common {
 ///
 /// Since this runs only on old nodes
 pub fn start_reconfiguration(ctx: &mut VrCtx, envelope: VrEnvelope, epoch: u64) -> Transition {
-    ctx.last_received_time = EncodableSteadyTime::now();
+    ctx.last_received_time = SteadyTime::now();
     ctx.epoch = epoch;
     match envelope.msg {
         VrMsg::Commit {commit_num, ..} if commit_num == ctx.op => {
@@ -197,7 +197,7 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 /// This replica is currently a backup operating normally
 pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, backup);
-    ctx.last_received_time = EncodableSteadyTime::now();
+    ctx.last_received_time = SteadyTime::now();
     match envelope.msg {
         VrMsg::Prepare {op, ref client_op, commit_num, client_request_num, ..} if op == ctx.op + 1 => {
             let prepare_ok_envelope = ctx.send_prepare_ok(client_op.clone(),

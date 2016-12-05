@@ -4,6 +4,7 @@ use msg::Msg;
 use super::vr_fsm::VrTypes;
 use super::vr_envelope::VrEnvelope;
 use super::vrmsg::VrMsg;
+use super::vr_ctx_summary::VrCtxSummary;
 use super::super::admin::{AdminReq, AdminRpy};
 
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
@@ -43,7 +44,8 @@ impl Process for Replica {
         match msg {
             rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
                 let (state, ctx) = self.fsm.get_state();
-                let rpy = AdminRpy::ReplicaState {state: state.to_string(), ctx: ctx};
+                let summary = VrCtxSummary::new(state, ctx);
+                let rpy = AdminRpy::ReplicaState(summary);
                 let msg = rabble::Msg::User(Msg::AdminRpy(rpy));
                 let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
                 self.output.push(envelope);
