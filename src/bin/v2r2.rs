@@ -31,7 +31,7 @@ fn main() {
     let (node, mut handles) = rabble::rouse::<Msg>(node_id.clone(), Some(logger.clone()));
 
     // Create and start the namespace manager
-    let namespace_mgr = NamespaceMgr::new(node.clone(), config.clone());
+    let namespace_mgr = NamespaceMgr::new(node.clone(), config.clone(), logger.clone());
     info!(logger, "Starting Namespace Manager"; "pid" => namespace_mgr.pid.to_string());
     let mut namespace_mgr_service = Service::new(namespace_mgr.pid.clone(), node.clone(), namespace_mgr).unwrap();
     handles.push(thread::spawn(move || {

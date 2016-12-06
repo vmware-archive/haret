@@ -8,6 +8,8 @@ extern crate rustc_serialize;
 extern crate time;
 extern crate uuid;
 extern crate stats;
+#[macro_use]
+extern crate slog;
 
 // Crates we manage
 #[macro_use]

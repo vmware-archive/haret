@@ -40,7 +40,8 @@ impl Process for Replica {
               from: Pid,
               correlation_id: Option<CorrelationId>) -> &mut Vec<Envelope<Msg>>
     {
-        let correlation_id = correlation_id.unwrap();
+        let correlation_id = correlation_id.map_or(CorrelationId::pid(self.pid.clone()),
+                                                   |c_id| c_id);
         match msg {
             rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
                 let (state, ctx) = self.fsm.get_state();

@@ -262,10 +262,13 @@ pub fn wait_for_start_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Tran
         VrMsg::StartViewChange{from, ..} => {
             ctx.insert_view_change_message(from, envelope.msg);
             if ctx.has_view_change_quorum() {
-                if ctx.compute_primary() == ctx.pid {
-                    return next!(wait_for_do_view_change)
+                let computed_primary = ctx.compute_primary();
+                if computed_primary == ctx.pid {
+                    let view = ctx.view;
+                    let output = ctx.reset_view_change_state(view);
+                    return next!(wait_for_do_view_change, output)
                 }
-                let output = ctx.send_do_view_change();
+                let output = ctx.send_do_view_change(computed_primary);
                 return next!(wait_for_start_view, vec![output]);
             }
             next!(wait_for_start_view_change)

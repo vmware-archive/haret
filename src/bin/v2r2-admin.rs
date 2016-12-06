@@ -164,12 +164,12 @@ fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminReq> {
                 println!("No spaces allowed in UngroupedPid list");
                 return Err(help());
             }
-            let mut pidopts = args[0].split(",").map(|s| Pid::from_str(s));
-            let pids = match pidopts.find(|p| p.is_err()) {
-                Some(Err(s)) => return Err(Error::new(ErrorKind::InvalidInput, s)),
-                _ =>  pidopts.map(|p| p.unwrap())
-            };
-            Ok(AdminReq::CreateNamespace(pids.collect()))
+            let pidopts: Vec<_> = args[0].split(",").map(|s| Pid::from_str(s)).collect();
+            if pidopts.iter().any(|p| p.is_err()) {
+                return Err(Error::new(ErrorKind::InvalidInput, "Failed to parse pids"));
+            }
+            let pids: Vec<_> = pidopts.into_iter().map(|p| p.unwrap()).collect();
+            Ok(AdminReq::CreateNamespace(pids))
         },
         _ => Err(help())
     }

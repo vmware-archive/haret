@@ -1,6 +1,7 @@
 use time::Duration;
 use std::collections::HashSet;
 use uuid::Uuid;
+use slog::Logger;
 use amy::{Registrar, Notification, Timer};
 use rabble::{self, Pid, Node, Envelope, CorrelationId, ServiceHandler};
 use rabble::errors::ChainErr;
@@ -19,6 +20,7 @@ const MANAGEMENT_TICK_MS: u64 = 10000; // 10s
 pub struct NamespaceMgr {
     config: Config,
     node: Node<Msg>,
+    logger: Logger,
     pub pid: Pid,
     /// Dispatchers on other nodes
     peers: HashSet<Pid>,
@@ -50,7 +52,7 @@ pub struct NamespaceMgr {
 }
 
 impl NamespaceMgr {
-    pub fn new(node: Node<Msg>, config: Config) -> NamespaceMgr {
+    pub fn new(node: Node<Msg>, config: Config, logger: Logger) -> NamespaceMgr {
         let pid = Pid {
             group: None,
             name: "namespace_mgr".to_string(),
@@ -59,6 +61,7 @@ impl NamespaceMgr {
         NamespaceMgr {
             config: config,
             node: node,
+            logger: logger,
             pid: pid,
             peers: HashSet::new(),
             namespaces: Namespaces::new(),
@@ -79,7 +82,7 @@ impl NamespaceMgr {
                 msg: rabble::Msg::User(Msg::Vr(VrMsg::Tick)),
                 correlation_id: None
             };
-            let _ = self.node.send(envelope);
+            self.node.send(envelope).unwrap();
         }
     }
 
@@ -91,7 +94,7 @@ impl NamespaceMgr {
                 msg: rabble::Msg::User(Msg::Namespace(NamespaceMsg::Namespaces(self.namespaces.clone()))),
                 correlation_id: None
             };
-            let _ = self.node.send(envelope);
+            self.node.send(envelope).unwrap();
         }
     }
 
@@ -120,7 +123,7 @@ impl NamespaceMgr {
                 self.send_admin_rpy(AdminRpy::Config(config), correlation_id);
             },
             AdminReq::Join(node_id) => {
-                let _ = self.node.join(&node_id);
+                self.node.join(&node_id).unwrap();
                 self.send_admin_rpy(AdminRpy::Ok, correlation_id);
             },
             AdminReq::GetNamespaces => {
@@ -129,9 +132,24 @@ impl NamespaceMgr {
                                     correlation_id);
             },
             AdminReq::CreateNamespace(replicas) => {
+                let mut s: String = replicas.iter().map(|r| {
+                    let mut s = r.to_string();
+                    s.push(',');
+                    s
+                }).collect();
+                s = s.trim_matches(',').to_string();
+                info!(self.logger,  "Attempt Create namespace"; "replicas" => s.clone());
                 match self.create_namespace(replicas) {
-                    Ok(namespace) => self.send_admin_rpy(AdminRpy::NamespaceId(namespace), correlation_id),
-                    Err(e) => self.send_admin_rpy(AdminRpy::Error(e), correlation_id)
+                    Ok(namespace) => {
+                        info!(self.logger, "Namespace created";
+                              "namespace" => namespace.to_string());
+                        self.send_admin_rpy(AdminRpy::NamespaceId(namespace), correlation_id)
+                    },
+                    Err(e) => {
+                        warn!(self.logger, "Namespace failed to be created";
+                              "replicas" => s, "error" => e.to_string());
+                        self.send_admin_rpy(AdminRpy::Error(e), correlation_id)
+                    }
                 }
             },
             AdminReq::GetPrimary(namespace_id) => {
@@ -142,7 +160,7 @@ impl NamespaceMgr {
                 self.send_admin_rpy(AdminRpy::Primary(primary), correlation_id);
             },
             AdminReq::GetClusterStatus => {
-                let _ = self.node.cluster_status(correlation_id);
+                self.node.cluster_status(correlation_id).unwrap();
             },
             _ => {
                 self.send_admin_rpy(AdminRpy::Error("Unknown Admin Message".to_string()),
@@ -159,7 +177,7 @@ impl NamespaceMgr {
             msg: rabble::Msg::User(Msg::AdminRpy(reply)),
             correlation_id: Some(correlation_id)
         };
-        let _ = self.node.send(envelope);
+        self.node.send(envelope).unwrap();
     }
 
     /// Receive a copy of current namespaces from another node and see if the local copy is
@@ -183,24 +201,23 @@ impl NamespaceMgr {
         }
     }
 
-    fn create_namespace(&mut self, ungrouped_pids: Vec<Pid>) -> Result<Uuid, String> {
+    fn create_namespace(&mut self, mut ungrouped_pids: Vec<Pid>) -> Result<Uuid, String> {
         let namespace = Uuid::new_v4();
-        let mut new_replicas = Vec::new();
-        for mut pid in ungrouped_pids {
-            let mut found = false;
-            let node_name = pid.node.name.clone();
-            for node in self.peers.iter().map(|peer_pid| peer_pid.node.clone()) {
-                if node == pid.node {
-                    pid.group = Some(namespace.clone().to_string());
-                    new_replicas.push(pid);
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                return Err(format!("Node {} is not a member of the cluster", node_name));
-            }
+
+        let mut nodes: Vec<_> = self.peers.iter().map(|pid| pid.node.clone()).collect();
+        nodes.push(self.pid.node.clone());
+        let invalid_nodes: HashSet<_> =
+            ungrouped_pids.iter().filter(|pid| !nodes.contains(&pid.node))
+                                 .map(|pid| pid.node.clone()).collect();
+        if invalid_nodes.len() > 0 {
+            return Err(format!("Nodes: {:?} not members of the cluster", invalid_nodes));
         }
+
+        let mut new_replicas: Vec<_> = ungrouped_pids.drain(..).map(|mut pid| {
+            pid.group = Some(namespace.clone().to_string());
+            pid
+        }).collect();
+
         new_replicas.sort();
         let old_config = VersionedReplicas::new();
         let new_config = VersionedReplicas {epoch: 1, op: 0, replicas: new_replicas};
@@ -248,7 +265,7 @@ impl NamespaceMgr {
        ctx.primary_tick_ms = self.primary_tick_ms;
        let state = vr_fsm::startup_reconfiguration;
        let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
-       let _ = self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
+       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
        self.local_replicas.insert(pid.clone());
    }
 
@@ -262,14 +279,14 @@ impl NamespaceMgr {
        ctx.primary_tick_ms = self.primary_tick_ms;
        let state = vr_fsm::startup_new_namespace;
        let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
-       let _ = self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
+       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
        self.local_replicas.insert(pid);
     }
 
     /// Should only be called outside this module during tests
     pub fn stop(&mut self, pid: &Pid) {
         self.local_replicas.remove(pid);
-        let _ = self.node.stop(pid);
+        self.node.stop(pid).unwrap();
     }
 
     /// Should only be called outside this module during tests
@@ -283,7 +300,7 @@ impl NamespaceMgr {
            ctx.primary_tick_ms = self.primary_tick_ms;
            let state = vr_fsm::startup_recovery;
            let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(state));
-           let _ = self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm)));
+           self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
            self.local_replicas.insert(pid);
        }
     }

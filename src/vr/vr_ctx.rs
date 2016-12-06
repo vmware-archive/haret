@@ -218,9 +218,10 @@ impl VrCtx {
         output
     }
 
-    pub fn send_do_view_change(&self) -> FsmOutput {
+    pub fn send_do_view_change(&self, new_primary: Pid) -> FsmOutput {
         let c_id = CorrelationId::pid(self.pid.clone());
-        self.send_to_primary(self.do_view_change_msg(), c_id)
+        let msg = self.do_view_change_msg();
+        FsmOutput::Vr(VrEnvelope::new(new_primary, self.pid.clone(), msg, c_id))
     }
 
     pub fn send_new_state(&mut self, op: u64, from: Pid, c_id: CorrelationId) -> FsmOutput {
@@ -307,6 +308,7 @@ impl VrCtx {
     pub fn become_primary(&mut self) -> Vec<FsmOutput> {
         let last_commit_num = self.commit_num;
         self.set_state_to_become_primary();
+        self.set_primary();
         let mut output = self.broadcast_start_view_msg();
         println!("Elected {:?} as primary of view {}", self.primary, self.view);
         output.extend_from_slice(&self.new_primary_commit(last_commit_num));
