@@ -1,6 +1,7 @@
 use uuid::Uuid;
 use rabble::{Pid, CorrelationId};
 use rand::{thread_rng, Rng};
+use slog::Logger;
 use std::collections::HashSet;
 use std::mem;
 use std::iter::FromIterator;
@@ -21,10 +22,10 @@ pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
 pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
 
 
-/// The internal state of the VR FSM. Note that fields are only made public for visibility,
-/// debugging and testing purposes.
-#[derive(Debug, Clone, Eq, PartialEq)]
+/// The internal state of the VR FSM.
+#[derive(Debug, Clone)]
 pub struct VrCtx {
+    pub logger: Logger,
     pub pid: Pid,
     pub primary: Option<Pid>,
     pub epoch: u64,
@@ -64,10 +65,15 @@ pub struct VrCtx {
 }
 
 impl VrCtx {
-    pub fn new(me: Pid, old_config: VersionedReplicas, new_config: VersionedReplicas) -> VrCtx {
+    pub fn new(logger: Logger,
+               me: Pid,
+               old_config: VersionedReplicas,
+               new_config: VersionedReplicas) -> VrCtx
+    {
         let quorum = new_config.replicas.len() / 2 + 1;
         let idle_timeout = Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
         VrCtx {
+            logger: logger.new(o!("component" => "vr_ctx", "node_id" => me.node.to_string())),
             pid: me,
             primary: None,
             epoch: new_config.epoch,
@@ -308,8 +314,8 @@ impl VrCtx {
     pub fn become_primary(&mut self) -> Vec<FsmOutput> {
         let last_commit_num = self.commit_num;
         self.set_state_to_become_primary();
-        self.set_primary();
         let mut output = self.broadcast_start_view_msg();
+        output.push(self.set_primary());
         println!("Elected {:?} as primary of view {}", self.primary, self.view);
         output.extend_from_slice(&self.new_primary_commit(last_commit_num));
         output
@@ -364,6 +370,7 @@ impl VrCtx {
                          log: Vec<VrMsg>,
                          commit_num: u64) -> Vec<FsmOutput>
     {
+        self.last_received_time = SteadyTime::now();
         self.view = view;
         self.op = op;
         self.log = log;
@@ -536,6 +543,7 @@ impl VrCtx {
     }
 
     pub fn set_from_new_state_msg(&mut self, msg: VrMsg) -> Vec<FsmOutput> {
+        self.last_received_time = SteadyTime::now();
         if let VrMsg::NewState {view, op, commit_num, log_tail, ..} = msg {
             self.view = view;
             self.op = op;

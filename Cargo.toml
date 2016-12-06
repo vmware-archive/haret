@@ -9,20 +9,16 @@ rustc-serialize = "0.3"
 time = "*"
 uuid = "0.1"
 rand = "0.3"
-mio = "0.5.0"
 rmp-serialize = "0.7"
-amy = "0.6"
 slog = {version = "1", features = ["max_level_trace"]}
 slog-stdlog = "1"
 slog-term = "1.1"
 slog-envlogger = "0.5"
 
+amy = { path = "../amy"}
 fsm = { path = "../fsm" }
 orset = { path = "../orset"}
 rabble = { path = "../rabble"}
-
-[dependencies.streaming-stats]
-git = "git://github.com/BurntSushi/rust-stats"
 
 [dev-dependencies]
 assert_matches = "1.0"

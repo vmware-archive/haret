@@ -68,10 +68,10 @@ macro_rules! handle_common {
 ///
 /// Since this runs only on old nodes
 pub fn start_reconfiguration(ctx: &mut VrCtx, envelope: VrEnvelope, epoch: u64) -> Transition {
-    ctx.last_received_time = SteadyTime::now();
     ctx.epoch = epoch;
     match envelope.msg {
         VrMsg::Commit {commit_num, ..} if commit_num == ctx.op => {
+            ctx.last_received_time = SteadyTime::now();
             // We only handle requests when we have the reconfiguration in the log. Backup commit
             // will play it and we'll learn the new members.
             ctx.view = 0;
@@ -96,23 +96,37 @@ pub fn start_reconfiguration(ctx: &mut VrCtx, envelope: VrEnvelope, epoch: u64) 
 }
 
 pub fn handle_later_view(ctx: &mut VrCtx, envelope: VrEnvelope, new_view: u64) -> Transition {
+    debug!(ctx.logger,
+           "handle_later_view: epoch = {}, new_view = {}, from = {}",
+           ctx.epoch, new_view, envelope.from);
     match envelope.msg.clone() {
         VrMsg::StartViewChange {from, ..} => {
+            debug!(ctx.logger,
+                   "handle_later_view: StartViewChange: epoch = {}, new_view = {}, from = {}",
+                   ctx.epoch, new_view, from);
             let mut output = ctx.reset_view_change_state(new_view);
             ctx.insert_view_change_message(from, envelope.msg);
             output.extend(ctx.start_view_change());
             next!(wait_for_start_view_change, output)
         },
         VrMsg::DoViewChange {from, ..} => {
+            debug!(ctx.logger,
+                   "handle_later_view: DoViewChange : epoch = {}, new_view = {}, from = {}",
+                   ctx.epoch, new_view, from);
             let output = ctx.reset_view_change_state(new_view);
             ctx.insert_view_change_message(from, envelope.msg);
             next!(wait_for_do_view_change, output)
         },
         VrMsg::StartView{op, log, commit_num, ..} => {
+            debug!(ctx.logger, "Start View: DoViewChange : epoch = {}, new_view = {}, from = {}",
+                   ctx.epoch, new_view, envelope.from);
             let output = ctx.become_backup(new_view, op, log, commit_num);
             next!(backup, output)
         },
         _ => {
+            debug!(ctx.logger,
+                   "handle_later_view: Non-ViewChange msg: epoch = {}, new_view = {}, from = {}",
+                   ctx.epoch, new_view, envelope.from);
             // We've missed the view change and are likely out of date
             let output = ctx.start_state_transfer_new_view(new_view, envelope.correlation_id);
             next!(state_transfer, output)
@@ -197,9 +211,9 @@ pub fn primary(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 /// This replica is currently a backup operating normally
 pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
     handle_common!(ctx, envelope, backup);
-    ctx.last_received_time = SteadyTime::now();
     match envelope.msg {
         VrMsg::Prepare {op, ref client_op, commit_num, client_request_num, ..} if op == ctx.op + 1 => {
+            ctx.last_received_time = SteadyTime::now();
             let prepare_ok_envelope = ctx.send_prepare_ok(client_op.clone(),
                                                           commit_num,
                                                           client_request_num,
@@ -207,17 +221,21 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             next!(backup, prepare_ok_envelope)
         },
         VrMsg::Prepare {op, ..} if op > ctx.op + 1 => {
+            ctx.last_received_time = SteadyTime::now();
             let output = vec![ctx.send_get_state_to_random_replica(envelope.correlation_id)];
             next!(state_transfer, output)
         },
         VrMsg::Commit {commit_num, ..} if commit_num == ctx.commit_num => {
+            ctx.last_received_time = SteadyTime::now();
             next!(backup)
         },
         VrMsg::Commit {commit_num, ..} if commit_num == ctx.op => {
+            ctx.last_received_time = SteadyTime::now();
             let output = ctx.backup_commit(commit_num);
             next!(backup, output)
         },
         VrMsg::Commit {commit_num, ..} if commit_num > ctx.op => {
+            ctx.last_received_time = SteadyTime::now();
             // Note that a primary cannot have a commit_num smaller than a backup by protocol
             // invariants
             let output = vec![ctx.send_get_state_to_random_replica(envelope.correlation_id)];
@@ -257,9 +275,13 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
 /// The first phase of a view change. This replica is waiting for a quorum of StartViewChange
 /// messages.
 pub fn wait_for_start_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
+    debug!(ctx.logger, "wait_for_start_view_change: epoch = {}, view = {}", ctx.epoch, ctx.view);
     handle_common!(ctx, envelope, wait_for_start_view_change);
     match envelope.msg.clone() {
         VrMsg::StartViewChange{from, ..} => {
+            debug!(ctx.logger, "received StartViewChange: epoch = {}, view = {}",
+                ctx.epoch, ctx.view);
+            ctx.last_received_time = SteadyTime::now();
             ctx.insert_view_change_message(from, envelope.msg);
             if ctx.has_view_change_quorum() {
                 let computed_primary = ctx.compute_primary();
@@ -357,6 +379,7 @@ pub fn wait_for_do_view_change(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transit
 /// proposed primary has gotten a quorum of `DoViewChange` messages it will broadcast a `StartView`
 /// message to all new backups. This replica is waiting for that `StartView` message.
 pub fn wait_for_start_view(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
+    debug!(ctx.logger, "wait_for_start_view: epoch = {}, view = {}", ctx.epoch, ctx.view);
     handle_common!(ctx, envelope, wait_for_start_view);
     let view = ctx.view;
     match envelope.msg.clone() {

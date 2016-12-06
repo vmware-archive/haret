@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use uuid::Uuid;
 use vr::VersionedReplicas;
-use rabble::Pid;
+use rabble::{Pid, NodeId};
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Namespaces {
@@ -16,6 +16,17 @@ impl Namespaces {
             map: HashMap::new(),
             primaries: HashMap::new()
         }
+    }
+
+    /// Return the nodes used in all namespaces
+    /// Note that this can be expensive with a large number of namespaces.
+    /// However, It's only used during an actual reconfiguration.
+    pub fn nodes(&self) -> HashSet<NodeId> {
+        self.map.iter().flat_map(|(_, &(ref old_config, ref new_config))| {
+            old_config.replicas.iter().chain(new_config.replicas.iter()).map(|r| {
+                r.node.clone()
+            })
+        }).collect()
     }
 
     pub fn insert(&mut self, namespace: Uuid, old: VersionedReplicas, new: VersionedReplicas) {
@@ -34,15 +45,18 @@ impl Namespaces {
         }
     }
 
-    /// Save the new namespace configuration and return the new replicas that need starting
-    pub fn reconfigure(&mut self, namespace: &Uuid, old: VersionedReplicas, new: VersionedReplicas) ->
-        Vec<Pid>
+    /// Save the new namespace configuration and return whether there actually was a configuration
+    /// change as well as the new replicas that need starting.
+    pub fn reconfigure(&mut self,
+                       namespace: &Uuid,
+                       old: VersionedReplicas,
+                       new: VersionedReplicas) -> (bool, Vec<Pid>)
     {
         if let Some(&mut(ref mut saved_old_config, ref mut saved_new_config)) =
             self.map.get_mut(&namespace)
         {
             // This is an old reconfig message, nothing to start
-            if new.epoch <= saved_new_config.epoch { return Vec::new() }
+            if new.epoch <= saved_new_config.epoch { return (false, Vec::new()) }
             let new_set = HashSet::<Pid>::from_iter(new.replicas.clone());
             // We want to use the actual running nodes here because we are trying to determine which
             // nodes to start locally
@@ -50,9 +64,9 @@ impl Namespaces {
             let to_start: Vec<Pid> = new_set.difference(&old_set).cloned().collect();
             *saved_old_config = old;
             *saved_new_config = new;
-            to_start
+            (true, to_start)
         } else {
-            Vec::new()
+            (false, Vec::new())
         }
     }
 }

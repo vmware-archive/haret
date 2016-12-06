@@ -91,7 +91,8 @@ impl NamespaceMgr {
             let envelope = Envelope {
                 to: pid,
                 from: self.pid.clone(),
-                msg: rabble::Msg::User(Msg::Namespace(NamespaceMsg::Namespaces(self.namespaces.clone()))),
+                msg: rabble::Msg::User(Msg::Namespace(
+                        NamespaceMsg::Namespaces(self.namespaces.clone()))),
                 correlation_id: None
             };
             self.node.send(envelope).unwrap();
@@ -188,6 +189,13 @@ impl NamespaceMgr {
                 self.reconfigure(namespace_id.clone(), old_config.clone(), new_config.clone());
             } else {
                 self.namespaces.insert(namespace_id.clone(), old_config.clone(), new_config.clone());
+                for r in old_config.replicas.iter().chain(new_config.replicas.iter()) {
+                    self.peers.insert(Pid {
+                        group: None,
+                        name: "namespace_mgr".to_string(),
+                        node: r.node.clone()
+                    });
+                }
                 for r in new_config.replicas.iter().cloned() {
                     if self.node.id == r.node{
                         if old_config.epoch == 0 {
@@ -204,15 +212,7 @@ impl NamespaceMgr {
     fn create_namespace(&mut self, mut ungrouped_pids: Vec<Pid>) -> Result<Uuid, String> {
         let namespace = Uuid::new_v4();
 
-        let mut nodes: Vec<_> = self.peers.iter().map(|pid| pid.node.clone()).collect();
-        nodes.push(self.pid.node.clone());
-        let invalid_nodes: HashSet<_> =
-            ungrouped_pids.iter().filter(|pid| !nodes.contains(&pid.node))
-                                 .map(|pid| pid.node.clone()).collect();
-        if invalid_nodes.len() > 0 {
-            return Err(format!("Nodes: {:?} not members of the cluster", invalid_nodes));
-        }
-
+        debug!(self.logger, "Create Namespace");
         let mut new_replicas: Vec<_> = ungrouped_pids.drain(..).map(|mut pid| {
             pid.group = Some(namespace.clone().to_string());
             pid
@@ -223,6 +223,11 @@ impl NamespaceMgr {
         let new_config = VersionedReplicas {epoch: 1, op: 0, replicas: new_replicas};
         self.namespaces.insert(namespace, old_config.clone(), new_config.clone());
         for r in new_config.replicas.iter().cloned() {
+            self.peers.insert(Pid {
+                group: None,
+                name: "namespace_mgr".to_string(),
+                node: r.node.clone()
+            });
             if self.node.id == r.node {
                 self.start_replica_initial_config(r, new_config.clone());
             }
@@ -235,17 +240,18 @@ impl NamespaceMgr {
                   old_config: VersionedReplicas,
                   new_config: VersionedReplicas)
     {
-        let to_start = self.namespaces.reconfigure(&namespace,
-                                                   old_config.clone(),
-                                                   new_config.clone());
+        let (changed, to_start) =
+            self.namespaces.reconfigure(&namespace, old_config.clone(), new_config.clone());
 
-        self.peers = old_config.replicas.iter().chain(new_config.replicas.iter()).map(|pid| {
-            Pid {
-                group: None,
-                name: "namespace_mgr".to_string(),
-                node: pid.node.clone()
-            }
-        }).collect();
+        if changed {
+            self.peers = self.namespaces.nodes().iter().map(|node| {
+                Pid {
+                    group: None,
+                    name: "namespace_mgr".to_string(),
+                    node: node.clone()
+                }
+            }).collect();
+        }
 
         for replica in to_start {
             if self.node.id == replica.node {
@@ -258,7 +264,8 @@ impl NamespaceMgr {
                              pid: &Pid,
                              old_config: &VersionedReplicas,
                              new_config: &VersionedReplicas) {
-       let mut ctx = VrCtx::new(pid.clone(),
+       let mut ctx = VrCtx::new(self.logger.clone(),
+                                pid.clone(),
                                 old_config.clone(),
                                 new_config.clone());
        ctx.idle_timeout = self.idle_timeout.clone();
@@ -272,7 +279,8 @@ impl NamespaceMgr {
 
     fn start_replica_initial_config(&mut self, pid: Pid, new_config: VersionedReplicas) {
        println!("start pid {:?}", pid);
-       let mut ctx = VrCtx::new(pid.clone(),
+       let mut ctx = VrCtx::new(self.logger.clone(),
+                                pid.clone(),
                                 VersionedReplicas::new(),
                                 new_config);
        ctx.idle_timeout = self.idle_timeout.clone();
@@ -293,7 +301,8 @@ impl NamespaceMgr {
     pub fn restart(&mut self, pid: Pid) {
        let uuid = Uuid::parse_str(pid.group.as_ref().unwrap()).unwrap();
        if let Some((old_config, new_config)) = self.namespaces.get_config(&uuid) {
-           let mut ctx = VrCtx::new(pid.clone(),
+           let mut ctx = VrCtx::new(self.logger.clone(),
+                                    pid.clone(),
                                     old_config.clone(),
                                     new_config.clone());
            ctx.idle_timeout = self.idle_timeout.clone();
