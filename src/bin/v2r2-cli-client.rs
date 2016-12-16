@@ -1,144 +1,68 @@
 extern crate v2r2;
 extern crate uuid;
-extern crate msgpack;
+extern crate rabble;
+extern crate rustc_serialize;
+extern crate rmp_serialize as msgpack;
 
 use std::env;
 use std::env::Args;
 use std::io;
 use std::process::exit;
-use std::io::{Result, Error, ErrorKind, Write};
+use std::thread;
+use std::io::{Read, Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
+use std::time;
+use std::mem;
+use msgpack::{Encoder, Decoder};
+use rustc_serialize::{Encodable, Decodable};
 use uuid::Uuid;
-use v2r2::vr::{VrMsg, Replica, ElementType, VrApiReq, VrApiRsp, ClientEnvelope};
-use v2r2::{
-               NewSessionRequest, NewSessionReply};
-use v2r2::frame::{ReadState, WriteState};
-use msgpack::{Encoder, from_msgpack};
-
-static mut req_num: u64 = 0;
+use rabble::Pid;
+use v2r2::vr::{VrClientMsg, VrApiReq, VrApiRsp, ElementType, ClientId, NamespaceId};
 
 fn main() {
     let mut args = env::args();
-
-    let tenant_id: Uuid = match args.nth(1) {
-        Some(arg1) => {
-            match Uuid::parse_str(&arg1) {
-                Ok(uuid) => uuid,
-                Err(_) => {
-                    println!("Invalid UUID format\n{}", help());
-                    exit(-1);
-                }
-            }
-        },
-        None => {
-            println!("Missing argument UUID\n{}", help());
-            exit(-1);
-        }
-    };
+    // Skip arg0
+    let _ = args.next();
 
     let addr: String = match args.next() {
-        Some(ipport) => ipport,
+        Some(api_addr) => api_addr,
         None => {
             println!("Missing IP Address\n{}", help());
             exit(-1);
         }
     };
 
-    let (primary, sock, session_id) = start_session(tenant_id, addr);
+    let mut client = V2r2Client::new(ClientId(Uuid::new_v4().to_string()));
+    client.connect(Some(addr)).unwrap();
+
     if let Some(flag) = args.next() {
-        run_script(&flag, args, sock, &primary, session_id);
+        run_script(&flag, args, client)
     } else {
-        run_interactive(sock, &primary, session_id);
+        run_interactive(client)
     }
 }
 
-fn start_session(tenant_id: Uuid, addr: String) -> (Replica, TcpStream, Uuid) {
-    let mut sock = TcpStream::connect(&addr[..]).unwrap();
-    send_new_session_request(tenant_id, &mut sock, addr);
-    let reply = read_session_reply(&mut sock);
-    match reply {
-        NewSessionReply::SessionId {session_id, primary} => {
-            println!("Session {} created for {}", session_id, primary);
-            (primary, sock, session_id)
-        },
-        NewSessionReply::Redirect {host} => {
-            println!("Redirect to {}", host);
-            exit(-1);
-        },
-        NewSessionReply::Retry(timeout) => {
-            // TODO: Implement retry logic here?
-            println!("Retry in {} milliseconds", timeout);
-            exit(-1);
-
-        },
-        NewSessionReply::NoSuchTenant => {
-            println!("Tenant does not exist");
-            exit(-1);
-        }
-    }
-}
-
-fn read_session_reply(sock: &mut TcpStream) -> NewSessionReply {
-    let mut reader = ReadState::new();
-    loop {
-        match reader.read(sock) {
-            (_, Ok(Some(data))) => {
-                match from_msgpack(&data) {
-                    Ok(reply) => return reply,
-                    Err(_) => {
-                        // It could be a channel initiation or ping message from the server it's
-                        // connecting to. Just ignore it and try again. We're able to do this
-                        // because all servers share the same 4 byte framing.
-                        reader = ReadState::new();
-                    }
-                }
-            },
-            (new_reader, Ok(None)) => {
-                reader = new_reader;
-            },
-            (_, Err(e)) => {
-                panic!("Failed to read response from server: {}", e);
-            }
-        }
-    }
-}
-
-fn send_new_session_request(tenant_id: Uuid, sock: &mut TcpStream, addr: String) {
-    let msg = Encoder::to_msgpack(&NewSessionRequest(tenant_id)).unwrap();
-    let mut writer = WriteState::new();
-    writer = writer.push(msg);
-    loop {
-        if let Ok((more_to_write, new_writer)) = writer.write(sock) {
-            if !more_to_write { break; }
-            writer = new_writer;
-        } else {
-            panic!("Failed to send session request to {}", addr);
-        }
-    }
-}
-
-fn run_interactive(mut sock: TcpStream, replica: &Replica, session_id: Uuid) {
+fn run_interactive(mut client: V2r2Client) {
     loop {
         prompt();
         let mut command = String::new();
         io::stdin().read_line(&mut command).unwrap();
-        match run(&command, &mut sock, replica, session_id) {
+        match run(&command, &mut client) {
             Ok(result) => println!("{}", result),
             Err(err) => println!("{}", err)
         }
     }
 }
 
-fn run_script(flag: &str, mut args: Args, mut sock: TcpStream, replica: &Replica,
-              session_id: Uuid) {
+fn run_script(flag: &str, mut args: Args, mut client: V2r2Client) {
     if flag != "-e" {
         println!("Invalid Flag");
         println!("{}", help());
         exit(-1);
     }
     let command = args.next().unwrap_or(String::new());
-    match run(&command, &mut sock, replica, session_id) {
+    match run(&command, &mut client) {
         Ok(result) => {
             println!("{}", result);
             exit(0);
@@ -150,9 +74,9 @@ fn run_script(flag: &str, mut args: Args, mut sock: TcpStream, replica: &Replica
     }
 }
 
-fn run(command: &str, sock: &mut TcpStream, replica: &Replica, session_id: Uuid) -> Result<String> {
-    let req = try!(parse(&command));
-    exec(req, sock, replica, session_id)
+fn run(command: &str, client: &mut V2r2Client) -> Result<String> {
+    let req = try!(parse(&command, client));
+    exec(req, client)
 }
 
 fn prompt() {
@@ -161,9 +85,12 @@ fn prompt() {
     stdout.flush().unwrap();
 }
 
-fn parse(command: &str) -> Result<VrApiReq> {
+fn parse(command: &str, client: &V2r2Client) -> Result<VrApiReq> {
     let mut iter = command.split_whitespace();
     match iter.next() {
+        Some("list-namespaces") =>
+            parse_no_args("list-namespaces", &mut iter).map(|_| VrApiReq::GetNamespaces),
+        Some("enter") => parse_enter(&mut iter, client),
         Some("create") => parse_create(&mut iter),
         Some("put") => parse_put(&mut iter),
         Some("delete") => parse_delete(&mut iter),
@@ -174,6 +101,23 @@ fn parse(command: &str) -> Result<VrApiReq> {
     }
 }
 
+fn parse_no_args(header: &'static str, iter: &mut SplitWhitespace) -> Result<()> {
+    if iter.count() != 0 {
+        println!("'{}' takes no parameters", header);
+        return Err(help());
+    }
+    Ok(())
+}
+
+fn parse_enter(iter: &mut SplitWhitespace, client: &V2r2Client) -> Result<VrApiReq> {
+    match iter.next() {
+        Some(namespace_id) => {
+            let id = NamespaceId(namespace_id.to_string());
+            Ok(VrApiReq::RegisterClient(client.client_id.clone(), id))
+        },
+        None => Err(help())
+    }
+}
 fn parse_create(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     match iter.next() {
         Some(str_type) => match ElementType::from_str(str_type) {
@@ -244,84 +188,74 @@ fn parse_list(iter: &mut SplitWhitespace) -> Result<VrApiReq> {
     Ok(VrApiReq::List {path: path})
 }
 
-fn exec(msg: VrApiReq, sock: &mut TcpStream, replica: &Replica, session_id: Uuid) -> Result<String> {
-    unsafe {
-        req_num += 1;
-    }
 
-    let req = VrMsg::ClientRequest {
-        op: msg,
-        session_id: session_id,
-        request_num: unsafe { req_num }
-    };
-
-    let envelope = ClientEnvelope {
-        to: replica.clone(),
-        msg: req
-    };
-
-    let mut writer = WriteState::new();
-    writer = writer.push(Encoder::to_msgpack(&envelope).unwrap());
-    loop {
-        if let Ok((more_to_write, new_writer)) = writer.write(sock) {
-            if !more_to_write { break; }
-            writer = new_writer;
-        } else {
-            return Err(Error::new(ErrorKind::Other, "Failed to send request to server"))
+fn exec(req: VrApiReq, client: &mut V2r2Client) -> Result<String> {
+    try!(client.write_msg(req));
+    match try!(client.read_msg()) {
+        VrApiRsp::Namespaces(namespaces) => {
+            Ok(namespaces.iter().fold(String::new(), |mut acc, namespace_id | {
+                acc.push_str(&namespace_id.0);
+                acc.push_str("\n");
+                acc
+            }))
+        },
+        VrApiRsp::ClientRegistration {primary, ..} => {
+            client.primary = Some(primary);
+            Ok(format!("Client registered. Primary = {}", client.primary.as_ref().unwrap()))
         }
-    }
+        VrApiRsp::Redirect {primary, api_addr} => {
+            try!(client.connect(Some(api_addr)));
+            let req = try!(client.register(Some(primary.clone())));
+            try!(exec(req, client));
+            Ok(format!("Finished Redirecting. Primary = {}, API Address = {}",
+                       client.primary.as_ref().unwrap(),
+                       client.api_addr.as_ref().unwrap()))
 
-    let mut reader = ReadState::new();
-    loop {
-        match reader.read(sock) {
-            (_, Ok(Some(data))) => {
-                if let VrMsg::ClientReply {value, ..} = from_msgpack(&data).unwrap() {
-                    return match value{
-                        VrApiRsp::Ok => Ok("ok".to_string()),
-                        VrApiRsp::Timeout => Ok("Timeout".to_string()),
-                        VrApiRsp::Element {data, cas_tag} => {
-                            // TODO: The data may not always be utf8
-                            let string = String::from_utf8(data).unwrap();
-                            match cas_tag {
-                                Some(tag) => {
-                                    Ok(format!("CAS: {}\n{}", tag.to_string(), string))
-                                },
-                                None => Ok(string)
-                            }
-                        },
-                        VrApiRsp::KeyList {keys} => {
-                            Ok(keys.iter().fold(String::new(), |mut acc, k| {
-                                acc.push_str(k);
-                                acc.push_str("\n");
-                                acc
-                            }))
-                        },
-                        VrApiRsp::ParentNotFoundError => Ok("Parent path not found".to_string()),
-                        VrApiRsp::ElementAlreadyExistsError => Ok("Element already exists".to_string()),
-                        VrApiRsp::ElementNotFoundError(path) =>
-                            Ok(format!("Element {} Not found", path)),
-                        VrApiRsp::CasFailedError {path, expected, actual} =>
-                            Ok(format!("CAS on {} failed. Expected: {}, Actual: {}",
-                                       path, expected, actual)),
-                        VrApiRsp::Error {msg: s} => Ok(s)
-                    }
-                } else {
-                    unreachable!()
-                }
-            },
-            (new_reader, Ok(None)) =>  {
-                reader = new_reader;
-            },
-            (_, Err(_)) => panic!("Failed to read response from server")
-        }
+        },
+        VrApiRsp::Retry(duration) => {
+            thread::sleep(time::Duration::from_millis(duration));
+            /// Todo: Remove this recursion to prevent potential stack overflow
+            let req = try!(client.register(None));
+            try!(exec(req, client));
+            Ok(format!("Retry complete. Primary = {}, API Address = {}",
+                       client.primary.as_ref().unwrap(),
+                       client.api_addr.as_ref().unwrap()))
+        },
+        VrApiRsp::Ok => Ok("ok".to_string()),
+        VrApiRsp::Timeout => Ok("Timeout".to_string()),
+        VrApiRsp::Element {data, cas_tag} => {
+            // TODO: The data may not always be utf8
+            let string = String::from_utf8(data).unwrap();
+            match cas_tag {
+                Some(tag) => {
+                    Ok(format!("CAS: {}\n{}", tag.to_string(), string))
+                },
+                None => Ok(string)
+            }
+        },
+        VrApiRsp::KeyList {keys} => {
+            Ok(keys.iter().fold(String::new(), |mut acc, k| {
+                acc.push_str(k);
+                acc.push_str("\n");
+                acc
+            }))
+        },
+        VrApiRsp::ParentNotFoundError => Ok("Parent path not found".to_string()),
+        VrApiRsp::ElementAlreadyExistsError => Ok("Element already exists".to_string()),
+        VrApiRsp::ElementNotFoundError(path) => Ok(format!("Element {} Not found", path)),
+        VrApiRsp::CasFailedError {path, expected, actual} =>
+            Ok(format!("CAS on {} failed. Expected: {}, Actual: {}", path, expected, actual)),
+        VrApiRsp::Error {msg: s} => Ok(s)
     }
 }
 
 fn help() -> Error {
     let string  =
-"Usage: v2r2-cli-client <UUID> <IpAddress> [-e <command>]
+"Usage: v2r2-cli-client <IpAddress> [-e <command>]
 
     Commands:
+        list-namespaces
+        enter <Namespace ID>
         create <Element Type> <Path>
         put <Path> <Data> [CAS Version]
         delete <Path> [CAS Version]
@@ -347,4 +281,100 @@ fn help() -> Error {
 
     ";
     Error::new(ErrorKind::InvalidInput, string)
+}
+
+
+// TODO: Put V2r2Client into it's own crate
+/// This struct represents the V2R2 client implementation in rust. It is a low level client that is
+/// useful for building higher level native clients or for building clients in other langauges via
+/// FFI.
+struct V2r2Client {
+    pub client_id: ClientId,
+    pub api_addr: Option<String>,
+    pub namespace_id: Option<NamespaceId>,
+    pub primary: Option<Pid>,
+    sock: Option<TcpStream>,
+    request_num: u64
+}
+
+impl V2r2Client {
+    pub fn new(client_id: ClientId) -> V2r2Client {
+        V2r2Client {
+            client_id: client_id,
+            api_addr: None,
+            namespace_id: None,
+            primary: None,
+            sock: None,
+            request_num: 0
+        }
+    }
+
+    /// Connect to `self.api_addr`
+    pub fn connect(&mut self, api_addr: Option<String>) -> Result<()> {
+        if api_addr.is_none() && self.api_addr.is_none() {
+            return Err(Error::new(ErrorKind::InvalidInput,
+                              "API Address unknown. Please call connect with an api_addr."));
+        }
+        if api_addr.is_some() {
+            self.api_addr = api_addr;
+        }
+        self.sock = Some(try!(TcpStream::connect(&self.api_addr.as_ref().unwrap()[..])));
+        Ok(())
+    }
+
+    /// Register the client id on this node for the given namespace.
+    ///
+    /// This function returns the registration message to be written or an error if the primary is
+    /// unknown.
+    pub fn register(&mut self, primary: Option<Pid>) -> Result<VrApiReq> {
+        if primary.is_none() && self.primary.is_none() {
+            return Err(Error::new(ErrorKind::InvalidInput, "Primary unknown"));
+        }
+
+        if primary.is_some() {
+            self.primary = primary;
+            self.namespace_id = Some(NamespaceId(self.primary.as_ref().unwrap().group.clone().unwrap()));
+        }
+        let client_id = self.client_id.clone();
+        let namespace_id = self.namespace_id.clone();
+        Ok(VrApiReq::RegisterClient(client_id, namespace_id.unwrap()))
+    }
+
+    fn write_msg(&mut self, req: VrApiReq) -> Result<()> {
+        let mut encoded = Vec::new();
+        let req = VrClientMsg::Req {
+            pid: self.primary.clone(),
+            op: req,
+            request_num: self.request_num
+        };
+        try!(req.encode(&mut Encoder::new(&mut encoded)).map_err(|_| {
+            Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data")
+        }));
+        let len: u32 = encoded.len() as u32;
+        // 4 byte len header
+        let header: [u8; 4] = unsafe { mem::transmute(len.to_be()) };
+        try!(self.sock.as_ref().unwrap().write_all(&header));
+        try!(self.sock.as_ref().unwrap().write_all(&encoded));
+        self.request_num += 1;
+        Ok(())
+    }
+
+    fn read_msg(&mut self) -> Result<VrApiRsp> {
+        let mut header = [0; 4];
+        try!(self.sock.as_mut().unwrap().read_exact(&mut header));
+        let len = unsafe { u32::from_be(mem::transmute(header)) };
+        let mut buf = vec![0; len as usize];
+        try!(self.sock.as_mut().unwrap().read_exact(&mut buf));
+        let mut decoder = Decoder::new(&buf[..]);
+        let msg = try!(Decodable::decode(&mut decoder).map_err(|e| {
+            Error::new(ErrorKind::InvalidData, e.to_string())
+        }));
+        match msg {
+            VrClientMsg::Rsp {value, ..} => Ok(value),
+            req @ VrClientMsg::Req {..} => {
+                let msg = format!("Server sent a request instead of a response: {:?}", req);
+                Err(Error::new(ErrorKind::InvalidData, msg))
+            }
+        }
+    }
 }

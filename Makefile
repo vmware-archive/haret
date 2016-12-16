@@ -7,6 +7,7 @@ run:
 test:
 	cargo test
 
+SHELL := /bin/bash
 .PHONY: devrel launch stop start-dev% stop-dev%
 NUM_NODES=3
 nodes := $(shell eval "for ((i=1; i<=${NUM_NODES}; i++)); do echo dev\$${i}; done")

@@ -1,48 +1,48 @@
-mod dispatcher;
 mod replica;
-mod tenants;
 mod backend;
 mod element;
-mod vr_stats;
 mod quorum_tracker;
 mod prepare_requests;
 mod vrmsg;
-mod envelope;
 mod vr_api_messages;
+mod fsm_output;
+mod vr_envelope;
+mod view_change_state;
+mod recovery_state;
+mod connection_handler;
+mod vr_ctx_summary;
 
 pub mod vr_fsm;
+pub mod vr_ctx;
 
 pub use self::vr_fsm::{
-    VrCtx,
     VrTypes
 };
 
-pub use self::vr_stats::VrStats;
+pub use self::vr_ctx::{
+    VrCtx
+};
 
-pub use self::dispatcher::Dispatcher;
+pub use self::vr_ctx_summary::VrCtxSummary;
 
 pub use self::replica::{
-    RawReplica,
     Replica,
     VersionedReplicas
 };
 
-pub use self::tenants::{Tenants};
-
 pub use self::vrmsg::VrMsg;
-
-pub use self::envelope::{
-    Envelope,
-    PeerEnvelope,
-    Announcement,
-    ClientEnvelope,
-    ClientReplyEnvelope,
-};
+pub use self::vr_envelope::VrEnvelope;
+pub use self::fsm_output::FsmOutput;
 
 pub use self::vr_api_messages::{
+    ClientId,
+    NamespaceId,
     VrApiReq,
-    VrApiRsp
+    VrApiRsp,
+    VrClientMsg
 };
 
 pub use self::backend::{Element, VrBackend};
 pub use self::element::ElementType;
+
+pub use self::connection_handler::VrConnectionHandler;

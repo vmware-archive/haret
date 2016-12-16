@@ -1,72 +1,83 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use time::{SteadyTime, Duration};
-use super::replica::Replica;
+use std::collections::{HashSet, VecDeque};
+use time::{Duration, SteadyTime};
+use rabble::{Pid, CorrelationId};
+
+/// Metadata for an individual prepare request
+///
+/// Metdata is stored in a VecDeque where the index is the operation number.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Request {
+    pub correlation_id: CorrelationId,
+    replies: HashSet<Pid>,
+    timeout: SteadyTime
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PrepareRequests {
-    num_replicas: usize,
     quorum_size: usize,
-    timeout: Duration,
-    timeouts: VecDeque<SteadyTime>,
-    // The smallest op number for all outstanding Prepare requests
-    lowest_op: u64,
-    requests: HashMap<u64, HashSet<Replica>>
+    timeout_ms: i64,
+    // The op num at index 0 of `requests` if `requests` is not empty.
+    // If `requests` is empty, it's the next op to be prepared.
+    pub lowest_op: u64,
+    requests: VecDeque<Request>
 }
 
 impl PrepareRequests {
     pub fn new(num_replicas: usize, timeout_ms: u64 ) -> PrepareRequests {
         PrepareRequests {
-            num_replicas: num_replicas,
             quorum_size: num_replicas/2 + 1,
-            timeout: Duration::milliseconds(timeout_ms as i64),
-            timeouts: VecDeque::new(),
-            lowest_op: 0,
-            requests: HashMap::new()
+            timeout_ms: timeout_ms as i64,
+            lowest_op: 1,
+            requests: VecDeque::new(),
         }
     }
 
-    pub fn new_prepare(&mut self, op: u64) {
-        if self.timeouts.is_empty() {
+    pub fn new_prepare(&mut self, op: u64, correlation_id: CorrelationId) {
+        if self.requests.is_empty() {
             self.lowest_op = op;
         }
-        self.requests.insert(op, HashSet::with_capacity(self.num_replicas));
-        self.timeouts.push_back(SteadyTime::now() + self.timeout);
+        self.requests.push_back(Request {
+            replies: HashSet::with_capacity(self.quorum_size * 2),
+            correlation_id: correlation_id,
+            timeout: SteadyTime::now() + Duration::milliseconds(self.timeout_ms)
+        });
     }
 
-    // Returns true if the id exists, false otherwise
-    pub fn insert(&mut self, op: u64, replica: Replica) -> bool {
-        if let Some(replicas) = self.requests.get_mut(&op) {
-            replicas.insert(replica);
-            true
-        } else {
-            false
+    // Returns true if the request exists, false otherwise
+    pub fn insert(&mut self, op: u64, replica: Pid) -> bool {
+        if op >= self.lowest_op && self.requests.len() != 0 {
+            match self.requests.get_mut((op - self.lowest_op) as usize) {
+                Some(ref mut request) => {
+                    request.replies.insert(replica);
+                    return true;
+                },
+                None => return false
+            }
         }
+        false
     }
 
     /// Do we have a quorum when including the replica making the request?
+    ///
+    /// Note that we include ourself in this quorum
     pub fn has_quorum(&self, op: u64) -> bool {
-        if let Some(replicas) = self.requests.get(&op) {
-            replicas.len() >= (self.quorum_size - 1)
+        debug_assert!(op > 0);
+        if let Some(request) = self.requests.get((op - self.lowest_op) as usize) {
+            request.replies.len() >= (self.quorum_size - 1)
         } else {
             false
         }
     }
 
-    pub fn remove(&mut self, op: u64) {
-        if self.timeouts.is_empty() { return; }
-        for i in self.lowest_op..op + 1 {
-            self.requests.remove(&i);
-            // Note that removes always oare always in order (*op is monitonic)
-            // We therefore remove the first timeout in, so it doesn't cause an expiration
-            self.timeouts.pop_front();
-        }
+    pub fn remove(&mut self, op: u64) -> Vec<Request> {
+        let lowest_op = self.lowest_op;
         self.lowest_op = op + 1;
+        self.requests.drain(0..(op - lowest_op + 1) as usize).collect()
     }
 
     pub fn expired(&self) -> bool {
-        match self.timeouts.front() {
-            Some(&time) => time > SteadyTime::now(),
-            // If there are no outstanding requests, we don't step down
+        match self.requests.front() {
+            Some(request) => request.timeout > SteadyTime::now(),
             None => false
         }
     }
