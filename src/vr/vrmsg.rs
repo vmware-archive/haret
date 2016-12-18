@@ -9,8 +9,8 @@ pub enum VrMsg {
     Tick,
     SessionClosed(Uuid),
     ClientRequest {
-        /// The opaque api operation
         op: VrApiReq,
+        client_id: String,
         request_num: u64
     },
     Reconfiguration {

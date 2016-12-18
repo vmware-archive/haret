@@ -1,7 +1,13 @@
 use uuid::Uuid;
 use rabble::Pid;
 use namespaces::Namespaces;
-use vr::{VersionedReplicas, ClientId, NamespaceId};
+use vr::VersionedReplicas;
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+pub struct ClientId(pub String);
+
+#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+pub struct NamespaceId(pub String);
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum NamespaceMsg {

@@ -1,27 +1,36 @@
 //! This module contains test functions for specific API operations. It's intended to be general
 //! enough to use for multiple tests.
 
-use std::path::Path;
 use super::scheduler::Scheduler;
-use v2r2::vr::{VrMsg, VrCtx, VrEnvelope, VrApiReq, VrApiRsp};
+use v2r2::vr::{VrMsg, VrCtx, VrEnvelope, VrApiReq, VrApiRsp, VrApiError, TreeOp, TreeOpResult, NodeType};
+use vertree::{self, Reply, Value};
 
 pub fn assert_create_response(scheduler: &Scheduler,
                               request: VrMsg,
                               reply: VrEnvelope) -> Result<(), String>
 {
     let (request_num, api_req, api_rsp) = try!(match_client_reply(request, reply));
-    let path = if let VrApiReq::Create {path, ..} = api_req { path } else { fail!() };
+    let (path, ty) = if let VrApiReq::TreeOp(TreeOp::CreateNode {path, ty}) = api_req {
+        (path, ty)
+    } else {
+        fail!()
+    };
+
     match api_rsp {
         VrApiRsp::Ok => {
-            return assert_successful_create(scheduler, path, request_num);
+            assert_successful_create(scheduler, path, request_num, ty)
         },
-        VrApiRsp::ParentNotFoundError => {
-            return assert_parent_not_found_primary(scheduler, path);
+        VrApiRsp::Error(VrApiError::AlreadyExists(_)) => {
+            assert_successful_create(scheduler, path, request_num, ty)
         },
-        VrApiRsp::ElementAlreadyExistsError => {
-            return assert_element_has_diff_op_num_from_latest(scheduler, path);
+        VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => {
+            Ok(())
         },
-        _ => fail!()
+        e => {
+            println!("e = {:?}", e);
+            fail!()
+        }
+        //_ => fail!()
     }
 }
 
@@ -32,15 +41,26 @@ pub fn assert_put_response(scheduler: &Scheduler,
 {
     let (request_num, api_req, api_rsp) = try!(match_client_reply(request, reply));
     let (path, data) =
-        if let VrApiReq::Put {path, data, ..} = api_req { (path, data) } else { fail!() };
+        if let VrApiReq::TreeOp(TreeOp::BlobPut {path, val, ..}) = api_req {
+            (path, val)
+        } else {
+            fail!()
+        };
+
     match api_rsp {
-        VrApiRsp::Ok => {
-            return assert_successful_put_or_get(scheduler, path, request_num, data);
+        VrApiRsp::TreeOpResult(TreeOpResult::Ok(_)) => {
+            assert_successful_put_or_get(scheduler, path, request_num, data)
         },
-        VrApiRsp::ElementNotFoundError(_) => {
-            return assert_element_not_found_primary(scheduler, path);
+        VrApiRsp::Error(VrApiError::AlreadyExists(_)) => Ok(()),
+        VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => Ok(()),
+        VrApiRsp::Error(VrApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
+        VrApiRsp::Error(VrApiError::DoesNotExist(_)) => {
+            assert_element_not_found_primary(scheduler, path)
         },
-        _ => fail!()
+        e => {
+            println!("put unhandled error = {:?}", e);
+            fail!()
+        }
     }
 }
 
@@ -48,17 +68,27 @@ pub fn assert_get_response(scheduler: &Scheduler,
                            request: VrMsg,
                            reply: VrEnvelope) -> Result<(), String>
 {
-    let (request_num, api_req, api_rsp) = try!(match_client_reply(request,
-                                                                              reply));
-    let path = if let VrApiReq::Get {path, ..} = api_req { path } else { fail!() };
+    let (request_num, api_req, api_rsp) = try!(match_client_reply(request, reply));
+    let path = if let VrApiReq::TreeOp(TreeOp::BlobGet {path, ..}) = api_req {
+        path
+    } else {
+        fail!()
+    };
+
     match api_rsp {
-        VrApiRsp::Element{data, ..} => {
-            return assert_successful_put_or_get(scheduler, path, request_num, data);
+        VrApiRsp::TreeOpResult(TreeOpResult::Blob(data, _)) => {
+            assert_successful_put_or_get(scheduler, path, request_num, data)
         },
-        VrApiRsp::ElementNotFoundError(_) => {
-            return assert_element_not_found_primary(scheduler, path);
+        VrApiRsp::Error(VrApiError::AlreadyExists(_)) => Ok(()),
+        VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => Ok(()),
+        VrApiRsp::Error(VrApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
+        VrApiRsp::Error(VrApiError::DoesNotExist(_)) => {
+            assert_element_not_found_primary(scheduler, path)
         },
-        _ => fail!()
+        e => {
+            println!("get unhandled error = {:?}", e);
+            fail!()
+        }
     }
 }
 
@@ -67,7 +97,7 @@ pub fn assert_get_response(scheduler: &Scheduler,
 fn match_client_reply(request: VrMsg, reply: VrEnvelope)
   -> Result<(u64, VrApiReq, VrApiRsp), String>
 {
-    if let VrMsg::ClientRequest {op, request_num} = request {
+    if let VrMsg::ClientRequest {op, request_num, ..} = request {
         let VrEnvelope {msg, ..} = reply;
         if let VrMsg::ClientReply {request_num: reply_req_num, value, ..} = msg {
             let _ = safe_assert_eq!(reply_req_num, request_num, op);
@@ -80,11 +110,12 @@ fn match_client_reply(request: VrMsg, reply: VrEnvelope)
 
 pub fn assert_successful_create(scheduler: &Scheduler,
                                 path: String,
-                                request_num: u64) -> Result<(), String>
+                                request_num: u64,
+                                ty: NodeType) -> Result<(), String>
 {
     try!(assert_majority_of_nodes_contain_op(scheduler, request_num));
     try!(assert_primary_has_committed_op(scheduler, request_num));
-    assert_path_exists_in_primary_backend(scheduler, path.clone())
+    assert_path_exists_in_primary_backend(scheduler, path.clone(), ty)
 }
 
 pub fn assert_successful_put_or_get(scheduler: &Scheduler,
@@ -132,9 +163,14 @@ fn assert_data_matches_primary_backend(scheduler: &Scheduler,
 {
     if let Some(ref primary) = scheduler.primary {
         let (_, ctx) = scheduler.get_state(primary).unwrap();
-        match ctx.backend.tree.get(&path) {
-            Some(element) => safe_assert_eq!(element.data, data),
-            None => fail!()
+        match ctx.backend.tree.blob_get(path) {
+            Ok(Reply {value, ..}) => {
+                if let Value::Blob(blob) = value {
+                    return safe_assert_eq!(blob, data);
+                }
+                fail!()
+            },
+            _ => fail!()
         }
     } else {
         fail!()
@@ -142,17 +178,18 @@ fn assert_data_matches_primary_backend(scheduler: &Scheduler,
 }
 
 fn assert_path_exists_in_primary_backend(scheduler: &Scheduler,
-                                         path: String) -> Result<(), String>
+                                         path: String,
+                                         ty: NodeType) -> Result<(), String>
 {
     if let Some(ref primary) = scheduler.primary {
-        let mut ctx = scheduler.get_state(primary).unwrap().1.clone();
-        // only call is public
-        let get = VrApiReq::Get {path: path, cas: false};
-        // op num is ignored in gets. just use 0
-        match ctx.backend.call(0, get) {
-            VrApiRsp::Element{..} => Ok(()),
-            _ => fail!()
+        let ctx = scheduler.get_state(primary).unwrap().1.clone();
+        if ctx.backend.tree.find(&path, ty.into()).is_err() {
+            // Check to see if it was already created as a directory
+            if ctx.backend.tree.find(&path, vertree::NodeType::Directory).is_err() {
+                fail!()
+            }
         }
+        Ok(())
     } else {
         fail!()
     }
@@ -163,42 +200,7 @@ fn assert_element_not_found_primary(scheduler: &Scheduler,
 {
     if let Some(ref primary) = scheduler.primary {
         let (_, ctx) = scheduler.get_state(primary).unwrap();
-        safe_assert!(!ctx.backend.tree.contains_key(&path))
-    } else {
-        fail!()
-    }
-}
-
-fn assert_parent_not_found_primary(scheduler: &Scheduler,
-                                   path: String) -> Result<(), String>
-{
-    if let Some(ref primary) = scheduler.primary {
-        let (_, ctx) = scheduler.get_state(primary).unwrap();
-
-        let path = Path::new(&path);
-        match path.parent() {
-            Some(parent) => {
-                if parent == Path::new("/") { return Ok(())}
-                safe_assert!(!ctx.backend.tree.contains_key(parent.to_str().unwrap()))
-            },
-            // If there isn't a parent we are at the root and should not get this error
-            None => fail!()
-        }
-    } else {
-        fail!()
-    }
-}
-
-fn assert_element_has_diff_op_num_from_latest(scheduler: &Scheduler,
-                                              path: String) -> Result<(), String>
-{
-
-    if let Some(ref primary) = scheduler.primary {
-        let (_, ctx) = scheduler.get_state(primary).unwrap();
-        match ctx.backend.tree.get(&path) {
-            Some(element) => safe_assert!(element.op < ctx.op),
-            None => fail!()
-        }
+        safe_assert!(ctx.backend.tree.blob_get(path).is_err())
     } else {
         fail!()
     }

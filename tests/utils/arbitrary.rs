@@ -4,7 +4,7 @@ use rand::thread_rng;
 use rand::distributions::range::Range;
 use rand::distributions::IndependentSample;
 use quickcheck::{Arbitrary, Gen};
-use v2r2::vr::{VrMsg, ElementType, VrApiReq};
+use v2r2::vr::{VrMsg, VrApiReq, TreeOp, NodeType};
 
 #[derive(Debug, Clone)]
 struct Path(pub String);
@@ -54,6 +54,7 @@ pub struct ClientRequest(pub VrMsg);
 impl Arbitrary for ClientRequest {
     fn arbitrary<G: Gen>(g: &mut G) -> ClientRequest {
         ClientRequest(VrMsg::ClientRequest {
+            client_id: "test-client".to_string(),
             request_num: 0, // This will get mutated
             op: ApiReq::arbitrary(g).0
         })
@@ -67,13 +68,11 @@ impl Arbitrary for ApiReq {
     fn arbitrary<G: Gen>(g: &mut G) -> ApiReq {
         let range = Range::new(0, 3);
         let path = Path::arbitrary(g).0;
-        let req = match range.ind_sample(&mut thread_rng()) {
-            0 => VrApiReq::Create {path: path, ty: ElementType::Binary},
-            1 => VrApiReq::Put {path: path,
-                                data: b"hello".to_vec(),
-                                cas_tag: None},
-            _ => VrApiReq::Get {path: path, cas: false}
+        let op = match range.ind_sample(&mut thread_rng()) {
+            0 => TreeOp::CreateNode {path: path, ty: NodeType::Blob},
+            1 => TreeOp::BlobPut {path: path, val: b"hello".to_vec()},
+            _ => TreeOp::BlobGet {path: path}
         };
-        ApiReq(req)
+        ApiReq(VrApiReq::TreeOp(op))
     }
 }

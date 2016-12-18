@@ -15,7 +15,7 @@ use super::prepare_requests::PrepareRequests;
 use super::quorum_tracker::QuorumTracker;
 use super::view_change_state::{ViewChangeState, Latest};
 use super::recovery_state::{RecoveryState, RecoveryPrimary};
-use super::vr_api_messages::{VrApiReq, VrApiRsp};
+use super::vr_api_messages::{VrApiRsp, VrApiError};
 use namespace_msg::NamespaceMsg;
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
@@ -327,10 +327,9 @@ impl VrCtx {
             match msg {
                 VrMsg::ClientRequest {ref op, .. } => {
                     // The client likely hasn't reconnected, don't bother sending a reply here
-                    self.backend.call(i+1, op.clone());
+                    self.backend.call(op.clone());
                 },
                 VrMsg::Reconfiguration {replicas, ..} => {
-                    self.backend.call(i+1, VrApiReq::Null);
                     self.epoch += 1;
                     self.update_for_new_epoch(i+1, replicas);
                     output.push(self.announce_reconfiguration());
@@ -387,10 +386,9 @@ impl VrCtx {
             let msg = self.log[i as usize].clone();
             match msg {
                 VrMsg::ClientRequest {op, ..} => {
-                    self.backend.call(i+1, op);
+                    self.backend.call(op);
                 },
                 VrMsg::Reconfiguration {replicas, ..} => {
-                    self.backend.call(i+1, VrApiReq::Null);
                     self.update_for_new_epoch(i+1, replicas);
                     output.push(self.announce_reconfiguration());
                     output.push(self.set_primary());
@@ -440,16 +438,16 @@ impl VrCtx {
     pub fn validate_reconfig(&self, envelope: &VrEnvelope) -> Option<FsmOutput> {
         if let VrMsg::Reconfiguration {client_req_num, epoch, ref replicas} = envelope.msg {
             if replicas.len() < 3 {
-                let errmsg = "New config must contain at least 3 replicas".to_string();
-                let reply = self.client_reply_msg(client_req_num, VrApiRsp::Error {msg: errmsg});
+                let rsp = VrApiRsp::Error(VrApiError::NotEnoughReplicas);
+                let reply = self.client_reply_msg(client_req_num, rsp);
                 return Some(FsmOutput::Vr(VrEnvelope::new(envelope.from.clone(),
                                             self.pid.clone(),
                                             reply,
                                             envelope.correlation_id.clone())));
             }
             if epoch < self.epoch || epoch > self.epoch {
-                let errmsg = "Reconfiguration attempted with incorrect epoch".to_string();
-                let reply = self.client_reply_msg(client_req_num, VrApiRsp::Error {msg: errmsg});
+                let rsp = VrApiRsp::Error(VrApiError::BadEpoch);
+                let reply = self.client_reply_msg(client_req_num, rsp);
                 return Some(FsmOutput::Vr(VrEnvelope::new(envelope.from.clone(),
                                             self.pid.clone(),
                                             reply,
@@ -474,8 +472,8 @@ impl VrCtx {
             let msg = self.log[i as usize].clone();
             self.commit_num = i + 1;
             match msg {
-                VrMsg::ClientRequest {ref op, request_num} => {
-                    let rsp = self.backend.call(i+1, op.clone());
+                VrMsg::ClientRequest {ref op, request_num, ..} => {
+                    let rsp = self.backend.call(op.clone());
                     if i >= lowest_prepared_op - 1 {
                         // This primary prepared this request, and wasn't elected after it was
                         // prepared but before it committed it.
@@ -489,7 +487,7 @@ impl VrCtx {
                     }
                 },
                 VrMsg::Reconfiguration {client_req_num, epoch, replicas, ..} => {
-                    let rsp = self.backend.call(i+1, VrApiReq::Null);
+                    let rsp = VrApiRsp::Ok;
                     let correlation_id =
                         if i >= lowest_prepared_op - 1 {
                             // This replica prepared this request as primary, and wasn't elected after

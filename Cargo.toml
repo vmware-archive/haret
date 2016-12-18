@@ -1,6 +1,6 @@
 [package]
 name = "v2r2"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 
 [dependencies]
@@ -18,6 +18,9 @@ amy = "0.6"
 funfsm = "0.1"
 orset = "0.1"
 rabble = "0.1"
+protobuf = "1.0.24"
+vertree = "0.1"
+lazy_static = "0.1"
 
 [dev-dependencies]
 assert_matches = "1.0"

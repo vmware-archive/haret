@@ -263,7 +263,6 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             next!(state_transfer, output)
         },
         VrMsg::Tick => {
-            println!("BACKUP TICK: timeout = {}", ctx.idle_timeout());
             if ctx.idle_timeout() {
                 let output = ctx.reset_and_start_view_change();
                 next!(wait_for_start_view_change, output)
