@@ -11,10 +11,8 @@ use std::str;
 use std::env::Args;
 use std::io;
 use std::process::exit;
-use std::thread;
 use std::io::{Read, Result, Error, ErrorKind, Write};
 use std::net::TcpStream;
-use std::time;
 use std::mem;
 use uuid::Uuid;
 use protobuf::{RepeatedField, parse_from_bytes, Message};
@@ -682,13 +680,11 @@ fn exec(req: ApiRequest, client: &mut V2r2Client) -> Result<String> {
 
     if api_response.has_retry() {
         let duration = api_response.take_retry().get_milliseconds();
-        thread::sleep(time::Duration::from_millis(duration));
-        /// Todo: Remove this recursion to prevent potential stack overflow
-        let req = try!(client.register(None));
-        try!(exec(req, client));
-        return Ok(format!("Retry complete. Primary = {:?}, API Address = {}",
-                   client.primary.as_ref().unwrap(),
-                   client.api_addr.as_ref().unwrap()));
+        return Ok(format!("Primary not found. Please retry in {} seconds.", duration*1000));
+    }
+
+    if api_response.has_unknown_namespace() {
+        return Ok("Unknown namespace".to_string());
     }
 
     if api_response.has_timeout() {

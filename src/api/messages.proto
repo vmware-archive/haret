@@ -222,6 +222,7 @@ message ApiResponse {
     Retry retry = 5;
     bool timeout = 6;
     ApiError error = 7;
+    bool unknown_namespace = 8;
   }
 }
 

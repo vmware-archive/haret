@@ -14,7 +14,8 @@ type Milliseconds = u64;
 pub enum ApiRpy {
     ClientRegistration {primary: Pid, new_registration: bool},
     Redirect {primary: Pid, api_addr: String},
-    Retry(Milliseconds)
+    Retry(Milliseconds),
+    UnknownNamespace
 }
 
 /// The connection handler for API clients
@@ -433,6 +434,11 @@ fn api_rpy_to_proto_api_response(reply: ApiRpy) -> ApiResponse {
             retry.set_milliseconds(milliseconds);
             let mut response = ApiResponse::new();
             response.set_retry(retry);
+            response
+        },
+        ApiRpy::UnknownNamespace => {
+            let mut response = ApiResponse::new();
+            response.set_unknown_namespace(true);
             response
         }
     }

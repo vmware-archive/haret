@@ -172,17 +172,17 @@ impl NamespaceMgr {
                 if replica.node == self.node.id {
                     // TODO: Actually return a valid new_registration value when the
                     // client table exists
-                    ApiRpy::ClientRegistration {primary: replica.clone(),
-                    new_registration: true}
+                    ApiRpy::ClientRegistration {primary: replica.clone(), new_registration: true}
                 } else {
                     match self.api_addrs.get(&replica.node) {
                         Some(addr) =>
                             ApiRpy::Redirect {primary: replica.clone(), api_addr: addr.clone()},
-                        None => ApiRpy::Retry(10000)
+                        None =>
+                            ApiRpy::Retry(10000)
                     }
                 }
             },
-            None => ApiRpy::Retry(10000)
+            None => ApiRpy::UnknownNamespace
         };
         let envelope = Envelope {
             to: c_id.pid.clone(),
