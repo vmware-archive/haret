@@ -18,13 +18,15 @@ extern crate slog_stdlog;
 extern crate slog_term;
 extern crate slog_envlogger;
 
+extern crate vertree;
+
 #[macro_use]
 mod utils;
 
 use utils::{vr_invariants, op_invariants};
 use utils::scheduler::Scheduler;
 use utils::arbitrary::{Op, ClientRequest};
-use v2r2::vr::{VrMsg, VrApiReq, VrEnvelope};
+use v2r2::vr::{VrMsg, VrApiReq, VrEnvelope, TreeOp};
 
 /// Test that a fixed replica set (no reconfigurations) properly runs VR operations
 quickcheck! {
@@ -47,10 +49,14 @@ quickcheck! {
 
 fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Result<(), String> {
     match op {
-        Op::ClientRequest(ClientRequest(VrMsg::ClientRequest{op, ..})) => {
+        Op::ClientRequest(ClientRequest(VrMsg::ClientRequest{op, client_id, ..})) => {
             // Client requests are generated with invalid client request nums
             *client_req_num += 1;
-            let req = VrMsg::ClientRequest {request_num: *client_req_num, op: op};
+            let req = VrMsg::ClientRequest {
+                request_num: *client_req_num,
+                op: op,
+                client_id: client_id
+            };
             let mut replies = scheduler.send_to_primary(req.clone());
             if replies.len() == 1 {
                 return assert_client_request_correctness(&scheduler, req, replies.pop().unwrap());
@@ -110,11 +116,11 @@ fn assert_response_matches_internal_replica_state(scheduler: &Scheduler,
                                                   reply: VrEnvelope) -> Result<(), String>
 {
     match request {
-        VrMsg::ClientRequest {op: VrApiReq::Create{..}, ..} =>
+        VrMsg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::CreateNode{..}), ..} =>
             op_invariants::assert_create_response(scheduler, request, reply),
-        VrMsg::ClientRequest {op: VrApiReq::Put{..}, ..} =>
+        VrMsg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobPut{..}), ..} =>
             op_invariants::assert_put_response(scheduler, request, reply),
-        VrMsg::ClientRequest {op: VrApiReq::Get{..}, ..} =>
+        VrMsg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobGet{..}), ..} =>
             op_invariants::assert_get_response(scheduler, request, reply),
         _ => fail!()
     }

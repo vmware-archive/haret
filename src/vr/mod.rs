@@ -1,6 +1,5 @@
 mod replica;
 mod backend;
-mod element;
 mod quorum_tracker;
 mod prepare_requests;
 mod vrmsg;
@@ -9,7 +8,6 @@ mod fsm_output;
 mod vr_envelope;
 mod view_change_state;
 mod recovery_state;
-mod connection_handler;
 mod vr_ctx_summary;
 
 pub mod vr_fsm;
@@ -35,14 +33,14 @@ pub use self::vr_envelope::VrEnvelope;
 pub use self::fsm_output::FsmOutput;
 
 pub use self::vr_api_messages::{
-    ClientId,
-    NamespaceId,
     VrApiReq,
     VrApiRsp,
-    VrClientMsg
+    VrApiError,
+    TreeOp,
+    TreeCas,
+    NodeType,
+    Guard,
+    TreeOpResult
 };
 
-pub use self::backend::{Element, VrBackend};
-pub use self::element::ElementType;
-
-pub use self::connection_handler::VrConnectionHandler;
+pub use self::backend::VrBackend;

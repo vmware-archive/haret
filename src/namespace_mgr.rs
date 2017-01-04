@@ -10,12 +10,12 @@ use funfsm::{Fsm, StateFn};
 use msg::Msg;
 use config::Config;
 use vr::{VrMsg, Replica, VersionedReplicas};
-use namespace_msg::NamespaceMsg;
+use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};
 use namespaces::Namespaces;
 use vr::vr_fsm::{self, VrTypes};
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
-use vr::{NamespaceId, ClientId, VrApiRsp};
 use admin::{AdminReq, AdminRpy};
+use api::ApiRpy;
 
 const MANAGEMENT_TICK_MS: u64 = 10000; // 10s
 
@@ -172,22 +172,22 @@ impl NamespaceMgr {
                 if replica.node == self.node.id {
                     // TODO: Actually return a valid new_registration value when the
                     // client table exists
-                    VrApiRsp::ClientRegistration {primary: replica.clone(),
+                    ApiRpy::ClientRegistration {primary: replica.clone(),
                     new_registration: true}
                 } else {
                     match self.api_addrs.get(&replica.node) {
                         Some(addr) =>
-                            VrApiRsp::Redirect {primary: replica.clone(), api_addr: addr.clone()},
-                        None => VrApiRsp::Retry(10000)
+                            ApiRpy::Redirect {primary: replica.clone(), api_addr: addr.clone()},
+                        None => ApiRpy::Retry(10000)
                     }
                 }
             },
-            None => VrApiRsp::Retry(10000)
+            None => ApiRpy::Retry(10000)
         };
         let envelope = Envelope {
             to: c_id.pid.clone(),
             from: self.pid.clone(),
-            msg: rabble::Msg::User(Msg::VrApiRsp(msg)),
+            msg: rabble::Msg::User(Msg::ApiRpy(msg)),
             correlation_id: Some(c_id)
         };
         self.node.send(envelope).unwrap();

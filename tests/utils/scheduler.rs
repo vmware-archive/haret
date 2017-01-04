@@ -9,8 +9,7 @@ use slog::{DrainExt, Logger};
 use slog_term;
 use slog_envlogger;
 use funfsm::{Fsm, StateFn};
-use v2r2::NamespaceMsg;
-use v2r2::vr::NamespaceId;
+use v2r2::{NamespaceMsg, NamespaceId};
 use v2r2::vr::{vr_fsm, VrMsg, VrCtx, VrTypes, VersionedReplicas, VrEnvelope, FsmOutput};
 use rabble::{Pid, NodeId, CorrelationId};
 

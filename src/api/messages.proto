@@ -1,0 +1,326 @@
+syntax = "proto3";
+
+message ApiMsg {
+  oneof req_reply {
+    ApiRequest request = 1;
+    ApiResponse response = 2;
+  }
+}
+
+message ApiRequest {
+  oneof request {
+    bool get_namespaces = 1;
+    RegisterClient register_client = 2;
+    ConsensusRequest consensus_request = 3;
+  }
+}
+
+message RegisterClient {
+  string client_id = 1;
+  string namespace_id = 2;
+}
+
+message ApiPid {
+  string name = 1;
+  string group = 2;
+  string node_name = 3;
+  string node_addr = 4;
+}
+
+message ConsensusRequest {
+  ApiPid to = 1;
+  string client_id = 2;
+  uint64 client_request_num = 3;
+  oneof op {
+    TreeOp tree_op = 4;
+    TreeCas tree_cas = 5;
+  }
+}
+
+message TreeOp {
+  oneof op {
+    CreateNode create_node = 1;
+    DeleteNode delete_node = 2;
+    ListKeys list_keys = 3;
+    BlobPut blob_put = 4;
+    BlobGet blob_get = 5;
+    BlobSize blob_size = 6;
+    QueuePush queue_push = 7;
+    QueuePop queue_pop = 8;
+    QueueFront queue_front = 9;
+    QueueBack queue_back = 10;
+    QueueLen queue_len = 11;
+    SetInsert set_insert = 12;
+    SetRemove set_remove = 13;
+    SetContains set_contains = 14;
+    SetUnion set_union = 15;
+    SetIntersection set_intersection = 16;
+    SetDifference set_difference = 17;
+    SetSymmetricDifference set_symmetric_difference = 18;
+    SetSubsetPath set_subset_path = 19;
+    SetSubsetSet set_subset_set = 20;
+    SetSupersetPath set_superset_path = 21;
+    SetSupersetSet set_superset_set = 22;
+  }
+}
+
+message TreeOpResult {
+  uint64 optional_version = 1;
+  oneof result {
+    bool ok = 2;
+    bool bool = 3;
+    bytes blob = 4;
+    uint64 int = 5;
+    Set set = 6;
+    Keys keys = 7;
+    bool empty = 8;
+  }
+}
+
+message TreeCasResult {
+  repeated TreeOpResult results = 1;
+}
+
+message Keys {
+  repeated Key keys = 1;
+}
+
+message Key {
+  string name = 1;
+  uint64 version = 2;
+}
+
+message Guard {
+  string path = 1;
+  uint64 version = 2;
+}
+
+message TreeCas {
+  repeated Guard guards = 1;
+  repeated TreeOp tree_ops = 2;
+}
+
+enum NodeType {
+  BLOB = 0;
+  QUEUE = 1;
+  SET = 2;
+  DIRECTORY = 3;
+}
+
+message CreateNode {
+  string path = 1;
+  NodeType node_type = 2;
+}
+
+message DeleteNode {
+  string path = 1;
+}
+
+message ListKeys {
+  string path = 1;
+}
+
+message BlobPut {
+  string path = 1;
+  bytes val = 2;
+}
+
+message BlobGet {
+  string path = 1;
+}
+
+message BlobSize {
+  string path = 1;
+}
+
+message QueuePush {
+  string path = 1;
+  bytes val = 2;
+}
+
+message QueuePop {
+  string path = 1;
+}
+
+message QueueFront {
+  string path = 1;
+}
+
+message QueueBack {
+  string path = 1;
+}
+
+message QueueLen {
+  string path = 1;
+}
+
+message SetInsert {
+  string path = 1;
+  bytes val = 2;
+}
+
+message SetRemove {
+  string path = 1;
+  bytes val = 2;
+}
+
+message SetContains {
+  string path = 1;
+  bytes val = 2;
+}
+
+message Set {
+  repeated bytes val = 1;
+}
+
+message SetUnion {
+  repeated string paths = 1;
+  repeated Set sets = 2;
+}
+
+message SetIntersection {
+  string path1 = 1;
+  string path2 = 2;
+}
+
+message SetDifference {
+  string path1 = 1;
+  string path2 = 2;
+}
+
+message SetSymmetricDifference {
+  string path1 = 1;
+  string path2 = 2;
+}
+
+message SetSubsetPath {
+  string path1 = 1;
+  string path2 = 2;
+}
+
+message SetSubsetSet {
+  string path = 1;
+  Set set = 2;
+}
+
+message SetSupersetPath {
+  string path1 = 1;
+  string path2 = 2;
+}
+
+message SetSupersetSet {
+  string path = 1;
+  Set set = 2;
+}
+
+message ApiResponse {
+  oneof response {
+    ConsensusReply consensus_reply = 1;
+    Namespaces namespaces = 2;
+    ClientRegistration client_registration = 3;
+    Redirect redirect = 4;
+    Retry retry = 5;
+    bool timeout = 6;
+    ApiError error = 7;
+  }
+}
+
+message Namespaces {
+  repeated string ids = 1;
+}
+
+message ConsensusReply {
+  uint64 epoch = 1;
+  uint64 view = 2;
+  uint64 request_num = 3;
+  oneof value {
+    bool ok = 4;
+    TreeOpResult tree_op_result = 5;
+    TreeCasResult tree_cas_result = 6;
+    string path = 7;
+    ApiError error = 8;
+  }
+}
+
+message ClientRegistration {
+  ApiPid primary = 1;
+  bool new_registration = 2;
+}
+
+message Redirect {
+  ApiPid primary = 1;
+  string api_addr = 2;
+}
+
+message Retry {
+  uint64 milliseconds = 1;
+}
+
+message ApiError {
+  oneof error {
+    NotFound not_found = 1;
+    AlreadyExists already_exists = 2;
+    DoesNotExist does_not_exist = 3;
+    WrongType wrong_type = 4;
+    PathMustEndInDirectory path_must_end_in_directory = 5;
+    PathMustBeAbsolute path_must_be_absolute = 6;
+    CasFailed cas_failed = 7;
+    BadFormat bad_format = 8;
+    Io io = 9;
+    EncodingError encoding = 10;
+    InvalidCas invalid_cas = 11;
+    string msg = 12;
+    bool cannot_delete_root = 13;
+    bool invalid_msg = 14;
+    bool timeout = 15;
+    bool not_enough_replicas = 16;
+    bool bad_epoch = 17;
+  }
+}
+
+message NotFound {
+  string path = 1;
+}
+
+message AlreadyExists {
+  string path = 1;
+}
+
+message DoesNotExist {
+  string path = 1;
+}
+
+message WrongType {
+  string path = 1;
+  NodeType node_type = 2;
+}
+
+message PathMustEndInDirectory {
+  string path = 1;
+}
+
+message PathMustBeAbsolute {
+  string path = 1;
+}
+
+message CasFailed {
+  string path = 1;
+  uint64 expected = 2;
+  uint64 actual = 3;
+}
+
+message BadFormat {
+  string msg = 1;
+}
+
+message Io {
+  string msg = 1;
+}
+
+message EncodingError {
+  string msg = 1;
+}
+
+message InvalidCas {
+  string msg = 1;
+}

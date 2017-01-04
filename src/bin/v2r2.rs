@@ -9,12 +9,13 @@ extern crate slog_envlogger;
 
 use slog::DrainExt;
 use std::thread;
-use rabble::{Pid, NodeId, Service, MsgpackSerializer, TcpServerHandler};
+use rabble::{Pid, NodeId, Service, MsgpackSerializer, ProtobufSerializer, TcpServerHandler};
 use v2r2::config::Config;
 use v2r2::Msg;
 use v2r2::NamespaceMgr;
-use v2r2::vr::{VrConnectionHandler, VrClientMsg};
 use v2r2::admin::{AdminConnectionHandler, AdminMsg};
+use v2r2::api::ApiConnectionHandler;
+use v2r2::api::messages::ApiMsg;
 
 fn main() {
 
@@ -61,7 +62,7 @@ fn main() {
     };
     info!(logger, "Starting API Server"; "pid" => api_pid.to_string(),
                                          "listening" => config.vr_api_host.clone());
-    let handler: TcpServerHandler<VrConnectionHandler, MsgpackSerializer<VrClientMsg>> =
+    let handler: TcpServerHandler<ApiConnectionHandler, ProtobufSerializer<ApiMsg>> =
         TcpServerHandler::new(api_pid.clone(), &config.vr_api_host, 5000, None);
     let mut api_service = Service::new(api_pid, node.clone(), handler).unwrap();
     handles.push(thread::spawn(move || {
