@@ -81,8 +81,8 @@ fn run_script(flag: &str, mut args: Args, mut client: V2r2Client) {
     }
 }
 
-fn run(command: String, client: &mut V2r2Client) -> Result<String> {
-    let req = try!(parse(command, &client));
+fn run(command: String, mut client: &mut V2r2Client) -> Result<String> {
+    let req = try!(parse(command, &mut client));
     exec(req, client)
 }
 
@@ -95,7 +95,7 @@ fn prompt() {
 struct Command {
     pattern: &'static str,
     description: &'static str,
-    handler: fn(Vec<&str>, &V2r2Client) -> ApiRequest,
+    handler: fn(Vec<&str>, &mut V2r2Client) -> ApiRequest,
     consensus: bool,
 }
 
@@ -317,7 +317,7 @@ fn pattern_match(pattern: &'static str, argv: &Vec<&str>) -> bool {
     true
 }
 
-fn parse(argv: String, client: &V2r2Client) -> Result<ApiRequest> {
+fn parse(argv: String, mut client: &mut V2r2Client) -> Result<ApiRequest> {
     let args: Vec<_> = argv.split_whitespace().collect();
     for command in commands() {
         if pattern_match(&command.pattern, &args) {
@@ -326,19 +326,20 @@ fn parse(argv: String, client: &V2r2Client) -> Result<ApiRequest> {
                     <namespace_id>`.";
                 return Err(Error::new(ErrorKind::InvalidInput, msg));
             }
-            return Ok((command.handler)(args, &client))
+            return Ok((command.handler)(args, &mut client))
         }
     }
     Err(Error::new(ErrorKind::InvalidInput, "Invalid Input. Type 'help' for commands"))
 }
 
-fn list_namespaces(_: Vec<&str>, _: &V2r2Client) -> ApiRequest {
+fn list_namespaces(_: Vec<&str>, _: &mut V2r2Client) -> ApiRequest {
     let mut request = ApiRequest::new();
     request.set_get_namespaces(true);
     request
 }
 
-fn enter_namespace(argv: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn enter_namespace(argv: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
+    client.reset_primary();
     let mut msg = RegisterClient::new();
     msg.set_client_id(client.client_id.clone());
     msg.set_namespace_id(argv[1].to_string());
@@ -347,7 +348,7 @@ fn enter_namespace(argv: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     request
 }
 
-fn ls(_: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn ls(_: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let mut list_keys = ListKeys::new();
     list_keys.set_path("/".to_string());
 
@@ -365,7 +366,7 @@ fn ls(_: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     api_request
 }
 
-fn consensus_request(tree_op: TreeOp, client: &V2r2Client) -> ApiRequest {
+fn consensus_request(tree_op: TreeOp, client: &mut V2r2Client) -> ApiRequest {
     let mut consensus_req = ConsensusRequest::new();
     consensus_req.set_to(client.primary.as_ref().unwrap().clone());
     consensus_req.set_client_id(client.client_id.clone());
@@ -376,7 +377,7 @@ fn consensus_request(tree_op: TreeOp, client: &V2r2Client) -> ApiRequest {
     api_request
 }
 
-fn create(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn create(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let path = args.pop().unwrap();
     let str_type = args.pop().unwrap();
     let node_type = match &str_type as &str {
@@ -393,7 +394,7 @@ fn create(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn blob_put(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn blob_put(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let blob = args.pop().unwrap();
     let path = args.pop().unwrap();
     let mut blob_put = BlobPut::new();
@@ -404,7 +405,7 @@ fn blob_put(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn blob_get(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn blob_get(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let path = args.pop().unwrap();
     let mut blob_get = BlobGet::new();
     blob_get.set_path(path.to_string());
@@ -413,7 +414,7 @@ fn blob_get(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn blob_size(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn blob_size(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let path = args.pop().unwrap();
     let mut blob_size = BlobSize::new();
     blob_size.set_path(path.to_string());
@@ -422,7 +423,7 @@ fn blob_size(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn queue_push(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn queue_push(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let blob = args.pop().unwrap();
     let path = args.pop().unwrap();
     let mut queue_push = QueuePush::new();
@@ -433,7 +434,7 @@ fn queue_push(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn queue_pop(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn queue_pop(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let path = args.pop().unwrap();
     let mut queue_pop = QueuePop::new();
     queue_pop.set_path(path.to_string());
@@ -442,7 +443,7 @@ fn queue_pop(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn queue_front(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn queue_front(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let path = args.pop().unwrap();
     let mut queue_front = QueueFront::new();
     queue_front.set_path(path.to_string());
@@ -451,7 +452,7 @@ fn queue_front(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn queue_back(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn queue_back(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let path = args.pop().unwrap();
     let mut queue_back = QueueBack::new();
     queue_back.set_path(path.to_string());
@@ -460,7 +461,7 @@ fn queue_back(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn queue_len(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn queue_len(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let path = args.pop().unwrap();
     let mut queue_len = QueueLen::new();
     queue_len.set_path(path.to_string());
@@ -469,7 +470,7 @@ fn queue_len(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn set_insert(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn set_insert(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let blob = args.pop().unwrap();
     let path = args.pop().unwrap();
     let mut set_insert = SetInsert::new();
@@ -480,7 +481,7 @@ fn set_insert(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn set_remove(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn set_remove(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let blob = args.pop().unwrap();
     let path = args.pop().unwrap();
     let mut set_remove = SetRemove::new();
@@ -491,7 +492,7 @@ fn set_remove(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn set_contains(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn set_contains(mut args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let blob = args.pop().unwrap();
     let path = args.pop().unwrap();
     let mut set_contains = SetContains::new();
@@ -502,7 +503,7 @@ fn set_contains(mut args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn set_union(args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn set_union(args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let paths: Vec<String> = args.into_iter().skip(2).map(|s| s.to_string()).collect();
     let mut set_union = SetUnion::new();
     set_union.set_paths(RepeatedField::from_vec(paths));
@@ -511,7 +512,7 @@ fn set_union(args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
     consensus_request(tree_op, client)
 }
 
-fn set_intersection(args: Vec<&str>, client: &V2r2Client) -> ApiRequest {
+fn set_intersection(args: Vec<&str>, client: &mut V2r2Client) -> ApiRequest {
     let mut iter = args.into_iter().skip(2);
     let path1 = iter.next().unwrap();
     let path2 = iter.next().unwrap();
@@ -703,7 +704,7 @@ fn help() -> Error {
 
 
 // TODO: Put V2r2Client into it's own crate
-/// This struct represents the V2R2 client implementation in rust. It is a low level client that is
+/// This struct represents the V2r2 client implementation in rust. It is a low level client that is
 /// useful for building higher level native clients or for building clients in other langauges via
 /// FFI.
 struct V2r2Client {
@@ -725,6 +726,11 @@ impl V2r2Client {
             sock: None,
             request_num: 0
         }
+    }
+
+    fn reset_primary(&mut self) {
+        self.primary = None;
+        self.namespace_id = None;
     }
 
     /// Connect to `self.api_addr`

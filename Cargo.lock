@@ -1,6 +1,6 @@
 [root]
 name = "v2r2"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "amy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "assert_matches 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -20,7 +20,7 @@ dependencies = [
  "slog-term 1.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
- "vertree 0.1.0",
+ "vertree 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -462,7 +462,8 @@ dependencies = [
 
 [[package]]
 name = "vertree"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "error-chain 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rmp 0.7.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -547,6 +548,7 @@ dependencies = [
 "checksum time 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)" = "3c7ec6d62a20df54e07ab3b78b9a3932972f4b7981de295563686849eb3989af"
 "checksum utf8-ranges 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)" = "a1ca13c08c41c9c3e04224ed9ff80461d97e121589ff27c753a16cb10830ae0f"
 "checksum uuid 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)" = "78c590b5bd79ed10aad8fb75f078a59d8db445af6c743e55c4a53227fc01c13f"
+"checksum vertree 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "68b89da4c15ec06f39817bc3613c501d48e0bcdbcfc6206b5549d2ebc66e3bb7"
 "checksum void 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 "checksum winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)" = "167dc9d6949a9b857f3451275e911c3f44255842c1f7a76f33c55103a909087a"
 "checksum winapi-build 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "2d315eee3b34aca4797b2da6b13ed88266e6d612562a0c46390af8299fc699bc"
