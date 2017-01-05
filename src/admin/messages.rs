@@ -1,7 +1,7 @@
 use rabble::{Pid, NodeId, ClusterStatus};
 use config::Config;
 use namespaces::Namespaces;
-use uuid::Uuid;
+use namespace_msg::NamespaceId;
 use vr::VrCtxSummary;
 
 #[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
@@ -17,7 +17,7 @@ pub enum AdminReq {
     CreateNamespace(Vec<Pid>),
     GetNamespaces,
     GetReplicaState(Pid),
-    GetPrimary(Uuid),
+    GetPrimary(NamespaceId),
     GetClusterStatus,
 }
 
@@ -27,7 +27,7 @@ pub enum AdminRpy {
     Timeout,
     Error(String),
     Config(Config),
-    NamespaceId(Uuid),
+    NamespaceId(NamespaceId),
     Namespaces(Namespaces),
     ReplicaState(VrCtxSummary),
     ReplicaNotFound(Pid),

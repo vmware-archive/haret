@@ -559,7 +559,6 @@ fn format_blob(blob: Vec<u8>) -> String {
 fn format_set(mut set: Set) -> String {
     set.take_val().into_vec().into_iter().fold(String::new(), |mut acc, blob| {
         acc.push_str(&format_blob(blob));
-        acc.push('\n');
         acc
     })
 }

@@ -1,7 +1,5 @@
 use time::Duration;
 use std::collections::{HashSet, HashMap};
-use std::str::FromStr;
-use uuid::Uuid;
 use slog::Logger;
 use amy::{Registrar, Notification, Timer};
 use rabble::{self, Pid, NodeId, Node, Envelope, CorrelationId, ServiceHandler};
@@ -139,8 +137,8 @@ impl NamespaceMgr {
             NamespaceMsg::Stop(pid) =>
                 self.stop(&pid),
             NamespaceMsg::NewPrimary(pid) => {
-                let uuid = Uuid::parse_str(&pid.clone().group.unwrap()).unwrap();
-                self.namespaces.primaries.insert(uuid, pid);
+                let namespace_id = NamespaceId(pid.group.clone().unwrap());
+                self.namespaces.primaries.insert(namespace_id, pid);
             },
             NamespaceMsg::ClearPrimary(namespace_id) => {
                 self.namespaces.primaries.remove(&namespace_id);
@@ -156,18 +154,7 @@ impl NamespaceMgr {
                        namespace_id: NamespaceId,
                        c_id: CorrelationId)
     {
-        let uuid = Uuid::from_str(&namespace_id.0);
-        if let Err(_) = uuid {
-            let envelope = Envelope {
-                to: c_id.pid.clone(),
-                from: self.pid.clone(),
-                msg: rabble::Msg::User(Msg::Error("Invalid Uuid for namespace".to_string())),
-                correlation_id: Some(c_id)
-            };
-            self.node.send(envelope).unwrap();
-            return;
-        }
-        let msg = match self.namespaces.primaries.get(&uuid.unwrap()) {
+        let msg = match self.namespaces.primaries.get(&namespace_id) {
             Some(replica) => {
                 if replica.node == self.node.id {
                     // TODO: Actually return a valid new_registration value when the
@@ -218,15 +205,14 @@ impl NamespaceMgr {
                 s = s.trim_matches(',').to_string();
                 info!(self.logger,  "Attempt Create namespace"; "replicas" => s.clone());
                 match self.create_namespace(replicas) {
-                    Ok(namespace) => {
-                        info!(self.logger, "Namespace created";
-                              "namespace" => namespace.to_string());
-                        self.send_admin_rpy(AdminRpy::NamespaceId(namespace), correlation_id)
+                    Ok(namespace_id) => {
+                        info!(self.logger, "Namespace created"; "namespace" => namespace_id.0);
+                        self.send_admin_rpy(AdminRpy::Ok, correlation_id)
                     },
                     Err(e) => {
                         warn!(self.logger, "Namespace failed to be created";
                               "replicas" => s, "error" => e.to_string());
-                        self.send_admin_rpy(AdminRpy::Error(e), correlation_id)
+                        self.send_admin_rpy(AdminRpy::Error(e.to_string()), correlation_id)
                     }
                 }
             },
@@ -286,19 +272,12 @@ impl NamespaceMgr {
         }
     }
 
-    fn create_namespace(&mut self, mut ungrouped_pids: Vec<Pid>) -> Result<Uuid, String> {
-        let namespace = Uuid::new_v4();
-
-        debug!(self.logger, "Create Namespace");
-        let mut new_replicas: Vec<_> = ungrouped_pids.drain(..).map(|mut pid| {
-            pid.group = Some(namespace.clone().to_string());
-            pid
-        }).collect();
-
+    fn create_namespace(&mut self, mut new_replicas: Vec<Pid>) -> rabble::Result<NamespaceId> {
+        let namespace_id = try!(validate_group_pids(&new_replicas));
         new_replicas.sort();
         let old_config = VersionedReplicas::new();
         let new_config = VersionedReplicas {epoch: 1, op: 0, replicas: new_replicas};
-        self.namespaces.insert(namespace, old_config.clone(), new_config.clone());
+        self.namespaces.insert(namespace_id.clone(), old_config.clone(), new_config.clone());
         for r in new_config.replicas.iter().cloned() {
             self.peers.insert(Pid {
                 group: None,
@@ -309,11 +288,11 @@ impl NamespaceMgr {
                 self.start_replica_initial_config(r, new_config.clone());
             }
         }
-        Ok(namespace)
+        Ok(namespace_id)
     }
 
    fn reconfigure(&mut self,
-                  namespace: Uuid,
+                  namespace: NamespaceId,
                   old_config: VersionedReplicas,
                   new_config: VersionedReplicas)
     {
@@ -374,8 +353,8 @@ impl NamespaceMgr {
 
     /// Should only be called outside this module during tests
     pub fn restart(&mut self, pid: Pid) {
-       let uuid = Uuid::parse_str(pid.group.as_ref().unwrap()).unwrap();
-       if let Some((old_config, new_config)) = self.namespaces.get_config(&uuid) {
+       let namespace_id = NamespaceId(pid.group.clone().unwrap());
+       if let Some((old_config, new_config)) = self.namespaces.get_config(&namespace_id) {
            let mut ctx = VrCtx::new(self.logger.clone(),
                                     pid.clone(),
                                     old_config.clone(),
@@ -436,3 +415,25 @@ impl ServiceHandler<Msg> for NamespaceMgr {
         Err("namespace_mgr got invalid notification: not a timer".into())
     }
 }
+
+/// Ensure all pids have an identical `group` value and that group value is not `None`
+fn validate_group_pids(pids: &Vec<Pid>) -> rabble::Result<NamespaceId> {
+    let mut namespace_id = None;
+    for pid in pids {
+        match pid.group {
+            Some(ref s) => {
+                if namespace_id.is_some() && namespace_id != Some(NamespaceId(s.to_string())) {
+                    return Err("Pids in the same group cannot have different group IDs".into());
+                }
+                if namespace_id.is_none() {
+                    namespace_id = Some(NamespaceId(s.to_string()));
+                }
+            },
+            None => {
+                return Err("All pids in a group must have a group ID".into());
+            }
+        }
+    }
+    Ok(namespace_id.unwrap())
+}
+

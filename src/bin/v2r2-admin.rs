@@ -14,9 +14,9 @@ use std::net::TcpStream;
 use std::mem;
 use msgpack::{Encoder, Decoder};
 use rustc_serialize::{Encodable, Decodable};
-use uuid::Uuid;
 use rabble::{Pid, NodeId};
 use v2r2::admin::{AdminReq, AdminRpy, AdminMsg};
+use v2r2::NamespaceId;
 
 fn main() {
     let mut args = env::args();
@@ -142,33 +142,29 @@ fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminReq> {
 
 fn parse_vr_primary(iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
-        Some(string) => {
-            match Uuid::parse_str(string) {
-                Ok(uuid) => Ok(AdminReq::GetPrimary(uuid)),
-                Err(_) => {
-                    println!("Error: Couldn't parse namespace id as UUID");
-                    Err(help())
-                }
-            }
-        },
+        Some(namespace_id) => Ok(AdminReq::GetPrimary(NamespaceId(namespace_id.to_string()))),
         None => Err(help())
     }
 }
-
 
 fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some("namespace") => {
             let args: Vec<&str> = iter.collect();
-            if args.len() != 1 {
-                println!("No spaces allowed in UngroupedPid list");
+            if args.len() != 2 {
+                println!("Invalid number of parameters");
                 return Err(help());
             }
-            let pidopts: Vec<_> = args[0].split(",").map(|s| Pid::from_str(s)).collect();
+            let namespace_id = args[0];
+            let pidopts: Vec<_> = args[1].split(",").map(|s| Pid::from_str(s)).collect();
             if pidopts.iter().any(|p| p.is_err()) {
                 return Err(Error::new(ErrorKind::InvalidInput, "Failed to parse pids"));
             }
-            let pids: Vec<_> = pidopts.into_iter().map(|p| p.unwrap()).collect();
+            let pids: Vec<_> = pidopts.into_iter().map(|p| {
+                let mut p = p.unwrap();
+                p.group = Some(namespace_id.to_string());
+                p
+            }).collect();
             Ok(AdminReq::CreateNamespace(pids))
         },
         _ => Err(help())
@@ -184,7 +180,7 @@ fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
                 AdminRpy::Timeout => Ok("timeout".to_string()),
                 AdminRpy::Error(string) => Err(Error::new(ErrorKind::Other, &string[..])),
                 AdminRpy::Config(config) => Ok(format!("{:#?}", config)),
-                AdminRpy::NamespaceId(uuid) => Ok(uuid.to_string()),
+                AdminRpy::NamespaceId(id) => Ok(id.0),
                 AdminRpy::Namespaces(namespaces) => Ok(format!("{:#?}", namespaces)),
                 AdminRpy::ReplicaState(state) => Ok(format!("{:#?}", state)),
                 AdminRpy::ReplicaNotFound(pid) => Err(Error::new(ErrorKind::NotFound,

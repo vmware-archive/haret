@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
-use uuid::Uuid;
 use vr::VersionedReplicas;
 use rabble::{Pid, NodeId};
+use namespace_msg::NamespaceId;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Namespaces {
-    pub map: HashMap<Uuid, (VersionedReplicas, VersionedReplicas)>,
-    pub primaries: HashMap<Uuid, Pid>
+    pub map: HashMap<NamespaceId, (VersionedReplicas, VersionedReplicas)>,
+    pub primaries: HashMap<NamespaceId, Pid>
 }
 
 impl Namespaces {
@@ -29,15 +29,15 @@ impl Namespaces {
         }).collect()
     }
 
-    pub fn insert(&mut self, namespace: Uuid, old: VersionedReplicas, new: VersionedReplicas) {
+    pub fn insert(&mut self, namespace: NamespaceId, old: VersionedReplicas, new: VersionedReplicas) {
         self.map.insert(namespace, (old, new));
     }
 
-    pub fn exists(&self, namespace: &Uuid) -> bool {
+    pub fn exists(&self, namespace: &NamespaceId) -> bool {
         self.map.contains_key(namespace)
     }
 
-    pub fn get_config(&self, namespace: &Uuid) -> Option<(VersionedReplicas, VersionedReplicas)> {
+    pub fn get_config(&self, namespace: &NamespaceId) -> Option<(VersionedReplicas, VersionedReplicas)> {
         match self.map.get(&namespace) {
             Some(&(ref old_config, ref new_config)) =>
                 Some((old_config.clone(), new_config.clone())),
@@ -48,7 +48,7 @@ impl Namespaces {
     /// Save the new namespace configuration and return whether there actually was a configuration
     /// change as well as the new replicas that need starting.
     pub fn reconfigure(&mut self,
-                       namespace: &Uuid,
+                       namespace: &NamespaceId,
                        old: VersionedReplicas,
                        new: VersionedReplicas) -> (bool, Vec<Pid>)
     {
