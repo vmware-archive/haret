@@ -354,7 +354,7 @@ impl ConnectionHandler for ApiConnectionHandler {
                 self.output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::User(Msg::AdminRpy(AdminRpy::Namespaces(namespaces))) => {
-                let ids: Vec<_> = namespaces.map.keys().cloned().map(|k| k.to_string()).collect();
+                let ids: Vec<_> = namespaces.map.keys().cloned().map(|k| k.0.to_string()).collect();
                 let mut namespaces = Namespaces::new();
                 namespaces.set_ids(RepeatedField::from_vec(ids));
                 let mut response = ApiResponse::new();

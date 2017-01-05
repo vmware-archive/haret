@@ -1,4 +1,3 @@
-use uuid::Uuid;
 use rabble::Pid;
 use namespaces::Namespaces;
 use vr::VersionedReplicas;
@@ -6,7 +5,7 @@ use vr::VersionedReplicas;
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct ClientId(pub String);
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct NamespaceId(pub String);
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
@@ -23,12 +22,12 @@ pub enum NamespaceMsg {
     /// The following four messages are sent from a VM to indicate a change in membership state for
     /// a given namespace
     Reconfiguration {
-        namespace_id: Uuid,
+        namespace_id: NamespaceId,
         old_config: VersionedReplicas,
         new_config: VersionedReplicas
     },
     Stop(Pid),
     NewPrimary(Pid),
-    ClearPrimary(Uuid)
+    ClearPrimary(NamespaceId)
 }
 

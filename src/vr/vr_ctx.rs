@@ -16,7 +16,7 @@ use super::quorum_tracker::QuorumTracker;
 use super::view_change_state::{ViewChangeState, Latest};
 use super::recovery_state::{RecoveryState, RecoveryPrimary};
 use super::vr_api_messages::{VrApiRsp, VrApiError};
-use namespace_msg::NamespaceMsg;
+use namespace_msg::{NamespaceMsg, NamespaceId};
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
 pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
@@ -403,7 +403,7 @@ impl VrCtx {
 
     pub fn announce_reconfiguration(&self) -> FsmOutput {
         FsmOutput::Announcement(NamespaceMsg::Reconfiguration {
-            namespace_id: Uuid::parse_str(self.pid.group.as_ref().unwrap()).unwrap(),
+            namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_string()),
             old_config: self.old_config.clone(),
             new_config: self.new_config.clone()
         }, self.pid.clone())
@@ -575,7 +575,7 @@ impl VrCtx {
 
     fn clear_primary(&mut self) -> FsmOutput {
         self.primary = None;
-        let namespace_id = Uuid::parse_str(self.pid.group.as_ref().unwrap()).unwrap();
+        let namespace_id = NamespaceId(self.pid.group.clone().unwrap());
         FsmOutput::Announcement(NamespaceMsg::ClearPrimary(namespace_id), self.pid.clone())
     }
 
