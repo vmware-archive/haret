@@ -12,7 +12,6 @@ fn main() {
     let cluster_port = n.to_string();
     let admin_port = (n+1).to_string();
     let vr_api_port = (n+2).to_string();
-    let vr_port = (n+3).to_string();
 
     let mut cluster_host = "127.0.0.1:".to_string();
     cluster_host.push_str(&cluster_port);
@@ -23,16 +22,11 @@ fn main() {
     let mut vr_api_host = "127.0.0.1:".to_string();
     vr_api_host.push_str(&vr_api_port);
 
-    let mut vr_host = "127.0.0.1:".to_string();
-    vr_host.push_str(&vr_port);
-
     let config = Config {
         node_name: name,
-        cluster_name: "dev-cluster".to_string(),
         cluster_host: cluster_host,
         admin_host: admin_host,
         vr_api_host: vr_api_host,
-        vr_host: vr_host
     };
     config.write_path("config.json");
 }
