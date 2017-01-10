@@ -61,9 +61,9 @@ fn main() {
         node: node_id.clone()
     };
     info!(logger, "Starting API Server"; "pid" => api_pid.to_string(),
-                                         "listening" => config.vr_api_host.clone());
+                                         "listening" => config.api_host.clone());
     let handler: TcpServerHandler<ApiConnectionHandler, ProtobufSerializer<ApiMsg>> =
-        TcpServerHandler::new(api_pid.clone(), &config.vr_api_host, 5000, None);
+        TcpServerHandler::new(api_pid.clone(), &config.api_host, 5000, None);
     let mut api_service = Service::new(api_pid, node.clone(), handler).unwrap();
     handles.push(thread::spawn(move || {
         api_service.wait();
