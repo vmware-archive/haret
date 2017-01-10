@@ -62,7 +62,7 @@ impl NamespaceMgr {
             name: "namespace_mgr".to_string(),
             node: node.id.clone()
         };
-        let api_addr = config.vr_api_host.clone();
+        let api_addr = config.api_host.clone();
         NamespaceMgr {
             config: config,
             node: node,

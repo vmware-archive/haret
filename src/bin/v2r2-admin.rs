@@ -226,7 +226,7 @@ fn help() -> Error {
     Commands:
         cluster join <NodeId>
         cluster status
-        vr create namespace <UngroupedPid1,UngroupedPid2,..,UngroupedPidN>
+        vr create namespace <NamespaceId> <UngroupedPid1,UngroupedPid2,..,UngroupedPidN>
         vr namespaces
         vr replica <Pid>
         vr primary <NamespaceId>
@@ -236,16 +236,14 @@ fn help() -> Error {
         -e <Command>   Non-interactive mode
 
     Config Keys:
-        node           The name of the current node
-        cluster        The name of the cluster the node is a member of
-        cluster-host   The ip:port of the cluster server listener
-        admin-host     The ip:port of the admin server listener
-        vr-host        The ip:port of the viewstamped replication protocol server
+        node_name      The name of the current node
+        cluster_host   The ip:port of the cluster server
+        admin_host     The ip:port of the admin server
+        api_host       The ip:port of the api server
 
     Argument formats:
-        Uuid           see: https://doc.rust-lang.org/uuid/uuid/index.html
         UngroupedPid   replica_name::node_name
-        Pid            namespace_uuid::replica_name::node_name
+        Pid            namespace_id::replica_name::node_name
 
     Examples:
         Get the cluster status in non-interactive mode:
