@@ -1,5 +1,5 @@
 [package]
-name = "v2r2"
+name = "haret"
 version = "0.2.0"
 authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 
@@ -27,18 +27,18 @@ assert_matches = "1.0"
 quickcheck = "0.4"
 
 [[bin]]
-name = "v2r2"
-path = "src/bin/v2r2.rs"
+name = "haret"
+path = "src/bin/haret.rs"
 test = false
 
 [[bin]]
-name = "v2r2-admin"
-path = "src/bin/v2r2-admin.rs"
+name = "haret-admin"
+path = "src/bin/haret-admin.rs"
 test = false
 
 [[bin]]
-name = "v2r2-cli-client"
-path = "src/bin/v2r2-cli-client.rs"
+name = "haret-cli-client"
+path = "src/bin/haret-cli-client.rs"
 test = false
 
 [[bin]]

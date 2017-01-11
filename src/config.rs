@@ -42,7 +42,7 @@ mod tests {
 
     #[test]
     fn read_config() {
-        let path = "/tmp/v2r2.json";
+        let path = "/tmp/haret.json";
         let config = Config {
             node_name: "node1".to_string(),
             cluster_host: "192.168.1.1:5000".to_string(),

@@ -7,7 +7,7 @@
 //! single FSM.
 
 extern crate uuid;
-extern crate v2r2;
+extern crate haret;
 extern crate quickcheck;
 extern crate rand;
 extern crate rabble;
@@ -28,7 +28,7 @@ extern crate vertree;
 mod utils;
 
 use rabble::Pid;
-use v2r2::vr::{VrMsg, NodeType, TreeOp, TreeOpResult, VrApiReq, VrApiRsp, VrEnvelope, FsmOutput};
+use haret::vr::{VrMsg, NodeType, TreeOp, TreeOpResult, VrApiReq, VrApiRsp, VrEnvelope, FsmOutput};
 use utils::scheduler::Scheduler;
 
 #[test]

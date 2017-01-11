@@ -17,8 +17,8 @@ pub enum VrApiReq {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
-// This should maintain the identical format to the vertree version. The only difference is that the
-// v2r2 one is encodable and decodable
+// This should maintain the identical format to the vertree version. The only 
+// difference is that the haret one is encodable and decodable
 pub enum TreeOp {
     Snapshot {directory: String},
     CreateNode {path: String, ty: NodeType},

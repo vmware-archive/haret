@@ -1,4 +1,4 @@
-extern crate v2r2;
+extern crate haret;
 extern crate rabble;
 
 #[macro_use]
@@ -10,12 +10,12 @@ extern crate slog_envlogger;
 use slog::DrainExt;
 use std::thread;
 use rabble::{Pid, NodeId, Service, MsgpackSerializer, ProtobufSerializer, TcpServerHandler};
-use v2r2::config::Config;
-use v2r2::Msg;
-use v2r2::NamespaceMgr;
-use v2r2::admin::{AdminConnectionHandler, AdminMsg};
-use v2r2::api::ApiConnectionHandler;
-use v2r2::api::messages::ApiMsg;
+use haret::config::Config;
+use haret::Msg;
+use haret::NamespaceMgr;
+use haret::admin::{AdminConnectionHandler, AdminMsg};
+use haret::api::ApiConnectionHandler;
+use haret::api::messages::ApiMsg;
 
 fn main() {
 
@@ -42,7 +42,7 @@ fn main() {
     // Create and start the admin server
     let admin_pid = Pid {
         name: "admin-server".to_string(),
-        group: Some("v2r2".to_string()),
+        group: Some("haret".to_string()),
         node: node_id.clone()
     };
     info!(logger, "Starting Admin Server"; "pid" => admin_pid.to_string(),
@@ -57,7 +57,7 @@ fn main() {
     // Create and start the API server
     let api_pid = Pid {
         name: "api-server".to_string(),
-        group: Some("v2r2".to_string()),
+        group: Some("haret".to_string()),
         node: node_id.clone()
     };
     info!(logger, "Starting API Server"; "pid" => api_pid.to_string(),

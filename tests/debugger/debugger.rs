@@ -7,7 +7,7 @@ use std::fmt::Write;
 use rustc_serialize::Decodable;
 use msgpack::Decoder;
 use fsm::Fsm;
-use v2r2::vr::{Replica, VrCtx, Envelope, VrTypes};
+use haret::vr::{Replica, VrCtx, Envelope, VrTypes};
 use debugger_shared::{Scheduler, DynamicOp};
 
 // Tracks the state of the replicas and dispatchers between Frames

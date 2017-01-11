@@ -2,7 +2,7 @@
 extern crate quickcheck;
 extern crate uuid;
 extern crate rand;
-extern crate v2r2;
+extern crate haret;
 extern crate rabble;
 extern crate time;
 
@@ -26,7 +26,7 @@ mod utils;
 use utils::{vr_invariants, op_invariants};
 use utils::scheduler::Scheduler;
 use utils::arbitrary::{Op, ClientRequest};
-use v2r2::vr::{VrMsg, VrApiReq, VrEnvelope, TreeOp};
+use haret::vr::{VrMsg, VrApiReq, VrEnvelope, TreeOp};
 
 /// Test that a fixed replica set (no reconfigurations) properly runs VR operations
 quickcheck! {

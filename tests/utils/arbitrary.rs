@@ -4,7 +4,7 @@ use rand::thread_rng;
 use rand::distributions::range::Range;
 use rand::distributions::IndependentSample;
 use quickcheck::{Arbitrary, Gen};
-use v2r2::vr::{VrMsg, VrApiReq, TreeOp, NodeType};
+use haret::vr::{VrMsg, VrApiReq, TreeOp, NodeType};
 
 #[derive(Debug, Clone)]
 struct Path(pub String);

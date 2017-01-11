@@ -2,7 +2,7 @@
 //! enough to use for multiple tests.
 
 use super::scheduler::Scheduler;
-use v2r2::vr::{VrMsg, VrCtx, VrEnvelope, VrApiReq, VrApiRsp, VrApiError, TreeOp, TreeOpResult, NodeType};
+use haret::vr::{VrMsg, VrCtx, VrEnvelope, VrApiReq, VrApiRsp, VrApiError, TreeOp, TreeOpResult, NodeType};
 use vertree::{self, Reply, Value};
 
 pub fn assert_create_response(scheduler: &Scheduler,
