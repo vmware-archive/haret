@@ -360,6 +360,7 @@ impl VrCtx {
         self.log = latest.log;
         self.last_normal_view = self.view;
         self.view_change_state = None;
+        self.recovery_state = None;
     }
 
 
@@ -453,6 +454,15 @@ impl VrCtx {
                                             reply,
                                             envelope.correlation_id.clone())));
             }
+            if *replicas == self.new_config.replicas {
+                let msg = "No change to existing configuration".to_string();
+                let rsp = VrApiRsp::Error(VrApiError::Msg(msg));
+                let reply = self.client_reply_msg(client_req_num, rsp);
+                return Some(FsmOutput::Vr(VrEnvelope::new(envelope.from.clone(),
+                                            self.pid.clone(),
+                                            reply,
+                                            envelope.correlation_id.clone())));
+            }
             return None;
         }
         unreachable!()
@@ -525,7 +535,12 @@ impl VrCtx {
         self.last_received_time = SteadyTime::now();
         self.view = 0;
         self.last_normal_view = 0;
-        mem::swap(&mut self.old_config, &mut self.new_config);
+
+        // replicas == self.new_config.replicas can only occur during backup commit of reconfiguration
+        if replicas != self.new_config.replicas {
+            mem::swap(&mut self.old_config, &mut self.new_config);
+        }
+
         self.new_config = VersionedReplicas {epoch: self.epoch, op: op, replicas: replicas};
     }
 

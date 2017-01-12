@@ -287,7 +287,7 @@ pub fn backup(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
             next!(backup, output)
         },
         _ => {
-            println!("Re-entering backup state {:?}", ctx.pid.name);
+            println!("Re-entering backup state: {}", ctx.pid.name);
             next!(backup)
         }
     }
