@@ -1,4 +1,4 @@
-Nodes Joining and Leaving a V2R2 cluster
+Nodes Joining and Leaving a haret cluster
 =================
 
 (This is a very rough draft, for purposes of comment and discussion, and

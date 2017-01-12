@@ -1,11 +1,11 @@
 # Introduction
-V2R2 is a strongly consistent coordination service that provides a high level API for distributed
-systems management and metadata. V2R2 utilizes the [Viewstamped
+haret is a strongly consistent coordination service that provides a high level API for distributed
+systems management and metadata. haret utilizes the [Viewstamped
 Replication](http://pmg.csail.mit.edu/papers/vr-revisited.pdf) protocol to provide [strict
 serializability](http://www.bailis.org/blog/linearizability-versus-serializability/) of operations
 over one or more hierarchical data stores replicated across multiple nodes.
 
-A V2R2 cluster consists of multiple **nodes** (typically one per physical or virtual machine) that are connected via TCP
+A haret cluster consists of multiple **nodes** (typically one per physical or virtual machine) that are connected via TCP
 to provide a clustered, highly available and fault tolerant service. Each cluster consists of one or
 more **namespaces** containing a **hierarchical data store**, that can be operated independent
 of and concurrently with other namespaces on the same cluster. Each namespace utilizes its own
@@ -22,19 +22,19 @@ Operations cannot cross namespaces.
 
 In addition to operations on individual nodes in the data store, transactions over multiple
 nodes are also supported. High level primitives such as mutexes, semaphores, reader/writer Locks,
-barriers, and leader election will be provided directly by V2R2 for application-level coordination,
+barriers, and leader election will be provided directly by haret for application-level coordination,
 although they have not been implemented yet.  Finally, client subscriptions to updates on subtrees
 of a given namespace are planned to allow piping of information to secondary external systems.
 
 The remainder of this document contains further information about the primitives mentioned
 in this introduction, as well as descriptions and examples of the APIs available to administrators
-and clients of V2R2.
+and clients of haret.
 
 # Ports, Message Format, and Serialization
-V2R2 provides administrative and client APIs over TCP connections. Nodes connect with each other
+haret provides administrative and client APIs over TCP connections. Nodes connect with each other
 over TCP connections seperate from both administrative and client connections. The listening hosts
 and ports for each of these interfaces is configured in
- [config.json](https://github.com/vmware/v2r2/blob/master/config.json).
+ [config.json](https://github.com/vmware/haret/blob/master/config.json).
  * `cluster_host` - cluster server for internode communication
  * `vr_api_host` - API server
  * `admin host` - Admin server
@@ -44,23 +44,23 @@ contain public APIs. Admin interaction is performed via the CLI admin client whi
 side of the protocol. For future interoperability, it's possible this interface will become an http
 or protobuf interface instead. In that case it would be fully documented.
 
-The API interface is a public interface that is expected to be implemented by V2R2 clients in other
+The API interface is a public interface that is expected to be implemented by haret clients in other
 languages. All messages are [protobuf](https://developers.google.com/protocol-buffers/) encoded and
 framed with a 4 byte length header in network byte order (big endian). The complete set of messages
-is defined [here](https://github.com/vmware/v2r2/blob/master/src/api/messages.proto).
+is defined [here](https://github.com/vmware/haret/blob/master/src/api/messages.proto).
 
 Currently, all that is implemented is the base K/V API so all messages are either requests or
 responses wrapped in an
-[`ApiMsg`](https://github.com/vmware/v2r2/blob/master/src/api/messages.proto#L3-L8). Asynchrounous
+[`ApiMsg`](https://github.com/vmware/haret/blob/master/src/api/messages.proto#L3-L8). Asynchrounous
 notification messages used by the subscription subsystem will be added later along with higher level
 coordination primitives.
 
 A more detailed client implementation guide is forthcoming.
 
 # Cluster Administration
-Each V2R2 node is started with a configuration consisting of its name, its cluster IP address and
+Each haret node is started with a configuration consisting of its name, its cluster IP address and
 port, its admin server IP address and port, and its client API server IP address and port. The
-cluster server IP address is what enables V2R2 nodes to connect to each other and pass messages. All
+cluster server IP address is what enables haret nodes to connect to each other and pass messages. All
 cluster server IPs for communicating nodes must be on the same network so that they are reachable
 via TCP.
 
@@ -94,7 +94,7 @@ operations that runs on every cluster or 2 phase commit via all nodes. Other sol
 
 The rest of the admin CLI commands can be discovered via running the admin client:
 
- ```$ target/debug/v2r2-admin 127.0.0.1:2001 -e -h```
+ ```$ target/debug/haret-admin 127.0.0.1:2001 -e -h```
 
 Once a consensus group is up and running, it can be utilized via an API client. Currently, the only
 API client that exists is the CLI client.
@@ -103,7 +103,7 @@ API client that exists is the CLI client.
 # Client Operations
 Each client operates on a single namespace. A client connects over TCP to a single node in the
 cluster and identifies the namespace it wants to operate on with a
-[`RegisterClient`](https://github.com/vmware/v2r2/blob/master/src/api/messages.proto#L18) request. The node
+[`RegisterClient`](https://github.com/vmware/haret/blob/master/src/api/messages.proto#L18) request. The node
 will respond with the current primary for that namespace if it is on that node. Otherwise, it will
 redirect the client to the node containing the primary. Alternately, the node may instruct the
 client to retry later or respond that the namespace does not exist.
@@ -111,7 +111,7 @@ client to retry later or respond that the namespace does not exist.
 Once connected, a client may issue requests to the current primary. These requests will be
 described in the following subsections. Note that all requests are not enumerated here. These
 sections are intended to give a broad overview of current capability and plans for the future, not
-serve as detailed instructions for using V2R2, or building a client. Either this document, or
+serve as detailed instructions for using haret, or building a client. Either this document, or
 another will be fully fleshed out in the future to provide a complete guide to the Client API.
 
 ### Data structure operations
@@ -126,21 +126,21 @@ end up as an entry in the VR Log. A Multi-cas operation, like a regular op, resu
 as it is executed atomically in the upcall to the backend tree code.
 
 As of right now, the only existing API client is the [Interactive CLI
-client](https://github.com/vmware/v2r2/blob/master/src/bin/v2r2-cli-client.rs). While this client is
+client](https://github.com/vmware/haret/blob/master/src/bin/haret-cli-client.rs). While this client is
 useful for testing and debugging, it does not implement the entire client API, even as currently
 defined in the protobuf file. In fact, it's unlikely it ever will implement the entire API as it's
 syntactically difficult to map some operations into a CLI string. For now though, it's a good way
-for users to become acquainted with V2r2.
+for users to become acquainted with Haret.
 
 Once a namespace has been created via the admin client, it needs to be `Entered` from the CLI
 client so it can be operated on. Entering a namespace is what causes a `RegisterClient` command to
 be sent to the connected Node and start the process of discovering the primary for a given namespace. Upon success, a user should see something like the following:
 
 ```
-v2r2> list-namespaces
+haret> list-namespaces
 test-ns
 
-v2r2> enter test-ns
+haret> enter test-ns
 Client registered. Primary = name: "r" group: "test-ns" node_name: "dev1" node_addr:
 "127.0.0.1:2000"
 ```
@@ -148,26 +148,26 @@ Client registered. Primary = name: "r" group: "test-ns" node_name: "dev1" node_a
 Once the namespaces is entered, other tree-related operations can be performed as shown below.
 
 ```
-v2r2> create set /some/set
+haret> create set /some/set
 Ok
 Epoch = 1, View = 978, Client Request Num = 2
-v2r2> create set /some/other/set
+haret> create set /some/other/set
 Ok
 Epoch = 1, View = 978, Client Request Num = 3
-v2r2> set insert /some/set blah
+haret> set insert /some/set blah
 true
 Version = 1 Epoch = 1, View = 978, Client Request Num = 4
-v2r2> set insert /some/set hello
+haret> set insert /some/set hello
 true
 Version = 2 Epoch = 1, View = 978, Client Request Num = 5
-v2r2> set union /some/set /some/other/set
+haret> set union /some/set /some/other/set
 hello
 blah
 Epoch = 1, View = 978, Client Request Num = 6
 ```
 
 ### Multi-cas Transactions
-V2R2 transactions don't use a specific transaction language, or
+haret transactions don't use a specific transaction language, or
 `Begin..End` statements. They do however allow multiple conditional operations to run atomically and
 in isolation from other transactions.
 
@@ -178,12 +178,12 @@ against versions and not the data in the tree. If any of the guard versions do n
 versions at the nodes in the tree, then the transaction fails. On success the return value for each
 operation is returned in the order of submission.
 
-Note that transactions are implemented in V2R2 and exist in the protobuf definition, but are not
+Note that transactions are implemented in haret and exist in the protobuf definition, but are not
 implemented in the CLI client.
 
 ### Subscriptions
 Clients often want to be notified of any changes to a particular subtree. In order to prevent
-unneccesary queries to achieve this goal, V2R2 plans to provide a notification system. A client can
+unneccesary queries to achieve this goal, haret plans to provide a notification system. A client can
 subscribe to all changes against a given subtree via a key `prefix`. Any committed operation against
 a node that matches the key prefix will be sent as a notification to a registered client. It should
 be noted that there are no recency guarantees made about notifications. Multiple updates can occur
@@ -207,8 +207,8 @@ prefix until the subscription is explicitly cancelled or the client is disconnec
 
 ### Coordination Primitives
 
-V2R2 is not just a storage system for metadata. More fundamentally, V2R2 exists to make managing
-distributed systems infrastructure easier and less error prone. With this goal in mind V2R2
+haret is not just a storage system for metadata. More fundamentally, haret exists to make managing
+distributed systems infrastructure easier and less error prone. With this goal in mind haret
 provides a number of coordination primitives "out of the box". There is no need to use 3rd party
 libraries, or build such primitives yourself in an ad-hoc manner. Leader election, locks, barriers,
 semaphores: You got it!
@@ -216,7 +216,7 @@ semaphores: You got it!
 **Important Notice** - These primitives have been thought through and abstractly designed, but are not
 yet implemented.
 
-The following primitives are planned for inclusion in V2R2. Further detail will be provided upon
+The following primitives are planned for inclusion in haret. Further detail will be provided upon
 implementation.
 
 * Leader Election

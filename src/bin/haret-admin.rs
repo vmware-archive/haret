@@ -1,4 +1,4 @@
-extern crate v2r2;
+extern crate haret;
 extern crate uuid;
 extern crate rabble;
 extern crate rustc_serialize;
@@ -15,8 +15,8 @@ use std::mem;
 use msgpack::{Encoder, Decoder};
 use rustc_serialize::{Encodable, Decodable};
 use rabble::{Pid, NodeId};
-use v2r2::admin::{AdminReq, AdminRpy, AdminMsg};
-use v2r2::NamespaceId;
+use haret::admin::{AdminReq, AdminRpy, AdminMsg};
+use haret::NamespaceId;
 
 fn main() {
     let mut args = env::args();
@@ -73,7 +73,7 @@ fn run(command: &str, sock: &mut TcpStream) -> Result<String> {
 
 fn prompt() {
     let mut stdout = io::stdout();
-    stdout.write_all(b"v2r2-admin> ").unwrap();
+    stdout.write_all(b"haret-admin> ").unwrap();
     stdout.flush().unwrap();
 }
 
@@ -221,7 +221,7 @@ fn write_msg(req: AdminReq, sock: &mut TcpStream) -> Result<()> {
 
 fn help() -> Error {
     let string  =
-"Usage: v2r2-admin <IpAddress> [-e <command>]
+"Usage: haret-admin <IpAddress> [-e <command>]
 
     Commands:
         cluster join <NodeId>
@@ -247,7 +247,7 @@ fn help() -> Error {
 
     Examples:
         Get the cluster status in non-interactive mode:
-            v2r2-admin 127.0.0.1:2001 -e 'cluster status'
+            haret-admin 127.0.0.1:2001 -e 'cluster status'
     ";
     Error::new(ErrorKind::InvalidInput, string)
 }

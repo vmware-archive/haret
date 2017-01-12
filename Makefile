@@ -2,7 +2,7 @@ build:
 	cargo build
 
 run:
-	cargo run --bin v2r2
+	cargo run --bin haret
 
 test:
 	cargo test
@@ -20,7 +20,7 @@ $(eval launch: stop $(foreach n,${nodes},start-${n}))
 
 dev/%: build
 	mkdir -p $@
-	cp target/debug/v2r2 $@
+	cp target/debug/haret $@
 	cp config.json $@
 	cd $@; \
 	 $(PWD)/target/debug/devconfig $(notdir $@)
@@ -28,13 +28,13 @@ dev/%: build
 # Start a single node (e.g. `make start-dev1`)
 start-dev%: devrel
 	cd $(patsubst start-dev%,dev/dev%,$@); \
-	  ./v2r2 & \
-	  echo $$! > v2r2.pid
+	  ./haret & \
+	  echo $$! > haret.pid
 
 # Stop a single node (e.g. `make stop-dev1`)
 stop-dev%:
-	kill $(patsubst stop-%,`cat dev/%/v2r2.pid`,$@);
+	kill $(patsubst stop-%,`cat dev/%/haret.pid`,$@);
 
-# Stop all v2r2 nodes on localhost
+# Stop all haret nodes on localhost
 stop:
-	killall v2r2; exit 0
+	killall haret; exit 0

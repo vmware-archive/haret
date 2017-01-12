@@ -1,0 +1,3 @@
+Coordinating all of the essential activity in a distributed system can seem as complex and difficult as understanding the coordinated activity of the stars and planets. Just as modern physics and astronomy have found ways to make the latter tractable enough for space exploration, it is possible to coordinate the necessary elements of a distributed system in a disciplined fashion.
+
+[Spiru Haret](https://en.wikipedia.org/wiki/Spiru_Haret) was a mathematician and astronomer that made an important contribution to the n-body problem, and dedicated his later life to building the modern Romanian education system. There is also a [crater](https://en.wikipedia.org/wiki/Haret_(crater)) on the Moon named after him.

@@ -1,7 +1,7 @@
-extern crate v2r2;
+extern crate haret;
 
 use std::env;
-use v2r2::config::Config;
+use haret::config::Config;
 
 fn main() {
     // name = dev1, dev2 .. devN

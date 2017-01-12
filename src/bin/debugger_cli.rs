@@ -1,6 +1,6 @@
 extern crate uuid;
 extern crate rand;
-extern crate v2r2;
+extern crate haret;
 extern crate time;
 extern crate rmp_serialize as msgpack;
 extern crate rustc_serialize;
@@ -23,8 +23,8 @@ use std::io::Write;
 use std::fmt::Write as FmtWrite;
 use uuid::Uuid;
 use debugger::Debugger;
-use v2r2::Member;
-use v2r2::vr::{Replica};
+use haret::Member;
+use haret::vr::{Replica};
 
 fn main() {
     let mut args = env::args();

@@ -2,7 +2,7 @@
 //! be used from multiple tests.
 
 use std::u64::MAX;
-use v2r2::vr::VrCtx;
+use haret::vr::VrCtx;
 
 pub fn assert_single_primary_per_epoch_view(states: &Vec<(&'static str, VrCtx)>)
     -> Result<(), String>
