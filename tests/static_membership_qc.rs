@@ -57,7 +57,7 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
                 op: op,
                 client_id: client_id
             };
-            let mut replies = scheduler.send_to_primary(req.clone());
+            let mut replies = try!(scheduler.send_to_primary(req.clone()));
             if replies.len() == 1 {
                 return assert_client_request_correctness(&scheduler, req, replies.pop().unwrap());
             }
@@ -67,11 +67,11 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
             return Err(format!("Invalid client request: {:#?}", r));
         },
         Op::Commit => {
-            scheduler.send_to_primary(VrMsg::Tick);
+            try!(scheduler.send_to_primary(VrMsg::Tick));
             assert_basic_correctness(scheduler)
         },
         Op::ViewChange => {
-            scheduler.send_to_backup(VrMsg::Tick);
+            try!(scheduler.send_to_backup(VrMsg::Tick));
             assert_basic_correctness(scheduler)
         },
         Op::CrashBackup => {
@@ -83,7 +83,7 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
             assert_basic_correctness(scheduler)
         },
         Op::Restart => {
-            scheduler.restart_crashed_node();
+            try!(scheduler.restart_crashed_node());
             assert_basic_correctness(scheduler)
         }
     }

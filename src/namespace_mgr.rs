@@ -320,6 +320,8 @@ impl NamespaceMgr {
                              pid: &Pid,
                              old_config: &VersionedReplicas,
                              new_config: &VersionedReplicas) {
+       // The same reconfigure announcement can occur from multiple replicas on the same node
+       if self.local_replicas.contains(pid) { return; }
        let mut ctx = VrCtx::new(self.logger.clone(),
                                 pid.clone(),
                                 old_config.clone(),
