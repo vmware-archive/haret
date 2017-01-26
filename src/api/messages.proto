@@ -1,4 +1,6 @@
-syntax = "proto3";
+// Use proto2 syntax because proto3 doesn't generate hasXXX methods in java, unlike proto2.
+syntax = "proto2";
+
 
 message ApiMsg {
   oneof req_reply {
@@ -16,21 +18,21 @@ message ApiRequest {
 }
 
 message RegisterClient {
-  string client_id = 1;
-  string namespace_id = 2;
+  required string client_id = 1;
+  required string namespace_id = 2;
 }
 
 message ApiPid {
-  string name = 1;
-  string group = 2;
-  string node_name = 3;
-  string node_addr = 4;
+  required string name = 1;
+  required string group = 2;
+  required string node_name = 3;
+  required string node_addr = 4;
 }
 
 message ConsensusRequest {
-  ApiPid to = 1;
-  string client_id = 2;
-  uint64 client_request_num = 3;
+  required ApiPid to = 1;
+  required string client_id = 2;
+  required uint64 client_request_num = 3;
   oneof op {
     TreeOp tree_op = 4;
     TreeCas tree_cas = 5;
@@ -65,7 +67,7 @@ message TreeOp {
 }
 
 message TreeOpResult {
-  uint64 optional_version = 1;
+  optional uint64 optional_version = 1;
   oneof result {
     bool ok = 2;
     bool bool = 3;
@@ -86,13 +88,13 @@ message Keys {
 }
 
 message Key {
-  string name = 1;
-  uint64 version = 2;
+  required string name = 1;
+  required uint64 version = 2;
 }
 
 message Guard {
-  string path = 1;
-  uint64 version = 2;
+  required string path = 1;
+  required uint64 version = 2;
 }
 
 message TreeCas {
@@ -108,65 +110,65 @@ enum NodeType {
 }
 
 message CreateNode {
-  string path = 1;
-  NodeType node_type = 2;
+  required string path = 1;
+  required NodeType node_type = 2;
 }
 
 message DeleteNode {
-  string path = 1;
+  required string path = 1;
 }
 
 message ListKeys {
-  string path = 1;
+  required string path = 1;
 }
 
 message BlobPut {
-  string path = 1;
-  bytes val = 2;
+  required string path = 1;
+  required bytes val = 2;
 }
 
 message BlobGet {
-  string path = 1;
+  required string path = 1;
 }
 
 message BlobSize {
-  string path = 1;
+  required string path = 1;
 }
 
 message QueuePush {
-  string path = 1;
-  bytes val = 2;
+  required string path = 1;
+  required bytes val = 2;
 }
 
 message QueuePop {
-  string path = 1;
+  required string path = 1;
 }
 
 message QueueFront {
-  string path = 1;
+  required string path = 1;
 }
 
 message QueueBack {
-  string path = 1;
+  required string path = 1;
 }
 
 message QueueLen {
-  string path = 1;
+  required string path = 1;
 }
 
 message SetInsert {
-  string path = 1;
-  bytes val = 2;
+  required string path = 1;
+  required bytes val = 2;
 }
 
 message SetRemove {
-  string path = 1;
-  bytes val = 2;
+  required string path = 1;
+  required bytes val = 2;
 }
 
 message SetContains {
-  string path = 1;
-  bytes val = 2;
+  required string path = 1;
+  required bytes val = 2;
 }
 
 message Set {
@@ -179,38 +181,38 @@ message SetUnion {
 }
 
 message SetIntersection {
-  string path1 = 1;
-  string path2 = 2;
+  required string path1 = 1;
+  required string path2 = 2;
 }
 
 message SetDifference {
-  string path1 = 1;
-  string path2 = 2;
+  required string path1 = 1;
+  required string path2 = 2;
 }
 
 message SetSymmetricDifference {
-  string path1 = 1;
-  string path2 = 2;
+  required string path1 = 1;
+  required string path2 = 2;
 }
 
 message SetSubsetPath {
-  string path1 = 1;
-  string path2 = 2;
+  required string path1 = 1;
+  required string path2 = 2;
 }
 
 message SetSubsetSet {
-  string path = 1;
-  Set set = 2;
+  required string path = 1;
+  required Set set = 2;
 }
 
 message SetSupersetPath {
-  string path1 = 1;
-  string path2 = 2;
+  required string path1 = 1;
+  required string path2 = 2;
 }
 
 message SetSupersetSet {
-  string path = 1;
-  Set set = 2;
+  required string path = 1;
+  required Set set = 2;
 }
 
 message ApiResponse {
@@ -231,9 +233,9 @@ message Namespaces {
 }
 
 message ConsensusReply {
-  uint64 epoch = 1;
-  uint64 view = 2;
-  uint64 request_num = 3;
+  required uint64 epoch = 1;
+  required uint64 view = 2;
+  required uint64 request_num = 3;
   oneof value {
     bool ok = 4;
     TreeOpResult tree_op_result = 5;
@@ -244,17 +246,17 @@ message ConsensusReply {
 }
 
 message ClientRegistration {
-  ApiPid primary = 1;
-  bool new_registration = 2;
+  required ApiPid primary = 1;
+  required bool new_registration = 2;
 }
 
 message Redirect {
-  ApiPid primary = 1;
-  string api_addr = 2;
+  required ApiPid primary = 1;
+  required string api_addr = 2;
 }
 
 message Retry {
-  uint64 milliseconds = 1;
+  required uint64 milliseconds = 1;
 }
 
 message ApiError {
@@ -280,48 +282,48 @@ message ApiError {
 }
 
 message NotFound {
-  string path = 1;
+  required string path = 1;
 }
 
 message AlreadyExists {
-  string path = 1;
+  required string path = 1;
 }
 
 message DoesNotExist {
-  string path = 1;
+  required string path = 1;
 }
 
 message WrongType {
-  string path = 1;
-  NodeType node_type = 2;
+  required string path = 1;
+  required NodeType node_type = 2;
 }
 
 message PathMustEndInDirectory {
-  string path = 1;
+  required string path = 1;
 }
 
 message PathMustBeAbsolute {
-  string path = 1;
+  required string path = 1;
 }
 
 message CasFailed {
-  string path = 1;
-  uint64 expected = 2;
-  uint64 actual = 3;
+  required string path = 1;
+  required uint64 expected = 2;
+  required uint64 actual = 3;
 }
 
 message BadFormat {
-  string msg = 1;
+  required string msg = 1;
 }
 
 message Io {
-  string msg = 1;
+  required string msg = 1;
 }
 
 message EncodingError {
-  string msg = 1;
+  required string msg = 1;
 }
 
 message InvalidCas {
-  string msg = 1;
+  required string msg = 1;
 }
