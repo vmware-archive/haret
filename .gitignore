@@ -3,3 +3,5 @@ dev
 *.swp
 *.pid
 tests/output
+*~
+*#
