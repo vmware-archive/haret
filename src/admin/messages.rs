@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use rabble::{Pid, NodeId, ClusterStatus};
+use std::collections::HashMap;
+use rabble::{Pid, NodeId, StatusTable};
 use config::Config;
 use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
@@ -26,13 +27,13 @@ pub enum AdminMsg {
 
 #[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum AdminReq {
+    GetStatus,
     GetConfig,
     Join(NodeId),
     CreateNamespace(Vec<Pid>),
     GetNamespaces,
     GetReplicaState(Pid),
     GetPrimary(NamespaceId),
-    GetClusterStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
@@ -46,6 +47,7 @@ pub enum AdminRpy {
     ReplicaState(VrCtxSummary),
     ReplicaNotFound(Pid),
     Primary(Option<Pid>),
-    ClusterStatus(ClusterStatus)
+    StatusTable(String, StatusTable),
+    Status(HashMap<String, StatusTable>)
 }
 

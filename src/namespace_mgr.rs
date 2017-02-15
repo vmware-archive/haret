@@ -237,9 +237,6 @@ impl NamespaceMgr {
                 };
                 self.send_admin_rpy(AdminRpy::Primary(primary), correlation_id);
             },
-            AdminReq::GetClusterStatus => {
-                self.node.cluster_status(correlation_id).unwrap();
-            },
             _ => {
                 self.send_admin_rpy(AdminRpy::Error("Unknown Admin Message".to_string()),
                                     correlation_id);

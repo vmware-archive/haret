@@ -22,6 +22,7 @@ pub struct AdminConnectionHandler {
     pid: Pid,
     id: u64,
     namespace_mgr: Pid,
+    status_server: Pid,
     total_requests: u64,
     output: Vec<ConnectionMsg<AdminConnectionHandler>>,
 
@@ -68,10 +69,16 @@ impl ConnectionHandler for AdminConnectionHandler {
             group: None,
             node: pid.node.clone()
         };
+        let status_server = Pid {
+            name: "status_server".to_string(),
+            group: None,
+            node: pid.node.clone()
+        };
         AdminConnectionHandler {
             pid: pid,
             id: id,
             namespace_mgr: namespace_mgr,
+            status_server: status_server,
             total_requests: 0,
             output: Vec::new(),
             waiting_for: 0,
@@ -86,7 +93,6 @@ impl ConnectionHandler for AdminConnectionHandler {
         let correlation_id = correlation_id.unwrap();
         let rpy = match msg {
             rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy,
-            rabble::Msg::ClusterStatus(status) => AdminRpy::ClusterStatus(status),
             rabble::Msg::Timeout => AdminRpy::Timeout,
             _ => unreachable!()
         };
@@ -103,11 +109,17 @@ impl ConnectionHandler for AdminConnectionHandler {
         &mut Vec<ConnectionMsg<AdminConnectionHandler>>
     {
         if let AdminMsg::Req(req) = msg {
-            let envelope = if let AdminReq::GetReplicaState(pid) = req {
-                self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid))
-            } else {
-                let pid = self.namespace_mgr.clone();
-                self.make_envelope(pid, req)
+            let envelope = match req {
+                AdminReq::GetReplicaState(pid) =>
+                    self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid)),
+                AdminReq::GetStatus => {
+                    let pid = self.status_server.clone();
+                    self.make_envelope(pid, AdminReq::GetStatus)
+                },
+                _ => {
+                    let pid = self.namespace_mgr.clone();
+                    self.make_envelope(pid, req)
+                }
             };
             self.output.push(ConnectionMsg::Envelope(envelope));
         } else {
