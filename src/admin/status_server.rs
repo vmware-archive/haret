@@ -12,13 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
-use time::SteadyTiime;
+use std::collections::{HashMap, HashSet};
+use time::SteadyTime;
 use slog::Logger;
-use rabble::{self, Pid, NodeId, Node, Envelope, CorrelationId, ServiceHandler};
-use rabble::{StatusVal, StatusTable};
+use rabble::{self, Pid, Node, Envelope, CorrelationId, ServiceHandler};
+use rabble::StatusTable;
+use amy::Registrar;
+use msg::Msg;
+use admin::{AdminReq, AdminRpy};
 
-const TIMEOUT: u64 = 2000; // milliseconds
+const TIMEOUT: usize = 2000; // milliseconds
 
 /// Manage all status information for a node.
 ///
@@ -29,7 +32,7 @@ pub struct StatusServer {
     node: Node<Msg>,
     logger: Logger,
     updated: SteadyTime,
-    tables: HashMap<&'static str, StatusTable>,
+    tables: HashMap<String, StatusTable>,
     waiting: Vec<CorrelationId>,
     correlation_id: CorrelationId,
     request_in_flight: bool,
@@ -49,6 +52,8 @@ impl StatusServer {
         StatusServer {
             pid: pid.clone(),
             executor: executor,
+            node: node,
+            logger: logger,
             updated: SteadyTime::now(),
             tables: HashMap::new(),
             waiting: Vec::new(),
@@ -92,7 +97,7 @@ impl StatusServer {
         let envelope = Envelope {
             to: self.executor.clone(),
             from: self.pid.clone(),
-            msg: Msg::StartTimer(TIMEOUT),
+            msg: rabble::Msg::StartTimer(TIMEOUT),
             correlation_id: Some(self.correlation_id.clone())
         };
         self.node.send(envelope).unwrap();
@@ -102,8 +107,8 @@ impl StatusServer {
         let envelope = Envelope {
             to: self.executor.clone(),
             from: self.pid.clone(),
-            msg: Msg::CancelTimer(Some(self.correlation_id.clone())),
-            correlation_id: self.correlation_id
+            msg: rabble::Msg::CancelTimer(Some(self.correlation_id.clone())),
+            correlation_id: Some(self.correlation_id.clone())
         };
         self.node.send(envelope).unwrap();
     }
@@ -116,10 +121,10 @@ impl StatusServer {
     fn handle_status_response(&mut self,
                               component: String,
                               status: StatusTable,
-                              c_id: CorrelationId) -> rabble::Result<()>
+                              c_id: CorrelationId) 
     {
         if c_id == self.correlation_id {
-            self.received_components.insert(component);
+            self.received_components.insert(component.clone());
             self.tables.insert(component, status);
         }
 
@@ -130,13 +135,13 @@ impl StatusServer {
     }
 
     fn send_replies(&mut self) {
-        for c_id in self.waiting.drain() {
+        for c_id in self.waiting.drain(..) {
             let reply = Msg::AdminRpy(AdminRpy::Status(self.tables.clone()));
             let envelope = Envelope {
-                to: self.c_id.pid.clone(),
+                to: self.correlation_id.pid.clone(),
                 from: self.pid.clone(),
                 msg: rabble::Msg::User(reply),
-                correlation_id: c_id
+                correlation_id: Some(c_id)
             };
             self.node.send(envelope).unwrap();
         }
@@ -161,11 +166,11 @@ impl ServiceHandler<Msg> for StatusServer {
                 if self.tables.len() == 0 ||
                     (SteadyTime::now() - self.updated).num_seconds() > 10
                 {
-                    self.request_status(correlation_id);
+                    self.request_status(correlation_id.unwrap());
                 }
             },
             rabble::Msg::User(Msg::AdminRpy(AdminRpy::StatusTable(component, status))) => {
-                self.handle_status_response(component, status, correlation_id);
+                self.handle_status_response(component, status, correlation_id.unwrap());
             },
             rabble::Msg::Timeout => self.handle_timeout(),
             _ => unreachable!()

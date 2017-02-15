@@ -14,6 +14,7 @@
 
 mod connection_handler;
 mod messages;
+mod status_server;
 
 pub use self::connection_handler::AdminConnectionHandler;
 
@@ -22,3 +23,5 @@ pub use self::messages::{
     AdminReq,
     AdminRpy
 };
+
+pub use self::status_server::StatusServer;
