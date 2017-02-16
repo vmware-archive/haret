@@ -27,7 +27,7 @@ const TIMEOUT: usize = 2000; // milliseconds
 ///
 /// Each subsystem's status is maintained in a seperate HashMap.
 pub struct StatusServer {
-    pid: Pid,
+    pub pid: Pid,
     executor: Pid,
     node: Node<Msg>,
     logger: Logger,
@@ -41,9 +41,12 @@ pub struct StatusServer {
 }
 
 impl StatusServer {
-    pub fn new(node: Node<Msg>,
-               executor: Pid,
-               logger: Logger) -> StatusServer {
+    pub fn new(node: Node<Msg>, logger: Logger) -> StatusServer {
+        let executor = Pid {
+            group: Some("rabble".to_string()),
+            name: "Executor".to_string(),
+            node: node.id.clone()
+        };
         let pid = Pid {
             group: None,
             name: "status_server".to_string(),
@@ -53,7 +56,7 @@ impl StatusServer {
             pid: pid.clone(),
             executor: executor,
             node: node,
-            logger: logger,
+            logger: logger.new(o!("component" => "status_server")),
             updated: SteadyTime::now(),
             tables: HashMap::new(),
             waiting: Vec::new(),
@@ -138,13 +141,24 @@ impl StatusServer {
         for c_id in self.waiting.drain(..) {
             let reply = Msg::AdminRpy(AdminRpy::Status(self.tables.clone()));
             let envelope = Envelope {
-                to: self.correlation_id.pid.clone(),
+                to: c_id.pid.clone(),
                 from: self.pid.clone(),
                 msg: rabble::Msg::User(reply),
                 correlation_id: Some(c_id)
             };
             self.node.send(envelope).unwrap();
         }
+    }
+
+    fn send_reply(&mut self, c_id: CorrelationId) {
+        let reply = Msg::AdminRpy(AdminRpy::Status(self.tables.clone()));
+        let envelope = Envelope {
+            to: c_id.pid.clone(),
+            from: self.pid.clone(),
+            msg: rabble::Msg::User(reply),
+            correlation_id: Some(c_id)
+        };
+        self.node.send(envelope).unwrap();
     }
 
     fn handle_timeout(&mut self) {
@@ -167,13 +181,29 @@ impl ServiceHandler<Msg> for StatusServer {
                     (SteadyTime::now() - self.updated).num_seconds() > 10
                 {
                     self.request_status(correlation_id.unwrap());
+                } else {
+                    self.send_reply(correlation_id.unwrap());
                 }
             },
             rabble::Msg::User(Msg::AdminRpy(AdminRpy::StatusTable(component, status))) => {
                 self.handle_status_response(component, status, correlation_id.unwrap());
             },
+            rabble::Msg::ExecutorStatus(status) => {
+                self.handle_status_response("executor".to_string(),
+                                            status,
+                                            correlation_id.unwrap());
+            },
+            rabble::Msg::ClusterStatus(status) => {
+                self.handle_status_response("cluster_server".to_string(),
+                                            status,
+                                            correlation_id.unwrap());
+            },
             rabble::Msg::Timeout => self.handle_timeout(),
-            _ => unreachable!()
+            _ => {
+                error!(self.logger, "Received unexpected message";
+                       "msg" => format!("{:#?}", msg));
+                unreachable!()
+            }
         }
         Ok(())
     }

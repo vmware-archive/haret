@@ -27,7 +27,7 @@ use rabble::{Pid, NodeId, Service, MsgpackSerializer, ProtobufSerializer, TcpSer
 use haret::config::Config;
 use haret::Msg;
 use haret::NamespaceMgr;
-use haret::admin::{AdminConnectionHandler, AdminMsg};
+use haret::admin::{AdminConnectionHandler, AdminMsg, StatusServer};
 use haret::api::ApiConnectionHandler;
 use haret::api::messages::ApiMsg;
 
@@ -51,6 +51,16 @@ fn main() {
     let mut namespace_mgr_service = Service::new(namespace_mgr.pid.clone(), node.clone(), namespace_mgr).unwrap();
     handles.push(thread::spawn(move || {
         namespace_mgr_service.wait();
+    }));
+
+    // Create and start the status server
+    let status_server = StatusServer::new(node.clone(), logger.clone());
+    info!(logger, "Starting Status Server"; "pid" => status_server.pid.to_string());
+    let mut status_server_service = Service::new(status_server.pid.clone(),
+                                                 node.clone(),
+                                                 status_server).unwrap();
+    handles.push(thread::spawn(move || {
+        status_server_service.wait();
     }));
 
     // Create and start the admin server

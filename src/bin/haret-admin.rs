@@ -122,7 +122,7 @@ fn parse_cluster(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
                                      .map_err(|s| Error::new(ErrorKind::InvalidInput, s))
         },
         Some("status") => {
-            parse_no_args("cluster status", &mut iter).map(|_| AdminReq::GetClusterStatus)
+            parse_no_args("cluster status", &mut iter).map(|_| AdminReq::GetStatus)
         },
         Some(_) => Err(help()),
         None => Err(help())
@@ -200,7 +200,8 @@ fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
                 AdminRpy::ReplicaNotFound(pid) => Err(Error::new(ErrorKind::NotFound,
                                                                  pid.to_string())),
                 AdminRpy::Primary(pid) => Ok(pid.map_or("None".to_string(), |p| p.to_string())),
-                AdminRpy::ClusterStatus(status) => Ok(format!("{:#?}", status))
+                AdminRpy::Status(status) => Ok(format!("{:#?}", status)),
+                AdminRpy::StatusTable(_, status) => Ok(format!("{:#?}", status))
             }
         },
         msg => Err(Error::new(ErrorKind::InvalidData,
