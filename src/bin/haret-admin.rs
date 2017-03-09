@@ -96,6 +96,7 @@ fn parse(command: &str) -> Result<AdminReq> {
     match iter.next() {
         Some("config") => parse_no_args("config", &mut iter).map(|_| AdminReq::GetConfig),
         Some("cluster") => parse_cluster(&mut iter),
+        Some("metrics") => parse_metrics(&mut iter),
         Some("vr") => parse_vr(&mut iter),
         Some(_) => Err(help()),
         None => Err(help())
@@ -129,6 +130,24 @@ fn parse_cluster(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
     }
 }
 
+fn parse_metrics(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
+    match iter.next() {
+        Some(string) => {
+            match Pid::from_str(&string) {
+                Ok(replica) => Ok(AdminReq::GetMetrics(replica)),
+                Err(_) => {
+                    println!("Error: Couldn't parse replica pid");
+                    Err(help())
+                }
+            }
+        },
+        None => {
+            println!("Error: Please provide a pid to get metrics for");
+            Err(help())
+        }
+    }
+}
+
 fn parse_vr(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some("create") => parse_vr_create(iter),
@@ -145,7 +164,7 @@ fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminReq> {
             match Pid::from_str(&string) {
                 Ok(replica) => Ok(AdminReq::GetReplicaState(replica)),
                 Err(_) => {
-                    println!("Error: Couldn't parse replica");
+                    println!("Error: Couldn't parse replica pid");
                     Err(help())
                 }
             }
@@ -200,7 +219,8 @@ fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
                 AdminRpy::ReplicaNotFound(pid) => Err(Error::new(ErrorKind::NotFound,
                                                                  pid.to_string())),
                 AdminRpy::Primary(pid) => Ok(pid.map_or("None".to_string(), |p| p.to_string())),
-                AdminRpy::ClusterStatus(status) => Ok(format!("{:#?}", status))
+                AdminRpy::ClusterStatus(status) => Ok(format!("{:#?}", status)),
+                AdminRpy::Metrics(metrics) => Ok(format!("{:#?}", metrics))
             }
         },
         msg => Err(Error::new(ErrorKind::InvalidData,
@@ -245,6 +265,7 @@ fn help() -> Error {
         vr replica <Pid>
         vr primary <NamespaceId>
         config
+        metrics <Pid>
 
     Flags:
         -e <Command>   Non-interactive mode

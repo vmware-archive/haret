@@ -33,7 +33,7 @@ pub struct AdminConnectionHandler {
 }
 
 impl AdminConnectionHandler {
-    pub fn make_envelope(&mut self, pid: Pid, req: AdminReq) -> Envelope<Msg> {
+    fn make_envelope(&mut self, pid: Pid, req: AdminReq) -> Envelope<Msg> {
         let c_id = CorrelationId::request(self.pid.clone(), self.id, self.total_requests);
         self.total_requests += 1;
         Envelope {
@@ -44,7 +44,18 @@ impl AdminConnectionHandler {
         }
     }
 
-    pub fn write_successive_replies(&mut self) {
+    fn make_rabble_msg_envelope(&mut self, pid: Pid, msg: rabble::Msg<Msg>) -> Envelope<Msg> {
+        let c_id = CorrelationId::request(self.pid.clone(), self.id, self.total_requests);
+        self.total_requests += 1;
+        Envelope {
+            to: pid,
+            from: self.pid.clone(),
+            msg: msg,
+            correlation_id: Some(c_id)
+        }
+    }
+
+    fn write_successive_replies(&mut self) {
         self.waiting_for += 1;
         while self.waiting_for != self.total_requests {
             if let Some(rpy) = self.out_of_order_replies.remove(&self.waiting_for) {
@@ -88,6 +99,7 @@ impl ConnectionHandler for AdminConnectionHandler {
             rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy,
             rabble::Msg::ClusterStatus(status) => AdminRpy::ClusterStatus(status),
             rabble::Msg::Timeout => AdminRpy::Timeout,
+            rabble::Msg::Metrics(metrics) => AdminRpy::Metrics(metrics),
             _ => unreachable!()
         };
         if correlation_id.request == Some(self.waiting_for) {
@@ -103,11 +115,15 @@ impl ConnectionHandler for AdminConnectionHandler {
         &mut Vec<ConnectionMsg<AdminConnectionHandler>>
     {
         if let AdminMsg::Req(req) = msg {
-            let envelope = if let AdminReq::GetReplicaState(pid) = req {
-                self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid))
-            } else {
-                let pid = self.namespace_mgr.clone();
-                self.make_envelope(pid, req)
+            let envelope = match req {
+                AdminReq::GetReplicaState(pid) => 
+                    self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid)),
+                AdminReq::GetMetrics(pid) =>
+                    self.make_rabble_msg_envelope(pid.clone(), rabble::Msg::GetMetrics),
+                _ => {
+                    let pid = self.namespace_mgr.clone();
+                    self.make_envelope(pid, req)
+                }
             };
             self.output.push(ConnectionMsg::Envelope(envelope));
         } else {
