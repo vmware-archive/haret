@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use rabble::{Pid, NodeId, ClusterStatus};
+use rabble::{Pid, NodeId, ClusterStatus, Metric};
 use config::Config;
 use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
 use vr::VrCtxSummary;
 
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum AdminMsg {
     Req(AdminReq),
     Rpy(AdminRpy)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum AdminReq {
     GetConfig,
     Join(NodeId),
@@ -33,9 +33,10 @@ pub enum AdminReq {
     GetReplicaState(Pid),
     GetPrimary(NamespaceId),
     GetClusterStatus,
+    GetMetrics(Pid)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum AdminRpy {
     Ok,
     Timeout,
@@ -46,6 +47,7 @@ pub enum AdminRpy {
     ReplicaState(VrCtxSummary),
     ReplicaNotFound(Pid),
     Primary(Option<Pid>),
-    ClusterStatus(ClusterStatus)
+    ClusterStatus(ClusterStatus),
+    Metrics(Vec<(String, Metric)>)
 }
 
