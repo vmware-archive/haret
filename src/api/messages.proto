@@ -1,3 +1,5 @@
+// Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 // Use proto2 syntax because proto3 doesn't generate hasXXX methods in java, unlike proto2.
 syntax = "proto2";
 
