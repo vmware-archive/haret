@@ -1,7 +1,7 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use rabble::{Pid, NodeId, ClusterStatus, Metric};
+use rabble::{Pid, NodeId, Metric};
 use config::Config;
 use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
@@ -36,7 +36,6 @@ pub enum AdminRpy {
     ReplicaState(VrCtxSummary),
     ReplicaNotFound(Pid),
     Primary(Option<Pid>),
-    ClusterStatus(ClusterStatus),
     Metrics(Vec<(String, Metric)>)
 }
 

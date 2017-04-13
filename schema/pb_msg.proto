@@ -1,0 +1,447 @@
+// Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+// Use proto2 syntax because proto3 doesn't generate hasXXX methods in java, unlike proto2.
+syntax = "proto2";
+
+import "rabble_messages.proto";
+
+message Msg {
+  oneof msg {
+    VrMsg vr = 1;
+    NamespaceMsg namespace = 2;
+    AdminReq admin_req = 3;
+    AdminRpy admin_rpy = 4;
+    ApiRpy api_rpy = 5;
+    string error = 6;
+  }
+}
+
+message VrMsg {
+  oneof msg {
+    bool tick = 1;
+    ClientRequest client_request = 2;
+    VrReconfiguration reconfiguration = 3;
+    ClientReply client_reply = 4;
+    StartViewChange start_view_change = 5;
+    DoViewChange do_view_change = 6;
+    StartView start_view = 7;
+    Prepare prepare = 8;
+    PrepareOk prepare_ok = 9;
+    Commit commit = 10;
+    GetState get_state = 11;
+    NewState new_state = 12;
+    Recovery recovery = 13;
+    RecoveryResponse recovery_response = 14;
+    StartEpoch start_epoch = 15;
+    EpochStarted epoch_started = 16;
+  }
+}
+
+message ClientRequest {
+  optional VrApiReq op = 1;
+  optional string client_id = 2;
+  optional uint64 request_num = 3;
+}
+
+message VrReconfiguration {
+  optional uint64 client_req_num = 1;
+  optional uint64 epoch = 2;
+  repeated Pid replicas = 3;
+}
+
+message ClientReply {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 request_num = 3;
+  optional VrApiRsp value = 4;
+}
+
+message StartViewChange {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 op = 3;
+  optional Pid from = 4;
+}
+
+message DoViewChange {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 op = 3;
+  optional Pid from = 4;
+  optional uint64 last_normal_view = 5;
+  repeated VrMsg log = 6;
+  optional uint64 commit_num = 7;
+}
+
+message StartView {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 op = 3;
+  repeated VrMsg log = 4;
+  optional uint64 commit_num = 5;
+}
+
+message Prepare {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 op = 3;
+  optional uint64 commit_num = 4;
+  optional VrMsg msg = 5;
+}
+
+message PrepareOk {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 op = 3;
+  optional Pid from = 4;
+}
+
+message Commit {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 commit_num = 3;
+}
+
+message GetState {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 op = 3;
+  optional Pid from = 4;
+}
+
+message NewState {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional uint64 op = 3;
+  optional Pid primary = 4;
+  optional uint64 commit_num = 5;
+  repeated VrMsg log_tail = 6;
+}
+
+message Recovery {
+  optional Pid from = 1;
+  optional string nonce = 2; // This is a UUID
+}
+
+message RecoveryResponse {
+  optional uint64 epoch = 1;
+  optional uint64 view = 2;
+  optional string nonce = 3;
+  optional Pid from = 4;
+  optional uint64 op = 5;
+  optional uint64 commit_num = 6;
+  repeated VrMsg log = 7;
+}
+
+message StartEpoch {
+  optional uint64 epoch = 1;
+  optional uint64 op = 2;
+  optional VersionedReplicas old_config = 3;
+  optional VersionedReplicas new_config = 4;
+}
+
+message EpochStarted {
+  optional uint64 epoch = 1;
+  optional Pid from = 2;
+}
+
+message VrApiReq {
+  oneof req {
+    TreeOp tree_op = 1;
+    TreeCas tree_cas = 2;
+  }
+}
+
+message TreeCas {
+  repeated Guard guards = 1;
+  repeated TreeOp ops = 2;
+}
+
+message Guard {
+  optional string path = 1;
+  optional uint64 version = 2;
+}
+
+message TreeOp {
+  oneof op {
+    string snapshot = 1;
+    CreateNode create_node = 2;
+    string delete_node = 3;
+    string list_keys = 4;
+    BlobPut blob_put = 5;
+    string blob_get = 6;
+    string blob_size = 7;
+    QueuePush queue_push = 8;
+    string queue_pop = 9;
+    string queue_front = 10;
+    string queue_back = 11;
+    string queue_len = 12;
+    SetInsert set_insert = 13;
+    SetRemove set_remove = 14;
+    SetContains set_contains = 15;
+    SetUnion set_union = 16;
+    SetIntersection set_intersection = 17;
+    SetDifference set_difference = 18;
+    SetSymmetricDifference set_symmetric_difference = 19;
+    SetSubsetPath set_subset_path = 20;
+    SetSubsetSet set_subset_set = 21;
+    SetSupersetPath set_superset_path = 22;
+    SetSupersetSet set_superset_set = 23;
+  }
+}
+
+enum NodeType {
+  BlobType = 0;
+  QueueType = 1;
+  SetType = 2;
+  DirectoryType = 3;
+}
+
+message CreateNode {
+  optional string path = 1;
+  optional NodeType node_type = 2;
+}
+
+message BlobPut {
+  optional string path = 1;
+  optional bytes val = 2;
+}
+
+message QueuePush {
+  optional string path = 1;
+  optional bytes val = 2;
+}
+
+message SetInsert {
+  optional string path = 1;
+  optional bytes val = 2;
+}
+
+message SetRemove {
+  optional string path = 1;
+  optional bytes val = 2;
+}
+
+message SetContains {
+  optional string path = 1;
+  optional bytes val = 2;
+}
+
+message Set {
+  repeated bytes values = 1;
+}
+
+message SetUnion {
+  repeated string paths = 1;
+  repeated Set sets = 2;
+}
+
+message SetIntersection {
+  optional string path1 = 1;
+  optional string path2 = 2;
+}
+
+message SetDifference {
+  optional string path1 = 1;
+  optional string path2 = 2;
+}
+
+message SetSymmetricDifference {
+  optional string path1 = 1;
+  optional string path2 = 2;
+}
+
+message SetSubsetPath {
+  optional string path1 = 1;
+  optional string path2 = 2;
+}
+
+message SetSubsetSet {
+  optional string path = 1;
+  optional Set set = 2;
+}
+
+message SetSupersetPath {
+  optional string path1 = 1;
+  optional string path2 = 2;
+}
+
+message SetSupersetSet {
+  optional string path = 1;
+  optional Set set = 2;
+}
+
+message VrApiRsp {
+  oneof rsp {
+    bool ok = 1;
+    TreeOpResult tree_op_result = 2;
+    TreeCasResult tree_cas_result = 3;
+    string path = 4;
+    VrApiError error = 5;
+  }
+}
+
+message VrApiError {
+  oneof error {
+    string not_found = 1;
+    string already_exists = 2;
+    string does_not_exist = 3;
+    WrongType wrong_type = 4;
+    string path_must_end_in_directory = 5;
+    string path_must_be_absolute = 6;
+    CasFailed cas_failed = 7;
+    string bad_format = 8;
+    string io = 9;
+    string encoding_error = 10;
+    string invalid_cas = 11;
+    string msg = 12;
+    bool cannot_delete_root = 13;
+    bool invalid_msg = 14;
+    bool timeout = 15;
+    bool not_enough_replicas = 16;
+    bool bad_epoch = 17;
+  }
+}
+
+message WrongType {
+  optional string path = 1;
+  optional NodeType node_type = 2;
+}
+
+message CasFailed {
+  optional string path = 1;
+  optional uint64 expected = 2;
+  optional uint64 actual = 3;
+}
+
+message TreeOpResult {
+  optional uint64 version = 1;
+  oneof result {
+    bool ok = 2;
+    bool empty = 3;
+    bool bool = 4;
+    bytes blob = 5;
+    uint64 int = 6;
+    Set set = 7;
+    Keys keys = 8;
+  }
+}
+
+message TreeCasResult {
+  repeated TreeOpResult result = 1;
+}
+
+message Keys {
+  map<string, uint64> keys = 1;
+}
+
+message NamespaceMsg {
+  oneof msg {
+    Namespaces namespaces = 1;
+    RegisterClient register_client = 2;
+    string api_addr = 3;
+    NamespaceReconfiguration reconfiguration = 4;
+    Pid stop = 5;
+    Pid new_primary = 6;
+    string clear_primary = 7;
+  }
+}
+
+message Namespaces {
+  map<string, ReplicaConfig> map = 1;
+  map<string, Pid> primaries = 2;
+}
+
+message ReplicaConfig {
+  optional VersionedReplicas old = 1;
+  optional VersionedReplicas new = 2;
+}
+
+message RegisterClient {
+  optional string client_id = 1;
+  optional string namespace_id = 2;
+}
+
+message NamespaceReconfiguration {
+  optional string namespace_id = 1;
+  optional VersionedReplicas old_config = 2;
+  optional VersionedReplicas new_config = 3;
+}
+
+message VersionedReplicas {
+  optional uint64 epoch = 1;
+  optional uint64 op = 2;
+  repeated Pid replicas = 3;
+}
+
+message ApiRpy {
+  oneof rpy {
+    ClientRegistration client_registration = 1;
+    Redirect redirect = 2;
+    uint64 retry = 3;
+    bool unknown_namespace = 4;
+  }
+}
+
+message ClientRegistration {
+  optional Pid primary = 1;
+  optional bool new_registration = 2;
+}
+
+message Redirect {
+  optional Pid primary = 1;
+  optional string api_addr = 2;
+}
+
+message AdminReq {
+  oneof req {
+    bool get_config = 1;
+    NodeId join = 2;
+    Pids create_namespace = 3;
+    bool get_namespaces = 4;
+    Pid get_replica_state = 5;
+    string get_primary = 6;
+    bool get_cluster_status = 7;
+    Pid get_metrics = 8;
+  }
+}
+
+message AdminRpy {
+  oneof rpy {
+    bool ok = 1;
+    bool timeout = 2;
+    string error = 3;
+    Config config = 4;
+    string namespace_id = 5;
+    Namespaces namespaces = 6;
+    VrCtxSummary replica_state = 7;
+    Pid replica_not_found = 8;
+    Primary primary = 9;
+    Metrics metrics = 10;
+  }
+}
+
+message Config {
+  optional string node_name = 1;
+  optional string cluster_host = 2;
+  optional string admin_host = 3;
+  optional string api_host = 4;
+}
+
+message Primary {
+  optional Pid primary = 1;
+}
+
+message VrCtxSummary {
+  optional string state = 1;
+  optional Pid pid = 2;
+  optional Pid primary = 3;
+  optional uint64 epoch = 4;
+  optional uint64 view = 5;
+  optional uint64 op = 6;
+  optional uint64 commit_num = 7;
+  optional string last_received_time = 8;
+  optional string last_normal_view = 9;
+  optional VersionedReplicas old_config = 10;
+  optional VersionedReplicas new_config = 11;
+}

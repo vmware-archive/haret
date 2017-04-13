@@ -13,7 +13,7 @@ use super::messages::*;
 
 type Milliseconds = u64;
 
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiRpy {
     ClientRegistration {primary: Pid, new_registration: bool},
     Redirect {primary: Pid, api_addr: String},

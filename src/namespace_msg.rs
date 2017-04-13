@@ -5,13 +5,13 @@ use rabble::Pid;
 use namespaces::Namespaces;
 use vr::VersionedReplicas;
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ClientId(pub String);
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct NamespaceId(pub String);
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum NamespaceMsg {
     /// Namespaces are gossiped between namespace managers,
     Namespaces(Namespaces),
@@ -22,8 +22,8 @@ pub enum NamespaceMsg {
     /// API Addresses are published from the node they live on to all other nodes.
     ApiAddr(String),
 
-    /// The following four messages are sent from a VM to indicate a change in membership state for
-    /// a given namespace
+    /// The following four messages are sent from an FSM to indicate a
+    /// change in membership state for a given namespace
     Reconfiguration {
         namespace_id: NamespaceId,
         old_config: VersionedReplicas,

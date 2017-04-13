@@ -73,7 +73,7 @@ impl Process for Replica {
 /// When we create a namesapce, the initial group of replicas is at epoch 1. When a reconfiguration
 /// occurs we bump the epoch so when we gossip the information around to start the fsms, we can
 /// chose the latest version.
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VersionedReplicas {
     pub epoch: u64,
     pub op: u64,

@@ -1,0 +1,91 @@
+syntax = "proto2";
+
+message NodeId {
+  optional string name = 1;
+  optional string addr = 2;
+}
+
+message Pids {
+  repeated Pid pids = 1;
+}
+
+message Pid {
+  optional string name = 1;
+  optional string group = 2;
+  optional NodeId node = 3;
+}
+
+message CorrelationId {
+  optional Pid pid = 1;
+  optional uint64 handle = 2;
+  optional uint64 request = 3;
+}
+
+message Envelope {
+  optional Pid to = 1;
+  optional Pid from = 2;
+  optional CorrelationId cid = 3;
+  optional PbMsg msg = 4;
+}
+
+message PbMsg {
+  oneof request {
+	bool get_metrics = 1;
+	uint64 start_timer = 2;
+	bool cancel_timer = 3;
+	bool shutdown = 4;
+	NodeId get_processes = 5;
+	NodeId get_services = 6;
+	bool get_membership = 7;
+  }
+  oneof reply {
+    Metrics metrics = 50000;
+    bool timeout = 50001;
+    Pids processes = 50002;
+    Pids services = 50003;
+    Members members = 50004;
+    string error = 5005;
+  }
+
+  // rust protobuf doesn't support extensions yet, so we hack around it via bytes.
+  optional bytes user_msg = 100000;
+}
+
+message Members {
+  repeated Member members = 1;
+}
+
+message Member {
+  optional NodeId node = 1;
+  optional bool connected = 2;
+}
+
+message Metrics {
+  repeated Metric metrics = 1;
+}
+
+message Metric {
+  optional string name = 1;
+  oneof metric {
+    int64 gauge = 2;
+    uint64 counter = 3;
+    bytes v2_serialized_histogram = 4;
+  }
+}
+
+// This message is used only by the cluster server. It will never get sent to processes
+message ClusterServerMsg {
+  oneof msg {
+    MemberORSet orset = 1;
+    bool ping = 2;
+    Envelope envelope = 3;
+    // The actual delta is serialized in msgpack using rustc_serialize for now.
+    bytes delta = 4;
+  }
+}
+
+message MemberORSet {
+  optional NodeId from = 1;
+  // The actual ORSet is serialized in msgpack using rustc_serialize for now.
+  optional bytes orset = 2;
+}
