@@ -39,3 +39,6 @@ pub use namespace_msg::{
     ClientId,
     NamespaceId
 };
+
+#[path = "../schema/pb_msg.rs"]
+mod pb_msg;
