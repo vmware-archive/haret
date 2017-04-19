@@ -95,25 +95,27 @@ impl TryFrom<pb_msg::AdminReq> for AdminReq {
 }
 
 impl From<AdminRpy> for pb_msg::AdminRpy {
-    let mut msg = pb_msg::AdminRpy::new();
-    match req {
-        AdminRpy::Ok => msg.set_ok(true),
-        AdminRpy::Timeout => msg.set_timeout(true),
-        AdminRpy::Error(s) => msg.set_error(s),
-        AdminRpy::Config(config) => msg.set_config(config.into()),
-        AdminRpy::NamespaceId(ns_id) => msg.set_namespace_id(ns_id.0),
-        AdminRpy::Namespaces(namespaces) => msg.set_namespaces(namespaces.into()),
-        AdminRpy::ReplicaState(state) => msg.set_replica_state(state.into()),
-        AdminRpy::ReplicaNotFound(pid) => msg.set_replica_not_found(pid.into()),
-        AdminRpy::Primary(Some(pid)) => {
-            let mut primary = pb_msg::Primary::new();
-            primary.set_primary(pid.into());
-            msg.set_primary(primary);
-        },
-        AdminRpy::Primary(None) => msg.set_primary(pb_msg::Primary::new()),
-        AdminRpy::Metrics(metrics) => msg.set_metrics(metrics.into()),
+    fn from(rpy: AdminRpy) -> pb_msg::AdminRpy {
+        let mut msg = pb_msg::AdminRpy::new();
+        match rpy {
+            AdminRpy::Ok => msg.set_ok(true),
+            AdminRpy::Timeout => msg.set_timeout(true),
+            AdminRpy::Error(s) => msg.set_error(s),
+            AdminRpy::Config(config) => msg.set_config(config.into()),
+            AdminRpy::NamespaceId(ns_id) => msg.set_namespace_id(ns_id.0),
+            AdminRpy::Namespaces(namespaces) => msg.set_namespaces(namespaces.into()),
+            AdminRpy::ReplicaState(state) => msg.set_replica_state(state.into()),
+            AdminRpy::ReplicaNotFound(pid) => msg.set_replica_not_found(pid.into()),
+            AdminRpy::Primary(Some(pid)) => {
+                let mut primary = pb_msg::Primary::new();
+                primary.set_primary(pid.into());
+                msg.set_primary(primary);
+            },
+            AdminRpy::Primary(None) => msg.set_primary(pb_msg::Primary::new()),
+            AdminRpy::Metrics(metrics) => msg.set_metrics(metrics.into()),
+        }
+        msg
     }
-    msg
 }
 
 impl TryFrom<pb_msg::AdminRpy> for AdminRpy {
@@ -139,7 +141,7 @@ impl TryFrom<pb_msg::AdminRpy> for AdminRpy {
             return Ok(AdminRpy::Namespaces(msg.take_namespaces().into()));
         }
         if msg.has_replica_state() {
-            return Ok(AdminRpy::ReplicaState(msg.take_replica_state().try_into()?));
+            return Ok(AdminRpy::ReplicaState(msg.take_replica_state().into()));
         }
         if msg.has_replica_not_found() {
             return Ok(AdminRpy::ReplicaNotFound(msg.take_replica_not_found().into()));

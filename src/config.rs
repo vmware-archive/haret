@@ -39,6 +39,28 @@ impl Config {
 
 }
 
+impl From<Config> for pb_msg::Config {
+    fn from(config: Config) -> pb_msg::Config {
+        let msg = pb_msg::Config::new();
+        msg.set_node_name(config.node_name);
+        msg.set_cluster_host(config.cluster_host);
+        msg.set_admin_host(config.admin_host);
+        msg.set_api_host(config.api_host);
+        msg
+    }
+}
+
+impl From<pb_msg::Config> for Config {
+    fn from(msg: pb_msg::Config) -> Config {
+        Config {
+            node_name: msg.take_node_name(),
+            cluster_host: msg.take_cluster_host(),
+            admin_host: msg.take_admin_host(),
+            api_host: msg.take_api_host()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
