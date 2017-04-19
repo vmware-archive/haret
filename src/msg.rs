@@ -1,7 +1,8 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use rabble::{UserMsg, Result};
+use protobuf::{Message, MessageStatic, parse_from_bytes};
+use rabble::{UserMsg, Result, ErrorKind};
 use namespace_msg::NamespaceMsg;
 use vr::VrMsg;
 use admin::{AdminReq, AdminRpy};
@@ -32,6 +33,27 @@ impl trait UserMsg for Msg {
         Ok(msg.write_to_bytes()?)
     }
 
-    fn from_bytes(Vec<u8>) -> Result<Msg> {
+    fn from_bytes(buf: Vec<u8>) -> Result<Msg> {
+        let msg: Msg = parse_from_bytes(&buf[..])?;
+        if msg.has_vr() {
+            return Ok(Msg::Vr(msg.take_vr().try_into()?));
+        }
+        if msg.has_namespace() {
+            return Ok(Msg::NamespaceMsg(msg.take_namespace().try_into()?));
+        }
+        if msg.has_admin_req() {
+            return Ok(Msg::AdminReq(msg.take_admin_req().try_into()?));
+        }
+        if msg.has_admin_rpy() {
+            return Ok(Msg::AdminRpy(msg.take_admin_rpy().try_into()?));
+        }
+        if msg.has_api_rpy() {
+            return Ok(Msg::ApiRpy(msg.take_api_rpy().try_into()?));
+        }
+        if msg.has_error() {
+            return Ok(Msg::Error(msg.take_error()));
+        }
+
+        Err(ErrorKind::ProtobufDecodeError("Unknown Msg").into())
     }
 }

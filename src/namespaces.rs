@@ -4,8 +4,9 @@
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use vr::VersionedReplicas;
-use rabble::{Pid, NodeId};
+use rabble::{Pid, NodeId, Result, Error, ErrorKind};
 use namespace_msg::NamespaceId;
+use pb_msg;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Namespaces {
@@ -70,6 +71,46 @@ impl Namespaces {
             (true, to_start)
         } else {
             (false, Vec::new())
+        }
+    }
+}
+
+impl From<Namespaces> for pb_msg::Namespaces {
+    fn from(namespaces: Namespaces) -> pb_msg::Namespaces {
+        let msg = pb_msg::Namespaces::new();
+        msg.set_map(namespaces.map.into_iter().map(|(ns_id, (old_config, new_config))| {
+            let mut entry = pb_msg::Namespaces_MapEntry::new();
+            entry.set_key(ns_id.0);
+            let mut config = pb_msg::ReplicaConfig::new();
+            config.set_old(old_config.into());
+            config.set_new(new_config.into());
+            entry.set_value(config);
+            entry
+        }).collect());
+        msg.set_primaries(namespaces.primaries.into_iter().map(|(ns_id, pid)| {
+            let mut entry = pb_msg::Namespaces_PrimariesEntry::new();
+            entry.set_key(ns_id.0);
+            entry.set_value(pid.into());
+            entry
+        }).collect());
+        msg
+    }
+}
+
+impl From<pb_msg::Namespaces> for Namespaces {
+    fn from(msg: pb_msg::Namespaces) -> Namespaces {
+        let map = msg.take_map().into_iter().map(|entry| {
+            let ns_id = NamespaceId(entry.take_key());
+            let replica_config = entry.take_value();
+            (ns_id, (replica_config.take_old().into(), replica_config.take_new().into()))
+        }).collect();
+        let primaries = msg.take_primaries().into_iter().map(|entry| {
+            (NamespaceId(entry.take_key()), entry.take_value().into())
+        }).collect();
+
+        Namespaces {
+            map: map,
+            primaries: primaries
         }
     }
 }

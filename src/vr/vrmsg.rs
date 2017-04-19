@@ -440,6 +440,6 @@ impl TryFrom<pb_msg::VrMsg> for VrMsg {
             });
         }
 
-        Err(ErrorKind::ProtobufDecodeError("Unknown Message received").into())
+        Err(ErrorKind::ProtobufDecodeError("Unknown VrMsg").into())
     }
 }

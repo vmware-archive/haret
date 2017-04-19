@@ -9,6 +9,7 @@ use super::vr_envelope::VrEnvelope;
 use super::vrmsg::VrMsg;
 use super::vr_ctx_summary::VrCtxSummary;
 use super::super::admin::{AdminReq, AdminRpy};
+use pb_msg;
 
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
 /// It also takes care to only pass messages of type VrEnvelope to the FSM.
@@ -86,6 +87,26 @@ impl VersionedReplicas {
             epoch: 0,
             op: 0,
             replicas: Vec::new()
+        }
+    }
+}
+
+impl From<VersionedReplicas> for pb_msg::VersionedReplicas {
+    fn from(replicas: VersionedReplicas) -> pb_msg::VersionedReplicas {
+        let mut msg = pb_msg::VersionedReplicas::new();
+        msg.set_epoch(epoch);
+        msg.set_op(op);
+        msg.set_replicas(replicas.into_iter().map(|pid| pid.into()).collect());
+        msg
+    }
+}
+
+impl From<pb_msg::VersionedReplicas> for VersionedReplicas {
+    fn from(msg: pb_msg;:Versionedreplicas) -> VersionedReplicas {
+        VersionedReplicas {
+            epoch: msg.get_epoch(),
+            op: msg.get_op(),
+            replicas: msg.take_replicas().into_iter().map(|pid| pid.into()).collect()
         }
     }
 }

@@ -239,6 +239,7 @@ impl From<TreeOp> for pb_msg::TreeOp {
                 op.set_set_superset_set(msg);
             }
         }
+        op
     }
 }
 
