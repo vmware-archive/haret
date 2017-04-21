@@ -29,9 +29,7 @@ impl Replica {
     }
 }
 
-impl Process for Replica {
-    type Msg = Msg;
-
+impl Process<Msg> for Replica {
     fn init(&mut self, from: Pid) -> Vec<Envelope<Msg>> {
         let c_id = CorrelationId::pid(self.pid.clone());
         let envelope = VrEnvelope::new(self.pid.clone(), from, VrMsg::Tick, c_id);
@@ -42,17 +40,20 @@ impl Process for Replica {
     fn handle(&mut self,
               msg: rabble::Msg<Msg>,
               from: Pid,
-              correlation_id: Option<CorrelationId>) -> &mut Vec<Envelope<Msg>>
+              correlation_id: CorrelationId) -> &mut Vec<Envelope<Msg>>
     {
-        let correlation_id = correlation_id.map_or(CorrelationId::pid(self.pid.clone()),
-                                                   |c_id| c_id);
         match msg {
             rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
                 let (state, ctx) = self.fsm.get_state();
                 let summary = VrCtxSummary::new(state, ctx);
                 let rpy = AdminRpy::ReplicaState(summary);
                 let msg = rabble::Msg::User(Msg::AdminRpy(rpy));
-                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
+                let envelope = Envelope {
+                    to: from,
+                    from: self.pid.clone(),
+                    msg: msg,
+                    correlation_id: correlation_id
+                };
                 self.output.push(envelope);
             },
             rabble::Msg::User(Msg::Vr(vrmsg)) => {
@@ -61,7 +62,12 @@ impl Process for Replica {
             },
             _ => {
                 let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));
-                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
+                let envelope = Envelope {
+                    to: from,
+                    from: self.pid.clone(),
+                    msg: msg,
+                    correlation_id: correlation_id
+                };
                 self.output.push(envelope);
             }
         }
@@ -94,15 +100,15 @@ impl VersionedReplicas {
 impl From<VersionedReplicas> for pb_msg::VersionedReplicas {
     fn from(replicas: VersionedReplicas) -> pb_msg::VersionedReplicas {
         let mut msg = pb_msg::VersionedReplicas::new();
-        msg.set_epoch(epoch);
-        msg.set_op(op);
-        msg.set_replicas(replicas.into_iter().map(|pid| pid.into()).collect());
+        msg.set_epoch(replicas.epoch);
+        msg.set_op(replicas.op);
+        msg.set_replicas(replicas.replicas.into_iter().map(|pid| pid.into()).collect());
         msg
     }
 }
 
 impl From<pb_msg::VersionedReplicas> for VersionedReplicas {
-    fn from(msg: pb_msg;:Versionedreplicas) -> VersionedReplicas {
+    fn from(msg: pb_msg::VersionedReplicas) -> VersionedReplicas {
         VersionedReplicas {
             epoch: msg.get_epoch(),
             op: msg.get_op(),

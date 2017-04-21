@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![feature(custom_derive, plugin)]
+#![feature(try_from)]
 
 // Crates we don't manage
 extern crate rand;
@@ -39,6 +40,9 @@ pub use namespace_msg::{
     ClientId,
     NamespaceId
 };
+
+// Use the generated protobuf code as if it were local
+use rabble::pb_messages as rabble_messages;
 
 #[path = "../schema/pb_msg.rs"]
 mod pb_msg;

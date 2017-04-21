@@ -23,7 +23,7 @@ funfsm = "0.2"
 orset = "0.1"
 #rabble = "0.2.1"
 rabble = {path = "../rabble"}
-protobuf = "1.0.24"
+protobuf = "1.2"
 vertree = "0.1"
 lazy_static = "0.1"
 

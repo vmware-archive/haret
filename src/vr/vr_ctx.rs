@@ -57,6 +57,7 @@ pub struct VrCtx {
 
     /// Only used when a replica is shutting down
     pub epoch_started_msgs: QuorumTracker<VrMsg>,
+    
 
     /// Backups wait `idle_timeout` between messages from the primary before initiating a view
     /// change.

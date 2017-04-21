@@ -19,7 +19,7 @@ pub enum Msg {
     Error(String)
 }
 
-impl trait UserMsg for Msg {
+impl UserMsg for Msg {
     fn to_bytes(self) -> Result<Vec<u8>> {
         let mut msg = pb_msg::Msg::new();
         match self {

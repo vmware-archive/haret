@@ -1,12 +1,14 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::convert::{TryFrom, TryInto};
 use rabble::{Pid, NodeId, Metric, Result, Error, ErrorKind};
 use config::Config;
 use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
 use vr::VrCtxSummary;
 use pb_msg;
+use rabble::pb_messages as rabble_msg;
 
 #[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum AdminMsg {
@@ -47,7 +49,7 @@ impl From<AdminReq> for pb_msg::AdminReq {
             AdminReq::GetConfig => msg.set_get_config(true),
             AdminReq::Join(node_id) => msg.set_join(node_id.into()),
             AdminReq::CreateNamespace(pids) => {
-                let mut pb_pids = pb_msg::Pids::new();
+                let mut pb_pids = rabble_msg::Pids::new();
                 pb_pids.set_pids(pids.into_iter().map(|pid| pid.into()).collect());
                 msg.set_create_namespace(pb_pids);
             },
@@ -78,7 +80,7 @@ impl TryFrom<pb_msg::AdminReq> for AdminReq {
             return Ok(AdminReq::GetNamespaces);
         }
         if msg.has_get_replica_state() {
-            return Ok(AdminReq::GetReplicaState(msg.take_replica_state().into()));
+            return Ok(AdminReq::GetReplicaState(msg.take_get_replica_state().into()));
         }
         if msg.has_get_primary() {
             return Ok(AdminReq::GetPrimary(NamespaceId(msg.take_get_primary())));

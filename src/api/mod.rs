@@ -14,5 +14,7 @@
 
 mod connection_handler;
 pub mod messages;
+mod api_rpy;
 
-pub use self::connection_handler::{ApiConnectionHandler, ApiRpy};
+pub use self::api_rpy::ApiRpy;
+pub use self::connection_handler::ApiConnectionHandler;

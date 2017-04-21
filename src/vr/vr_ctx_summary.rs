@@ -50,7 +50,7 @@ impl From<VrCtxSummary> for pb_msg::VrCtxSummary {
         msg.set_state(ctx.state);
         msg.set_pid(ctx.pid.into());
 
-        let pb_primary = pb_msg::Primary::new()
+        let pb_primary = pb_msg::Primary::new();
         if let Some(primary) = ctx.primary {
             pb_primary.set_primary(primary.into());
         }

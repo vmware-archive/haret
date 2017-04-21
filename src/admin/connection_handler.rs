@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
-use rabble::{self, Pid, Envelope, ConnectionMsg, ConnectionHandler, CorrelationId};
+use rabble::{self, Pid, Envelope, ConnectionMsg, ConnectionHandler, CorrelationId, Req, Rpy};
 use msg::Msg;
 use super::messages::{AdminMsg, AdminReq, AdminRpy};
 
@@ -29,7 +29,7 @@ impl AdminConnectionHandler {
             to: pid,
             from: self.pid.clone(),
             msg: rabble::Msg::User(Msg::AdminReq(req)),
-            correlation_id: Some(c_id)
+            correlation_id: c_id
         }
     }
 
@@ -40,7 +40,7 @@ impl AdminConnectionHandler {
             to: pid,
             from: self.pid.clone(),
             msg: msg,
-            correlation_id: Some(c_id)
+            correlation_id: c_id
         }
     }
 
@@ -83,12 +83,10 @@ impl ConnectionHandler for AdminConnectionHandler {
         &mut Vec<ConnectionMsg<AdminConnectionHandler>>
     {
         let Envelope {msg, correlation_id, ..} = envelope;
-        let correlation_id = correlation_id.unwrap();
         let rpy = match msg {
             rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy,
-            rabble::Msg::ClusterStatus(status) => AdminRpy::ClusterStatus(status),
-            rabble::Msg::Timeout => AdminRpy::Timeout,
-            rabble::Msg::Metrics(metrics) => AdminRpy::Metrics(metrics),
+            rabble::Msg::Rpy(Rpy::Timeout) => AdminRpy::Timeout,
+            rabble::Msg::Rpy(Rpy::Metrics(metrics)) => AdminRpy::Metrics(metrics),
             _ => unreachable!()
         };
         if correlation_id.request == Some(self.waiting_for) {
@@ -108,7 +106,8 @@ impl ConnectionHandler for AdminConnectionHandler {
                 AdminReq::GetReplicaState(pid) => 
                     self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid)),
                 AdminReq::GetMetrics(pid) =>
-                    self.make_rabble_msg_envelope(pid.clone(), rabble::Msg::GetMetrics),
+                    self.make_rabble_msg_envelope(pid.clone(),
+                                                  rabble::Msg::Req(Req::GetMetrics)),
                 _ => {
                     let pid = self.namespace_mgr.clone();
                     self.make_envelope(pid, req)

@@ -10,16 +10,7 @@ use vr::{self, VrMsg, VrApiReq, VrApiRsp, VrApiError};
 use msg::Msg;
 use namespace_msg::{NamespaceMsg, NamespaceId, ClientId};
 use super::messages::*;
-
-type Milliseconds = u64;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ApiRpy {
-    ClientRegistration {primary: Pid, new_registration: bool},
-    Redirect {primary: Pid, api_addr: String},
-    Retry(Milliseconds),
-    UnknownNamespace
-}
+use super::ApiRpy;
 
 /// The connection handler for API clients
 pub struct ApiConnectionHandler {
@@ -367,9 +358,8 @@ impl ConnectionHandler for ApiConnectionHandler {
                 self.output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::User(Msg::ApiRpy(reply)) => {
-                let response = api_rpy_to_proto_api_response(reply);
                 let mut msg = ApiMsg::new();
-                msg.set_response(response);
+                msg.set_response(reply.into());
                 self.output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::Timeout => {
@@ -412,40 +402,6 @@ impl ConnectionHandler for ApiConnectionHandler {
     }
 }
 
-fn api_rpy_to_proto_api_response(reply: ApiRpy) -> ApiResponse {
-    match reply {
-        ApiRpy::ClientRegistration {primary, new_registration} => {
-            let pid = pid_to_api_pid(primary);
-            let mut cr = ClientRegistration::new();
-            cr.set_primary(pid);
-            cr.set_new_registration(new_registration);
-            let mut response = ApiResponse::new();
-            response.set_client_registration(cr);
-            response
-        },
-        ApiRpy::Redirect {primary, api_addr} => {
-            let pid = pid_to_api_pid(primary);
-            let mut redirect = Redirect::new();
-            redirect.set_primary(pid);
-            redirect.set_api_addr(api_addr);
-            let mut response = ApiResponse::new();
-            response.set_redirect(redirect);
-            response
-        },
-        ApiRpy::Retry(milliseconds) => {
-            let mut retry = Retry::new();
-            retry.set_milliseconds(milliseconds);
-            let mut response = ApiResponse::new();
-            response.set_retry(retry);
-            response
-        },
-        ApiRpy::UnknownNamespace => {
-            let mut response = ApiResponse::new();
-            response.set_unknown_namespace(true);
-            response
-        }
-    }
-}
 
 impl From<VrApiError> for ApiError {
     fn from(error: VrApiError) -> ApiError {
@@ -588,6 +544,7 @@ impl From<vr::TreeOpResult> for TreeOpResult {
     }
 }
 
+// TODO: Convert this to  From<VrApiRsp> for ApiResponse
 fn vr_api_rsp_to_proto_api_response(mut reply: ConsensusReply, value: VrApiRsp) -> ApiResponse {
     match value {
         VrApiRsp::Ok => reply.set_ok(true),
@@ -604,16 +561,5 @@ fn vr_api_rsp_to_proto_api_response(mut reply: ConsensusReply, value: VrApiRsp) 
     let mut response = ApiResponse::new();
     response.set_consensus_reply(reply);
     response
-}
-
-fn pid_to_api_pid(pid: Pid) -> ApiPid {
-    let mut api_pid = ApiPid::new();
-    api_pid.set_name(pid.name);
-    api_pid.set_node_name(pid.node.name);
-    api_pid.set_node_addr(pid.node.addr);
-    if pid.group.is_some() {
-        api_pid.set_group(pid.group.unwrap());
-    }
-    api_pid
 }
 

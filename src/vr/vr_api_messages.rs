@@ -1,8 +1,9 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::convert::TryFrom;
 use std::collections::HashSet;
-use rabble::{Pid, Error};
+use rabble::{Pid, Error, ErrorKind, Result};
 use pb_msg;
 
 type Version = u64;
@@ -120,8 +121,8 @@ pub enum VrApiError {
 }
 
 impl From<NodeType> for pb_msg::NodeType {
-    fn from(self) -> pb_msg::NodeType {
-        match self {
+    fn from(ty: NodeType) -> pb_msg::NodeType {
+        match ty {
             NodeType::Blob => pb_msg::NodeType::BlobType,
             NodeType::Queue => pb_msg::NodeType::QueueType,
             NodeType::Set => pb_msg::NodeType::SetType,
@@ -131,8 +132,8 @@ impl From<NodeType> for pb_msg::NodeType {
 }
 
 impl From<pb_msg::NodeType> for NodeType {
-    fn from(self) -> NodeType {
-        match self {
+    fn from(msg: pb_msg::NodeType) -> NodeType {
+        match msg {
             pb_msg::NodeType::BlobType => NodeType::Blob,
             pb_msg::NodeType::QueueType => NodeType::Queue,
             pb_msg::NodeType::SetType => NodeType::Set,
@@ -142,13 +143,13 @@ impl From<pb_msg::NodeType> for NodeType {
 }
 
 impl From<TreeOp> for pb_msg::TreeOp {
-    fn from(self) -> pb_msg::TreeOp {
+    fn from(tree_op: TreeOp) -> pb_msg::TreeOp {
         let mut op = pb_msg::TreeOp::new();
-        match self {
+        match tree_op {
             TreeOp::Snapshot {directory} => op.set_snapshot(directory),
             TreeOp::CreateNode {path, ty} => {
                 let mut msg = pb_msg::CreateNode::new();
-                msg.set_path(path),
+                msg.set_path(path);
                 msg.set_node_type(ty.into());
                 op.set_create_node(msg)
             },
@@ -245,145 +246,145 @@ impl From<TreeOp> for pb_msg::TreeOp {
 
 impl TryFrom<pb_msg::TreeOp> for TreeOp {
     type Error = Error;
-    fn try_from(self) -> Result<TreeOp> {
-        if self.has_snapshot() {
+    fn try_from(pb_op: pb_msg::TreeOp) -> Result<TreeOp> {
+        if pb_op.has_snapshot() {
             return Ok(TreeOp::Snapshot {
-                directory: self.take_snapshot()
+                directory: pb_op.take_snapshot()
             });
         }
-        if self.has_create_node() {
-            let msg = self.take_create_node();
+        if pb_op.has_create_node() {
+            let msg = pb_op.take_create_node();
             return Ok(TreeOp::CreateNode {
                 path: msg.take_path(),
                 ty: msg.take_node_type().into()
             });
         }
-        if self.has_delete_node() {
+        if pb_op.has_delete_node() {
             return Ok(TreeOp::DeleteNode {
-                path: self.take_delete_node()
+                path: pb_op.take_delete_node()
             });
         }
-        if self.has_list_keys() {
+        if pb_op.has_list_keys() {
             return Ok(TreeOp::ListKeys {
-                path: self.take_list_keys()
+                path: pb_op.take_list_keys()
             });
         }
-        if self.has_blob_put() {
-            let msg = self.take_blob_put();
+        if pb_op.has_blob_put() {
+            let msg = pb_op.take_blob_put();
             return Ok(TreeOp::BlobPut {
                 path: msg.take_path(),
                 val: msg.take_val()
             });
         }
-        if self.has_blob_get() {
+        if pb_op.has_blob_get() {
             return Ok(TreeOp::BlobGet {
-                path: self.take_path()
+                path: pb_op.take_path()
             });
         }
-        if self.has_blob_size() {
+        if pb_op.has_blob_size() {
             return Ok(TreeOp::BlobSize {
-                path: self.take_path()
+                path: pb_op.take_path()
             });
         }
-        if self.has_queue_push() {
-            let msg = self.take_queue_push();
+        if pb_op.has_queue_push() {
+            let msg = pb_op.take_queue_push();
             return Ok(TreeOp::QueuePush {
                 path: msg.take_path(),
                 val: msg.take_val()
             });
         }
-        if self.has_queue_pop() {
+        if pb_op.has_queue_pop() {
             return Ok(TreeOp::QueuePop {
-                path: self.take_path()
+                path: pb_op.take_path()
             });
         }
-        if self.has_queue_front() {
+        if pb_op.has_queue_front() {
             return Ok(TreeOp::QueueFront {
-                path: self.take_path()
+                path: pb_op.take_path()
             });
         }
-        if self.has_queue_back() {
+        if pb_op.has_queue_back() {
             return Ok(TreeOp::QueueBack {
-                path: self.take_path()
+                path: pb_op.take_path()
             });
         }
-        if self.has_queue_len() {
+        if pb_op.has_queue_len() {
             return Ok(TreeOp::QueueLen {
-                path: self.take_path()
+                path: pb_op.take_path()
             });
         }
-        if self.has_set_insert() {
-            let msg = self.take_set_insert();
+        if pb_op.has_set_insert() {
+            let msg = pb_op.take_set_insert();
             return Ok(TreeOp::SetInsert {
                 path: msg.take_path(),
                 val: msg.take_val()
             });
         }
-        if self.has_set_remove() {
-            let msg = self.take_set_remove();
+        if pb_op.has_set_remove() {
+            let msg = pb_op.take_set_remove();
             return Ok(TreeOp::SetRemove {
                 path: msg.take_path(),
                 val: msg.take_val()
             });
         }
-        if self.has_set_contains() {
-            let msg = self.take_set_contains();
+        if pb_op.has_set_contains() {
+            let msg = pb_op.take_set_contains();
             return Ok(TreeOp::SetContains {
                 path: msg.take_path(),
                 val: msg.take_val()
             });
         }
-        if self.has_set_union() {
-            let msg = self.take_set_union();
+        if pb_op.has_set_union() {
+            let msg = pb_op.take_set_union();
             return Ok(TreeOp::SetUnion {
-                paths: self.take_paths().into_iter().collect(),
-                sets: self.take_sets().into_iter().map(|s| s.into_iter().collect()).collect()
+                paths: pb_op.take_paths().into_iter().collect(),
+                sets: pb_op.take_sets().into_iter().map(|s| s.into_iter().collect()).collect()
             });
         }
-        if self.has_set_intersection() {
-            let msg = self.take_set_intersection();
+        if pb_op.has_set_intersection() {
+            let msg = pb_op.take_set_intersection();
             return Ok(TreeOp::SetIntersection {
                 path1: msg.take_path1(),
                 path2: msg.take_path2()
             });
         }
-        if self.has_set_difference() {
-            let msg = self.take_set_difference();
+        if pb_op.has_set_difference() {
+            let msg = pb_op.take_set_difference();
             return Ok(TreeOp::SetDifference {
                 path1: msg.take_path1(),
                 path2: msg.take_path2()
             });
         }
-        if self.has_set_symmetric_difference() {
-            let msg = self.take_set_symmetric_difference();
+        if pb_op.has_set_symmetric_difference() {
+            let msg = pb_op.take_set_symmetric_difference();
             return Ok(TreeOp::SetSymmetricDifference {
                 path1: msg.take_path1(),
                 path2: msg.take_path2()
             });
         }
-        if self.has_subset_path() {
-            let msg = self.take_set_subset_path();
+        if pb_op.has_subset_path() {
+            let msg = pb_op.take_set_subset_path();
             return Ok(TreeOp::SetSubsetPath {
                 path1: msg.take_path1(),
                 path2: msg.take_path2()
             });
         }
-        if self.has_subset_set() {
-            let msg = self.take_set_subset_set();
+        if pb_op.has_subset_set() {
+            let msg = pb_op.take_set_subset_set();
             return Ok(TreeOp::SetSubsetSet {
                 path: msg.take_path(),
                 set: msg.take_set().into_iter().collect()
             });
         }
-        if self.has_superset_path() {
-            let msg = self.take_set_superset_path();
+        if pb_op.has_superset_path() {
+            let msg = pb_op.take_set_superset_path();
             return Ok(TreeOp::SetSupersetPath {
                 path1: msg.take_path1(),
                 path2: msg.take_path2()
             });
         }
-        if self.has_superset_set() {
-            let msg = self.take_set_superset_set();
+        if pb_op.has_superset_set() {
+            let msg = pb_op.take_set_superset_set();
             return Ok(TreeOp::SetSupersetSet {
                 path: msg.take_path(),
                 set: msg.take_set().into_iter().collect()
@@ -413,167 +414,168 @@ impl From<pb_msg::Guard> for Guard {
 }
 
 impl From<TreeCas> for pb_msg::TreeCas {
-    fn from(self) -> pb_msg::TreeCas {
+    fn from(cas: TreeCas) -> pb_msg::TreeCas {
         let mut pb_tree_cas = pb_msg::TreeCas::new();
-        pb_tree_cas.set_guards(self.guards.into_iter().map(|g| g.into()).collect());
-        pb_tree_cas.set_ops(self.ops.into_iter().map(|op| op.into()).collect());
+        pb_tree_cas.set_guards(cas.guards.into_iter().map(|g| g.into()).collect());
+        pb_tree_cas.set_ops(cas.ops.into_iter().map(|op| op.into()).collect());
         pb_tree_cas
     }
 }
 
 impl TryFrom<pb_msg::TreeCas> for TreeCas {
     type Error = Error;
-    fn try_from(self) -> Result<TreeCas> {
+    fn try_from(msg: pb_msg::TreeCas) -> Result<TreeCas> {
         Ok(TreeCas {
-            guards: self.take_guards().map(|g| g.into()).collect(),
-            ops: self.take_ops().map(|op| op.try_into()?).collect()
+            guards: msg.take_guards().map(|g| g.into()).collect(),
+            ops: msg.take_ops().map(|op| op.try_into()?).collect()
         })
     }
 }
 
 impl From<VrApiReq> for pb_msg::VrApiReq {
-    fn from(self) -> pb_msg::VrApiReq {
-        let mut req = pb_msg::VrApiReq::new();
-        match self {
-            VrApiReq::TreeOp(op) => req.set_tree_op(op.into()),
-            VrApiReq::TreeCas(cas) => req.set_tree_cas(cas.into())
+    fn from(req: VrApiReq) -> pb_msg::VrApiReq {
+        let mut msg = pb_msg::VrApiReq::new();
+        match req {
+            VrApiReq::TreeOp(op) => msg.set_tree_op(op.into()),
+            VrApiReq::TreeCas(cas) => msg.set_tree_cas(cas.into())
         }
         req
     }
 }
 
 impl TryFrom<pb_msg::VrApiReq> for VrApiReq {
-    fn try_from(self) -> Result<VrApiReq> {
-        type Error = Error;
-        if self.has_tree_op() {
-            return Ok(VrApiReq::TreeOp(self.take_tree_op().try_into()?));
+    type Error = Error;
+    fn try_from(msg: pb_msg::VrApiReq) -> Result<VrApiReq> {
+        if msg.has_tree_op() {
+            return Ok(VrApiReq::TreeOp(msg.take_tree_op().try_into()?));
         }
-        if self.has_tree_cas() {
-            return Ok(VrApiReq::TreeCas(self.take_tree_cas().try_into()?));
+        if msg.has_tree_cas() {
+            return Ok(VrApiReq::TreeCas(msg.take_tree_cas().try_into()?));
         }
         Err(ErrorKind::ProtobufDecodeError("Unknown VrApiReq received").into())
     }
 }
 
 impl From<TreeOpResult> for pb_msg::TreeOpResult {
-    fn from(self) -> pb_msg::TreeOpResult {
-        let mut res = pb_msg::TreeOpResult::new();
-        match self {
+    fn from(res: TreeOpResult) -> pb_msg::TreeOpResult {
+        let mut msg = pb_msg::TreeOpResult::new();
+        match res {
             TreeOpResult::Ok(Some(version)) => {
-                res.set_version(version);
-                res.set_ok(true);
+                msg.set_version(version);
+                msg.set_ok(true);
             },
-            TreeOpResult::Ok(None) => res.set_ok(true),
+            TreeOpResult::Ok(None) => msg.set_ok(true),
             TreeOpResult::Empty(Some(version)) => {
-                res.set_version(version);
-                res.set_empty(true);
+                msg.set_version(version);
+                msg.set_empty(true);
             },
-            TreeOpResult::Empty(None) => res.set_ok(true),
+            TreeOpResult::Empty(None) => msg.set_ok(true),
             TreeOpResult::Bool(b, Some(version)) => {
-                res.set_version(version);
-                res.set_bool(b);
+                msg.set_version(version);
+                msg.set_bool(b);
             },
-            TreeOpResult::Bool(b, None) => res.set_bool(b),
+            TreeOpResult::Bool(b, None) => msg.set_bool(b),
             TreeOpResult::Blob(b, Some(version)) => {
-                res.set_version(version);
-                res.set_blob(b);
+                msg.set_version(version);
+                msg.set_blob(b);
             },
-            TreeOpResult::Blob(b, None) => res.set_blob(b),
+            TreeOpResult::Blob(b, None) => msg.set_blob(b),
             TreeOpResult::Int(i, Some(version)) => {
-                res.set_version(version);
-                res.set_int(i);
+                msg.set_version(version);
+                msg.set_int(i);
             },
-            TreeOpResult::Int(i, None) => res.set_int(i),
+            TreeOpResult::Int(i, None) => msg.set_int(i),
             TreeOpResult::Set(s, Some(version)) => {
-                res.set_version(version);
-                res.set_set(s.into());
+                msg.set_version(version);
+                msg.set_set(s.into());
             },
-            TreeOpResult::Set(i, None) => res.set_set(s.into()),
+            TreeOpResult::Set(s, None) => msg.set_set(s.into()),
             TreeOpResult::Keys(keys) => {
-                res.set_keys(keys.into())
+                msg.set_keys(keys.into())
             }
         }
-        res
+        msg 
     }
 }
 
 impl TryFrom<pb_msg::TreeOpResult> for TreeOpResult {
-    fn try_from(self) -> Result<TreeOpResult> {
-        let version = if self.has_version() {
-            Some(self.get_version())
+    type Error = Error;
+    fn try_from(msg: pb_msg::TreeOpResult) -> Result<TreeOpResult> {
+        let version = if msg.has_version() {
+            Some(msg.get_version())
         } else {
             None
         };
-        if self.has_ok() {
+        if msg.has_ok() {
             return Ok(TreeOpResult::Ok(version));
         }
-        if self.has_empty() {
+        if msg.has_empty() {
             return Ok(TreeOpResult::Empty(version));
         }
-        if self.has_bool() {
-            return Ok(TreeOpResult::Bool(self.get_bool(), version));
+        if msg.has_bool() {
+            return Ok(TreeOpResult::Bool(msg.get_bool(), version));
         }
-        if self.has_blob() {
-            return Ok(TreeOpResult::Blob(self.take_blob(), version));
+        if msg.has_blob() {
+            return Ok(TreeOpResult::Blob(msg.take_blob(), version));
         }
-        if self.has_int() {
-            return Ok(TreeOpResult::Int(self.get_int(), version));
+        if msg.has_int() {
+            return Ok(TreeOpResult::Int(msg.get_int(), version));
         }
-        if self.has_set() {
-            return Ok(TreeOpResult::Set(self.take_set().into(), version));
+        if msg.has_set() {
+            return Ok(TreeOpResult::Set(msg.take_set().into(), version));
         }
-        if self.has_keys() {
-            return Ok(TreeOpResult::Keys(self.take_keys().into()));
+        if msg.has_keys() {
+            return Ok(TreeOpResult::Keys(msg.take_keys().into()));
         }
         Err(ErrorKind::ProtobufDecodeError("Unknown TreeOpResult received").into())
     }
 }
 
 impl From<Vec<Vec<u8>>> for pb_msg::Set {
-    fn from(self) -> pb_msg::Set {
-        let mut set = pb_msg::Set::new();
-        set.set_values(self);
-        set
+    fn from(set: Vec<Vec<u8>>) -> pb_msg::Set {
+        let mut msg = pb_msg::Set::new();
+        msg.set_values(set);
+        msg 
     }
 }
 
 impl From<pb_msg::Set> for Vec<Vec<u8>> {
-    fn from(self) -> Vec<Vec<u8>> {
-        self.take_values().collect()
+    fn from(msg: pb_msg::Set) -> Vec<Vec<u8>> {
+        msg.take_values().collect()
     }
 }
 
 impl From<Vec<(String, Version)>> for pb_msg::Keys {
-    fn from(self) -> pb_msg::Keys {
-        let mut keys = pb_msg::Keys::new();
-        keys.set_keys(self.into_iter().map(|s, v| {
+    fn from(keys: Vec<(String, Version)>) -> pb_msg::Keys {
+        let mut msg = pb_msg::Keys::new();
+        msg.set_keys(keys.into_iter().map(|s, v| {
             let mut entry = pb_msg::Keys_KeysEntry::new();
             entry.set_key(s);
             entry.set_value(v);
             entry
         }).collect());
-        keys
+       msg 
     }
 }
 
 impl From<pb_msg::Keys> for Vec<(String, Version)> {
-    fn from(self) -> pb_msg::Keys {
-        self.take_keys().into_iter().map(|entry| {
+    fn from(msg: pb_msg::Keys) -> Vec<(String, Version)> {
+        msg.take_keys().into_iter().map(|entry| {
             (entry.take_key(), entry.get_version())
         }).collect()
     }
 }
 
 impl From<VrApiRsp> for pb_msg::VrApiRsp {
-    fn from(self) -> pb_msg::VrApiRsp {
-        let mut rsp = pb_msg::VrApiRsp::new();
-        match self {
-            VrApiRsp::Ok => rsp.set_ok(true),
-            VrApiRsp::TreeOpResult(result) => rsp.set_tree_op_result(result.into()),
+    fn from(rsp: VrApiRsp) -> pb_msg::VrApiRsp {
+        let mut msg = pb_msg::VrApiRsp::new();
+        match rsp {
+            VrApiRsp::Ok => msg.set_ok(true),
+            VrApiRsp::TreeOpResult(result) => msg.set_tree_op_result(result.into()),
             VrApiRsp::TreeCasResult(results) =>
-                rsp.set_tree_cas_result(results.into_iter().map(|r| r.into()).collect()),
-            VrApiRsp::Path(s) => rsp.set_path(s),
-            VrApiRsp::Error(e) => rsp.set_error(e.into())
+                msg.set_tree_cas_result(results.into_iter().map(|r| r.into()).collect()),
+            VrApiRsp::Path(s) => msg.set_path(s),
+            VrApiRsp::Error(e) => msg.set_error(e.into())
         }
         rsp
     }
@@ -581,23 +583,23 @@ impl From<VrApiRsp> for pb_msg::VrApiRsp {
 
 impl TryFrom<pb_msg::VrApiRsp> for VrApiRsp {
     type Error = Error;
-    fn try_from(self) -> Result<VrApiRsp> {
-        if self.has_ok() {
+    fn try_from(msg: pb_msg::VrApiRsp) -> Result<VrApiRsp> {
+        if msg.has_ok() {
             return Ok(VrApiRsp::Ok);
         }
-        if self.has_tree_op_result() {
-            return Ok(VrApiRsp::TreeOpResult(self.take_tree_op_result().try_into()?));
+        if msg.has_tree_op_result() {
+            return Ok(VrApiRsp::TreeOpResult(msg.take_tree_op_result().try_into()?));
         }
-        if self.has_tree_cas_result() {
-            return Ok(VrApiRsp::TreeCasResult(self.take_tree_cas_result().take_result().map(|r| {
+        if msg.has_tree_cas_result() {
+            return Ok(VrApiRsp::TreeCasResult(msg.take_tree_cas_result().take_result().map(|r| {
                 r.try_into()?
             })));
         }
-        if self.has_path() {
-            return Ok(VrApiRsp::Path(self.take_path()));
+        if msg.has_path() {
+            return Ok(VrApiRsp::Path(msg.take_path()));
         }
-        if self.has_error() {
-            return Ok(VrApiRsp::Error(self.take_error().try_into()?));
+        if msg.has_error() {
+            return Ok(VrApiRsp::Error(msg.take_error().try_into()?));
         }
 
         Err(ErrorKind::ProtobufDecodeError("Unknown VrApiRsp").into())
@@ -605,99 +607,99 @@ impl TryFrom<pb_msg::VrApiRsp> for VrApiRsp {
 }
 
 impl From<VrApiError> for pb_msg::VrApiError {
-    fn from(self) -> pb_msg::VrApiError {
-        let mut rsp = pb_msg::VrApiError::new();
-        match self {
-            VrApiError::NotFound(s) => rsp.set_not_found(s),
-            VrApiError::AlreadyExists(s) => rsp.set_already_exists(s),
-            VrApiError::DoesNotExist(s) => rsp.set_does_not_exist(s),
+    fn from(error: VrApiError) -> pb_msg::VrApiError {
+        let mut msg = pb_msg::VrApiError::new();
+        match error {
+            VrApiError::NotFound(s) => msg.set_not_found(s),
+            VrApiError::AlreadyExists(s) => msg.set_already_exists(s),
+            VrApiError::DoesNotExist(s) => msg.set_does_not_exist(s),
             VrApiError::WrongType(s, ty) => {
                 let mut wrong_type = pb_msg::WrongType::new();
                 wrong_type.set_path(s);
                 wrong_type.set_node_type(ty);
-                rsp.set_wrong_type(wrong_type);
+                msg.set_wrong_type(wrong_type);
             },
-            VrApiError::PathMustEndInDirectory(s) => rsp.set_path_must_end_in_directory(s),
-            VrApiError::PathMustBeAbsolute(s) => rsp.set_path_must_be_absolute(s),
+            VrApiError::PathMustEndInDirectory(s) => msg.set_path_must_end_in_directory(s),
+            VrApiError::PathMustBeAbsolute(s) => msg.set_path_must_be_absolute(s),
             VrApiError::CasFailed {path, expected, actual} => {
                 let mut cas_failed = pb_msg::CasFailed::new();
                 cas_failed.set_path(path);
                 cas_failed.set_expected(expected);
                 cas_failed.set_actual(actual);
-                rsp.set_cas_failed(cas_failed);
+                msg.set_cas_failed(cas_failed);
             },
-            VrApiError::BadFormat(s) => rsp.set_bad_format(s),
-            VrApiError::Io(s) => rsp.set_io(s),
-            VrApiError::EncodingError(s) => rsp.set_encoding_error(s),
-            VrApiError::InvalidCas(s) => rsp.set_invalid_cas(s),
-            VrApiError::Msg(s) => rsp.set_msg(s),
-            VrApiError::CannotDeleteRoot => rsp.set_cannot_delete_root(true),
-            VrApiError::InvalidMsg => rsp.set_invalid_msg(true),
-            VrApiError::Timeout => rsp.set_timeout(true),
-            VrApiError::NotEnoughReplicas => rsp.set_not_enough_replicas(true),
-            VrApiError::BadEpoch => rsp.set_bad_epoch(true)
+            VrApiError::BadFormat(s) => msg.set_bad_format(s),
+            VrApiError::Io(s) => msg.set_io(s),
+            VrApiError::EncodingError(s) => msg.set_encoding_error(s),
+            VrApiError::InvalidCas(s) => msg.set_invalid_cas(s),
+            VrApiError::Msg(s) => msg.set_msg(s),
+            VrApiError::CannotDeleteRoot => msg.set_cannot_delete_root(true),
+            VrApiError::InvalidMsg => msg.set_invalid_msg(true),
+            VrApiError::Timeout => msg.set_timeout(true),
+            VrApiError::NotEnoughReplicas => msg.set_not_enough_replicas(true),
+            VrApiError::BadEpoch => msg.set_bad_epoch(true)
         }
     }
 }
 
 impl TryFrom<pb_msg::VrApiError> for VrApiError {
     type Error = Error;
-    fn try_from(self) -> Result<VrApiError> {
-        if self.has_not_found() {
-            return Ok(VrApiError::NotFound(self.take_not_found()));
+    fn try_from(msg: pb_msg::VrApiError) -> Result<VrApiError> {
+        if msg.has_not_found() {
+            return Ok(VrApiError::NotFound(msg.take_not_found()));
         }
-        if self.has_already_exists() {
-            return Ok(VrApiError::AlreadyExists(self.take_already_exists()));
+        if msg.has_already_exists() {
+            return Ok(VrApiError::AlreadyExists(msg.take_already_exists()));
         }
-        if self.has_does_not_exist() {
-            return Ok(VrApiError::DoesNotExist(self.does_not_exist()));
+        if msg.has_does_not_exist() {
+            return Ok(VrApiError::DoesNotExist(msg.does_not_exist()));
         }
-        if self.has_wrong_type() {
-            let msg = self.take_wrong_type();
+        if msg.has_wrong_type() {
+            let msg = msg.take_wrong_type();
             return Ok(VrApiError::WrongType(msg.take_path(), msg.take_node_type().into()));
         }
-        if self.has_path_must_end_in_directory() {
-            return Ok(VrApiError::PathMustEndInDirectory(self.take_path_must_end_in_directory()));
+        if msg.has_path_must_end_in_directory() {
+            return Ok(VrApiError::PathMustEndInDirectory(msg.take_path_must_end_in_directory()));
         }
-        if self.has_path_must_be_absolute() {
-            return Ok(VrApiError::PathMustBeAbsolute(self.take_path_must_be_absolute()));
+        if msg.has_path_must_be_absolute() {
+            return Ok(VrApiError::PathMustBeAbsolute(msg.take_path_must_be_absolute()));
         }
-        if self.has_cas_failed() {
-            let msg = self.take_cas_failed();
+        if msg.has_cas_failed() {
+            let msg = msg.take_cas_failed();
             return Ok(VrApiError::CasFailed {
                 path: msg.take_path(),
                 expected: msg.get_expected(),
                 actual: msg.get_actual()
             });
         }
-        if self.has_bad_format() {
-            return Ok(VrApiError::BadFormat(self.take_bad_format()));
+        if msg.has_bad_format() {
+            return Ok(VrApiError::BadFormat(msg.take_bad_format()));
         }
-        if self.has_io() {
-            return Ok(VrApiError::Io(self.take_io()));
+        if msg.has_io() {
+            return Ok(VrApiError::Io(msg.take_io()));
         }
-        if self.has_encoding_error() {
-            return Ok(VrApiError::EncodingError(self.take_encoding_error()));
+        if msg.has_encoding_error() {
+            return Ok(VrApiError::EncodingError(msg.take_encoding_error()));
         }
-        if self.has_invalid_cas() {
-            return Ok(VrApiError::InvalidCas(self.take_invalid_cas()));
+        if msg.has_invalid_cas() {
+            return Ok(VrApiError::InvalidCas(msg.take_invalid_cas()));
         }
-        if self.has_msg() {
-            return Ok(VrApiError::Msg(self.take_msg()));
+        if msg.has_msg() {
+            return Ok(VrApiError::Msg(msg.take_msg()));
         }
-        if self.has_cannot_delete_root() {
+        if msg.has_cannot_delete_root() {
             return Ok(VrApiError::CannotDeleteRoot);
         }
-        if self.has_invalid_msg() {
+        if msg.has_invalid_msg() {
             return Ok(VrApiError::InvalidMsg);
         }
-        if self.has_timeout() {
+        if msg.has_timeout() {
             return Ok(VrApiError::Timeout);
         }
-        if self.has_not_enough_replicas() {
+        if msg.has_not_enough_replicas() {
             return Ok(VrApiError::NotEnoughReplicas);
         }
-        if self.has_bad_epoch() {
+        if msg.has_bad_epoch() {
             return Ok(VrApiError::BadEpoch);
         }
 

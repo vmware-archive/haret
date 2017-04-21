@@ -46,7 +46,7 @@ message ClientRequest {
 message VrReconfiguration {
   optional uint64 client_req_num = 1;
   optional uint64 epoch = 2;
-  repeated Pid replicas = 3;
+  repeated aid replicas = 3;
 }
 
 message ClientReply {

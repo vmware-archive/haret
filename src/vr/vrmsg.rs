@@ -1,8 +1,9 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::convert::{TryFrom, TryInto};
 use uuid::Uuid;
-use rabble::{Pid, Error};
+use rabble::{Pid, Error, ErrorKind};
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::VersionedReplicas;
 use pb_msg;
@@ -158,8 +159,8 @@ impl From<VrMsg> for pb_msg::VrMsg {
                 pb_vrmsg.set_client_request(client_req)
             },
             VrMsg::Reconfiguration {client_req_num, epoch, replicas} => {
-                let mut reconfig = pb_msg::Reconfiguration::new();
-                reconfig.set_client_request_num(client_req_num);
+                let mut reconfig = pb_msg::VrReconfiguration::new();
+                reconfig.set_client_req_num(client_req_num);
                 reconfig.set_epoch(epoch);
                 reconfig.set_replicas(replicas.into_iter().map(|p| p.into()).collect());
                 pb_vrmsg.set_reconfiguration(reconfig)
@@ -201,13 +202,13 @@ impl From<VrMsg> for pb_msg::VrMsg {
                 pb_vrmsg.set_start_view(msg);
             },
             VrMsg::Prepare {epoch, view, op, commit_num, msg} => {
-                let mut msg = pb_msg::Prepare::new();
-                msg.set_epoch(epoch);
-                msg.set_view(view);
-                msg.set_op(op);
-                msg.set_commit_num(commit_num);
-                msg.set_msg((*msg).into());
-                pb_vrmsg.set_start_view(msg);
+                let mut prepare = pb_msg::Prepare::new();
+                prepare.set_epoch(epoch);
+                prepare.set_view(view);
+                prepare.set_op(op);
+                prepare.set_commit_num(commit_num);
+                prepare.set_msg((*msg).into());
+                pb_vrmsg.set_prepare(msg);
             },
             VrMsg::PrepareOk {epoch, view, op, from} => {
                 let mut msg = pb_msg::PrepareOk::new();
@@ -238,7 +239,7 @@ impl From<VrMsg> for pb_msg::VrMsg {
                 msg.set_view(view);
                 msg.set_op(op);
                 if let Some(primary) = primary {
-                    msg.set_primary(primary);
+                    msg.set_primary(primary.into());
                 }
                 msg.set_commit_num(commit_num);
                 msg.set_log_tail(log_tail.into_iter().map(|vrmsg| vrmsg.into()).collect());
@@ -259,7 +260,7 @@ impl From<VrMsg> for pb_msg::VrMsg {
                 if let Some(op) = op {
                     msg.set_op(op);
                     msg.set_commit_num(commit_num.unwrap());
-                    msg.set_log(log.unwrap().into_iter().map(|vrmsg| vrmsg.nto()).collect());
+                    msg.set_log(log.unwrap().into_iter().map(|vrmsg| vrmsg.into()).collect());
                 }
                 pb_vrmsg.set_recovery_response(msg);
             },
@@ -284,7 +285,7 @@ impl From<VrMsg> for pb_msg::VrMsg {
 
 impl TryFrom<pb_msg::VrMsg> for VrMsg {
     type Error = Error;
-    fn try_from(pbmsg: pbmsg::VrMsg) -> Result<VrMsg, Error> {
+    fn try_from(pbmsg: pb_msg::VrMsg) -> Result<VrMsg, Error> {
         if pbmsg.has_tick() {
             return Ok(VrMsg::Tick);
         }
@@ -295,7 +296,7 @@ impl TryFrom<pb_msg::VrMsg> for VrMsg {
                 client_id: client_req.take_client_id(),
                 request_num: client_req.get_request_num()
             });
-        },
+        }
         if pbmsg.has_reconfiguration() {
             let reconfig = pbmsg.take_reconfiguration();
             return Ok(VrMsg::Reconfiguration {
@@ -303,7 +304,7 @@ impl TryFrom<pb_msg::VrMsg> for VrMsg {
                 epoch: reconfig.get_epoch(),
                 replicas: reconfig.take_replicas().into_iter().map(|p| p.into()).collect()
             });
-        },
+        }
         if pbmsg.has_client_reply() {
             let client_rpy = pbmsg.take_client_reply();
             return Ok(VrMsg::ClientReply {
@@ -328,7 +329,7 @@ impl TryFrom<pb_msg::VrMsg> for VrMsg {
                 epoch: msg.get_epoch(),
                 view: msg.get_view(),
                 op: msg.get_op(),
-                from: msg.take_pid().into(),
+                from: msg.take_from().into(),
                 last_normal_view: msg.get_last_normal_view(),
                 log: msg.take_log().into_iter().map(|vrmsg| vrmsg.into()).collect(),
                 commit_num: msg.get_commit_num()

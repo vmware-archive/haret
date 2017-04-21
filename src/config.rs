@@ -4,6 +4,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use rustc_serialize::json;
+use pb_msg;
 
 #[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
 pub struct Config {
