@@ -4,7 +4,7 @@
 use time::Duration;
 use std::collections::{HashSet, HashMap};
 use slog::Logger;
-use amy::{Registrar, Notification, Timer};
+use amy::{Registrar, Notification};
 use rabble::{self, Pid, NodeId, Node, Envelope, CorrelationId, ServiceHandler};
 use rabble::errors::ChainErr;
 use funfsm::{Fsm, StateFn};
@@ -54,8 +54,8 @@ pub struct NamespaceMgr {
     /// necessary, but this is the tradeoff made for having a single Tick message.
     tick_period: u64,
     /*************************************************************************/
-    fsm_timer: Timer,
-    management_timer: Timer
+    fsm_timer_id: usize,
+    management_timer_id: usize
 }
 
 impl NamespaceMgr {
@@ -79,8 +79,8 @@ impl NamespaceMgr {
             idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
             primary_tick_ms: DEFAULT_PRIMARY_TICK_MS,
             tick_period: DEFAULT_PRIMARY_TICK_MS / 3,
-            fsm_timer: Timer {id: 0, fd: 0}, // Dummy timer for now. Will be set in init()
-            management_timer: Timer {id: 0, fd: 0}, // Dummy timer for now. Will be set in init()
+            fsm_timer_id: 0, // Dummy timer for now. Will be set in init()
+            management_timer_id: 0, // Dummy timer for now. Will be set in init()
         }
     }
 
@@ -375,9 +375,9 @@ impl NamespaceMgr {
 
 impl ServiceHandler<Msg> for NamespaceMgr {
     fn init(&mut self, registrar: &Registrar, _: &Node<Msg>) -> rabble::Result<()> {
-        self.fsm_timer = try!(registrar.set_interval(self.tick_period as usize)
+        self.fsm_timer_id = try!(registrar.set_interval(self.tick_period as usize)
                               .chain_err(|| "Failed to register request timer"));
-        self.management_timer = try!(registrar.set_interval(MANAGEMENT_TICK_MS as usize)
+        self.management_timer_id = try!(registrar.set_interval(MANAGEMENT_TICK_MS as usize)
                                      .chain_err(|| "Failed to register request timer"));
         Ok(())
     }
@@ -406,13 +406,11 @@ impl ServiceHandler<Msg> for NamespaceMgr {
                            _: &Registrar) -> rabble::Result<()>
     {
 
-        if notification.id == self.fsm_timer.get_id() {
-            self.fsm_timer.arm();
+        if notification.id == self.fsm_timer_id {
             self.fsm_tick();
             return Ok(());
         }
-        if notification.id == self.management_timer.get_id() {
-            self.management_timer.arm();
+        if notification.id == self.management_timer_id {
             self.management_tick();
             return Ok(());
         }

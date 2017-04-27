@@ -2,7 +2,7 @@
 name = "haret"
 version = "0.1.0"
 dependencies = [
- "amy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "amy 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "assert_matches 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "funfsm 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -10,7 +10,7 @@ dependencies = [
  "orset 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "protobuf 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "quickcheck 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "rabble 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rabble 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "rmp-serialize 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.22 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "amy"
-version = "0.6.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.18 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -280,10 +280,10 @@ dependencies = [
 
 [[package]]
 name = "rabble"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "amy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "amy 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "error-chain 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ferris 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.18 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -518,7 +518,7 @@ dependencies = [
 
 [metadata]
 "checksum aho-corasick 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)" = "ca972c2ea5f742bfce5687b9aef75506a764f61d37f8f649047846a9686ddb66"
-"checksum amy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "8082cd88aa803b4806dd12dbddb52daf5bf181bbbf5a327462c93ad326a8b3b1"
+"checksum amy 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "1f87fd824b0bf6c6a855887f12818995510dc519167d831cbc8ec30fcbaa55cd"
 "checksum assert_matches 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "9aa85694f8820620d0df15526544e1c3fbbac7ba3874781d874d7d6499a53724"
 "checksum backtrace 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "346d7644f0b5f9bc73082d3b2236b69a05fd35cce0cfa3724e184e6a5c9e2a2f"
 "checksum backtrace-sys 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "3602e8d8c43336088a8505fa55cae2b3884a9be29440863a11528a42f46f6bb7"
@@ -551,7 +551,7 @@ dependencies = [
 "checksum orset 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a5243bbd63d78c9fc1b6fc629ceb7f381d072ed83b9fc0211bec59de1f997a02"
 "checksum protobuf 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "229112a9213bf62a59f0702871a6e4872fe928161fc7a08f17cdd6c8c7988bf7"
 "checksum quickcheck 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "02c2411d418cea2364325b18a205664f9ef8252e06b2e911db97c0b0d98b1406"
-"checksum rabble 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "44ad8fe34ae932259e9af6d0bb211cfee3758080e915f86fe09a06d68008e241"
+"checksum rabble 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7bcdde98579cd7a0367d33cdde26ba369ac2e0416552ba8fc2db226ed37c31d7"
 "checksum rand 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)" = "022e0636ec2519ddae48154b028864bdce4eaf7d35226ab8e65c611be97b189d"
 "checksum regex 0.1.80 (registry+https://github.com/rust-lang/crates.io-index)" = "4fd4ace6a8cf7860714a2c2280d6c1f7e6a413486c13298bbc86fd3da019402f"
 "checksum regex-syntax 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)" = "f9ec002c35e86791825ed294b50008eea9ddfc8def4420124fbc6b08db834957"
