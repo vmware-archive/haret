@@ -7,6 +7,9 @@ repository = "https://github.com/vmware/haret"
 keywords = ["distributed", "coordination", "strong consistency"]
 license = "Apache-2.0"
 
+[features]
+no_timerfd = ["rabble/no_timerfd", "amy/no_timerfd"]
+
 [dependencies]
 libc = "0.1"
 rustc-serialize = "0.3"
@@ -18,10 +21,10 @@ slog = {version = "1", features = ["max_level_trace"]}
 slog-stdlog = "1"
 slog-term = "1.1"
 slog-envlogger = "0.5"
-amy = "0.6"
+amy = "0.7"
 funfsm = "0.2"
 orset = "0.1"
-rabble = "0.2.1"
+rabble = "0.3"
 protobuf = "1.0.24"
 vertree = "0.1"
 lazy_static = "0.1"
