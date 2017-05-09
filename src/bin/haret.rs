@@ -12,7 +12,8 @@ extern crate slog_envlogger;
 
 use slog::DrainExt;
 use std::thread;
-use rabble::{Pid, NodeId, Service, MsgpackSerializer, ProtobufSerializer, TcpServerHandler};
+use rabble::{Pid, NodeId, Service, TcpServerHandler};
+use rabble::serialize::{MsgpackSerializer, ProtobufSerializer};
 use haret::config::Config;
 use haret::Msg;
 use haret::NamespaceMgr;

@@ -7,13 +7,13 @@ use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
 use vr::VrCtxSummary;
 
-#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AdminMsg {
     Req(AdminReq),
     Rpy(AdminRpy)
 }
 
-#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AdminReq {
     GetConfig,
     Join(NodeId),
@@ -25,7 +25,7 @@ pub enum AdminReq {
     GetMetrics(Pid)
 }
 
-#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AdminRpy {
     Ok,
     Timeout,

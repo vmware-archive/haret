@@ -13,7 +13,7 @@ use super::messages::*;
 
 type Milliseconds = u64;
 
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApiRpy {
     ClientRegistration {primary: Pid, new_registration: bool},
     Redirect {primary: Pid, api_addr: String},
@@ -27,8 +27,7 @@ pub struct ApiConnectionHandler {
     id: u64,
     namespace_mgr: Pid,
     waiting_for: u64,
-    total_requests: u64,
-    output: Vec<ConnectionMsg<ApiConnectionHandler>>
+    total_requests: u64
 }
 
 impl ApiConnectionHandler {
@@ -44,16 +43,16 @@ impl ApiConnectionHandler {
         }
     }
 
-    fn handle_get_namespaces(&mut self) -> &mut Vec<ConnectionMsg<ApiConnectionHandler>> {
+    fn handle_get_namespaces(&mut self, output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>) {
         let pid = self.namespace_mgr.clone();
         let admin_msg = Msg::AdminReq(AdminReq::GetNamespaces);
         let envelope = self.make_envelope(pid, admin_msg);
-        self.output.push(ConnectionMsg::Envelope(envelope));
-        &mut self.output
+        output.push(ConnectionMsg::Envelope(envelope));
     }
 
-    fn handle_register_client(&mut self, mut msg: RegisterClient)
-        -> &mut Vec<ConnectionMsg<ApiConnectionHandler>>
+    fn handle_register_client(&mut self,
+                              mut msg: RegisterClient,
+                              output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let client_id = msg.take_client_id();
         let namespace_id = msg.take_namespace_id();
@@ -61,12 +60,12 @@ impl ApiConnectionHandler {
         let msg = Msg::Namespace(NamespaceMsg::RegisterClient(ClientId(client_id),
                                                               NamespaceId(namespace_id)));
         let envelope = self.make_envelope(pid, msg);
-        self.output.push(ConnectionMsg::Envelope(envelope));
-        &mut self.output
+        output.push(ConnectionMsg::Envelope(envelope));
     }
 
-    fn handle_consensus_request(&mut self, mut msg: ConsensusRequest)
-        -> &mut Vec<ConnectionMsg<ApiConnectionHandler>>
+    fn handle_consensus_request(&mut self,
+                                mut msg: ConsensusRequest,
+                                output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let mut api_pid = msg.take_to();
         let pid = Pid {
@@ -80,10 +79,18 @@ impl ApiConnectionHandler {
         let client_id = msg.take_client_id();
         let client_req_num = msg.get_client_request_num();
         if msg.has_tree_op() {
-            return self.handle_tree_op(pid, client_id, client_req_num, msg.take_tree_op());
+            return self.handle_tree_op(pid,
+                                       client_id,
+                                       client_req_num,
+                                       msg.take_tree_op(),
+                                       output);
         }
         if msg.has_tree_cas() {
-            return self.handle_tree_cas(pid, client_id, client_req_num, msg.take_tree_cas());
+            return self.handle_tree_cas(pid,
+                                        client_id,
+                                        client_req_num,
+                                        msg.take_tree_cas(),
+                                        output);
         }
         unreachable!()
     }
@@ -138,18 +145,23 @@ impl ApiConnectionHandler {
         }
     }
 
-    fn handle_tree_op(&mut self, pid: Pid, client_id: String, client_req_num: u64, msg: TreeOp)
-        -> &mut Vec<ConnectionMsg<ApiConnectionHandler>>
+    fn handle_tree_op(&mut self,
+                      pid: Pid,
+                      client_id: String,
+                      client_req_num: u64,
+                      msg: TreeOp,
+                      output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let vr_api_req = VrApiReq::TreeOp(self.proto_tree_op_to_vr_tree_op(msg));
-        self.send_client_request(pid, client_id, client_req_num, vr_api_req)
+        self.send_client_request(pid, client_id, client_req_num, vr_api_req, output)
     }
 
     fn handle_tree_cas(&mut self,
                        pid: Pid,
                        client_id: String,
                        client_req_num: u64,
-                       mut msg: TreeCas) -> &mut Vec<ConnectionMsg<ApiConnectionHandler>>
+                       mut msg: TreeCas,
+                       output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let guards: Vec<_> = msg.take_guards().iter_mut().map(|g| {
             vr::Guard {path: g.take_path(), version: g.get_version()}
@@ -157,21 +169,21 @@ impl ApiConnectionHandler {
         let ops: Vec<_> = msg.take_tree_ops().into_iter()
             .map(|op| self.proto_tree_op_to_vr_tree_op(op)).collect();
         let vr_api_req = VrApiReq::TreeCas(vr::TreeCas { guards: guards, ops: ops });
-        self.send_client_request(pid, client_id, client_req_num, vr_api_req)
+        self.send_client_request(pid, client_id, client_req_num, vr_api_req, output)
     }
 
     fn send_client_request(&mut self,
                            pid: Pid,
                            client_id: String,
                            client_req_num: u64,
-                           req: VrApiReq) -> &mut Vec<ConnectionMsg<ApiConnectionHandler>>
+                           req: VrApiReq,
+                           output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let vrmsg = VrMsg::ClientRequest {op: req,
                                           client_id: client_id,
                                           request_num: client_req_num};
         let envelope = self.make_envelope(pid, Msg::Vr(vrmsg));
-        self.output.push(ConnectionMsg::Envelope(envelope));
-        &mut self.output
+        output.push(ConnectionMsg::Envelope(envelope));
     }
 
     fn to_vr_create_node(&mut self, mut msg: CreateNode) -> vr::TreeOp {
@@ -329,20 +341,20 @@ impl ConnectionHandler for ApiConnectionHandler {
             id: id,
             namespace_mgr: namespace_mgr,
             waiting_for: 0,
-            total_requests: 0,
-            output: Vec::new()
+            total_requests: 0
         }
     }
 
-    fn handle_envelope(&mut self, envelope: Envelope<Msg>) ->
-        &mut Vec<ConnectionMsg<ApiConnectionHandler>>
+    fn handle_envelope(&mut self,
+                       envelope: Envelope<Msg>,
+                       output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let Envelope {msg, correlation_id, ..} = envelope;
         let correlation_id = correlation_id.unwrap();
 
         // Ensure responses are recent
         if correlation_id.request.unwrap() != self.waiting_for {
-            return &mut self.output;
+            return;
         }
         self.waiting_for += 1;
         match msg {
@@ -354,7 +366,7 @@ impl ConnectionHandler for ApiConnectionHandler {
                 let response = vr_api_rsp_to_proto_api_response(reply, value);
                 let mut msg = ApiMsg::new();
                 msg.set_response(response);
-                self.output.push(ConnectionMsg::Client(msg, correlation_id));
+                output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::User(Msg::AdminRpy(AdminRpy::Namespaces(namespaces))) => {
                 let ids: Vec<_> = namespaces.map.keys().cloned().map(|k| k.0.to_string()).collect();
@@ -364,51 +376,52 @@ impl ConnectionHandler for ApiConnectionHandler {
                 response.set_namespaces(namespaces);
                 let mut msg = ApiMsg::new();
                 msg.set_response(response);
-                self.output.push(ConnectionMsg::Client(msg, correlation_id));
+                output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::User(Msg::ApiRpy(reply)) => {
                 let response = api_rpy_to_proto_api_response(reply);
                 let mut msg = ApiMsg::new();
                 msg.set_response(response);
-                self.output.push(ConnectionMsg::Client(msg, correlation_id));
+                output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::Timeout => {
                 let mut response = ApiResponse::new();
                 response.set_timeout(true);
                 let mut msg = ApiMsg::new();
                 msg.set_response(response);
-                self.output.push(ConnectionMsg::Client(msg, correlation_id));
+                output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             _ => {
                 let err = self.error(VrApiError::InvalidMsg.into());
-                self.output.push(err);
+                output.push(err);
             }
 
         }
-        &mut self.output
     }
 
 
-    fn handle_network_msg(&mut self, mut msg: ApiMsg) -> &mut Vec<ConnectionMsg<ApiConnectionHandler>> {
+    fn handle_network_msg(&mut self,
+                          mut msg: ApiMsg,
+                          output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
+    {
         if !msg.has_request() {
             let err = self.error(VrApiError::InvalidMsg.into());
-            self.output.push(err);
-            return &mut self.output;
+            output.push(err);
+            return;
         }
         let mut api_request = msg.take_request();
         if api_request.has_get_namespaces() {
-            self.handle_get_namespaces();
+            self.handle_get_namespaces(output);
         } else if api_request.has_register_client() {
             let msg = api_request.take_register_client();
-            self.handle_register_client(msg);
+            self.handle_register_client(msg, output);
         } else if api_request.has_consensus_request() {
             let msg = api_request.take_consensus_request();
-            self.handle_consensus_request(msg);
+            self.handle_consensus_request(msg, output);
         } else {
             let err = self.error(VrApiError::InvalidMsg.into());
-            self.output.push(err);
+            output.push(err);
         }
-        &mut self.output
     }
 }
 

@@ -12,7 +12,6 @@ pub struct AdminConnectionHandler {
     id: u64,
     namespace_mgr: Pid,
     total_requests: u64,
-    output: Vec<ConnectionMsg<AdminConnectionHandler>>,
 
     // The next reply we are waiting for
     waiting_for: u64,
@@ -44,12 +43,14 @@ impl AdminConnectionHandler {
         }
     }
 
-    fn write_successive_replies(&mut self) {
+    fn write_successive_replies(&mut self,
+                                output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>)
+    {
         self.waiting_for += 1;
         while self.waiting_for != self.total_requests {
             if let Some(rpy) = self.out_of_order_replies.remove(&self.waiting_for) {
                 let c_id = CorrelationId::request(self.pid.clone(), self.id, self.waiting_for);
-                self.output.push(ConnectionMsg::Client(AdminMsg::Rpy(rpy), c_id));
+                output.push(ConnectionMsg::Client(AdminMsg::Rpy(rpy), c_id));
                 self.waiting_for += 1;
             } else {
                 break;
@@ -73,14 +74,14 @@ impl ConnectionHandler for AdminConnectionHandler {
             id: id,
             namespace_mgr: namespace_mgr,
             total_requests: 0,
-            output: Vec::new(),
             waiting_for: 0,
             out_of_order_replies: HashMap::new()
         }
     }
 
-    fn handle_envelope(&mut self, envelope: Envelope<Msg>) ->
-        &mut Vec<ConnectionMsg<AdminConnectionHandler>>
+    fn handle_envelope(&mut self,
+                       envelope: Envelope<Msg>,
+                       output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>)
     {
         let Envelope {msg, correlation_id, ..} = envelope;
         let correlation_id = correlation_id.unwrap();
@@ -92,20 +93,20 @@ impl ConnectionHandler for AdminConnectionHandler {
             _ => unreachable!()
         };
         if correlation_id.request == Some(self.waiting_for) {
-            self.output.push(ConnectionMsg::Client(AdminMsg::Rpy(rpy), correlation_id));
-            self.write_successive_replies();
+            output.push(ConnectionMsg::Client(AdminMsg::Rpy(rpy), correlation_id));
+            self.write_successive_replies(output);
         } else {
             self.out_of_order_replies.insert(correlation_id.request.unwrap(), rpy);
         }
-        &mut self.output
     }
 
-    fn handle_network_msg(&mut self, msg: AdminMsg) ->
-        &mut Vec<ConnectionMsg<AdminConnectionHandler>>
+    fn handle_network_msg(&mut self,
+                          msg: AdminMsg,
+                          output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>)
     {
         if let AdminMsg::Req(req) = msg {
             let envelope = match req {
-                AdminReq::GetReplicaState(pid) => 
+                AdminReq::GetReplicaState(pid) =>
                     self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid)),
                 AdminReq::GetMetrics(pid) =>
                     self.make_rabble_msg_envelope(pid.clone(), rabble::Msg::GetMetrics),
@@ -114,12 +115,11 @@ impl ConnectionHandler for AdminConnectionHandler {
                     self.make_envelope(pid, req)
                 }
             };
-            self.output.push(ConnectionMsg::Envelope(envelope));
+            output.push(ConnectionMsg::Envelope(envelope));
         } else {
             let msg = AdminMsg::Rpy(AdminRpy::Error("Invalid Admin Request".to_string()));
             // CorrelationId doesn't matter here
-            self.output.push(ConnectionMsg::Client(msg, CorrelationId::pid(self.pid.clone())));
+            output.push(ConnectionMsg::Client(msg, CorrelationId::pid(self.pid.clone())));
         }
-        &mut self.output
     }
 }

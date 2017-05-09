@@ -4,8 +4,8 @@
 extern crate haret;
 extern crate uuid;
 extern crate rabble;
-extern crate rustc_serialize;
-extern crate rmp_serialize as msgpack;
+extern crate serde;
+extern crate rmp_serde as msgpack;
 
 use std::env;
 use std::env::Args;
@@ -15,8 +15,8 @@ use std::io::{Read, Result, Error, ErrorKind, Write};
 use std::str::{SplitWhitespace, FromStr};
 use std::net::TcpStream;
 use std::mem;
-use msgpack::{Encoder, Decoder};
-use rustc_serialize::{Encodable, Decodable};
+use serde::{Serialize, Deserialize};
+use msgpack::{Serializer, Deserializer};
 use rabble::{Pid, NodeId};
 use haret::admin::{AdminReq, AdminRpy, AdminMsg};
 use haret::NamespaceId;
@@ -223,15 +223,15 @@ fn read_msg(sock: &mut TcpStream) -> Result<AdminMsg> {
     let len = unsafe { u32::from_be(mem::transmute(header)) };
     let mut buf = vec![0; len as usize];
     try!(sock.read_exact(&mut buf));
-    let mut decoder = Decoder::new(&buf[..]);
-    Decodable::decode(&mut decoder).map_err(|e| {
+    let mut decoder = Deserializer::new(&buf[..]);
+    Deserialize::deserialize(&mut decoder).map_err(|e| {
         Error::new(ErrorKind::InvalidData, e.to_string())
     })
 }
 
 fn write_msg(req: AdminReq, sock: &mut TcpStream) -> Result<()> {
     let mut encoded = Vec::new();
-    try!(AdminMsg::Req(req).encode(&mut Encoder::new(&mut encoded)).map_err(|_| {
+    try!(AdminMsg::Req(req).serialize(&mut Serializer::new(&mut encoded)).map_err(|_| {
         Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data")
     }));
     let len: u32 = encoded.len() as u32;

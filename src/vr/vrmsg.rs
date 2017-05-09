@@ -6,7 +6,7 @@ use rabble::Pid;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::VersionedReplicas;
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum VrMsg {
     /// A message that drives the state of the fsm during periods of inactivity
     Tick,
