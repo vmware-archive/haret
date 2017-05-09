@@ -6,7 +6,7 @@ use vr::VrMsg;
 use admin::{AdminReq, AdminRpy};
 use api::ApiRpy;
 
-#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Msg {
     Vr(VrMsg),
     Namespace(NamespaceMsg),

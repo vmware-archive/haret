@@ -7,7 +7,7 @@ use vr::VersionedReplicas;
 use rabble::{Pid, NodeId};
 use namespace_msg::NamespaceId;
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Namespaces {
     pub map: HashMap<NamespaceId, (VersionedReplicas, VersionedReplicas)>,
     pub primaries: HashMap<NamespaceId, Pid>

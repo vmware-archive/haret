@@ -5,13 +5,13 @@ use rabble::Pid;
 use namespaces::Namespaces;
 use vr::VersionedReplicas;
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ClientId(pub String);
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct NamespaceId(pub String);
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum NamespaceMsg {
     /// Namespaces are gossiped between namespace managers,
     Namespaces(Namespaces),

@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 type Version = u64;
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum NodeType {
     Blob,
     Queue,
@@ -13,13 +13,13 @@ pub enum NodeType {
     Directory
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum VrApiReq {
     TreeOp(TreeOp),
     TreeCas(TreeCas),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 // This should maintain the identical format to the vertree version. The only 
 // difference is that the haret one is encodable and decodable
 pub enum TreeOp {
@@ -64,19 +64,19 @@ impl TreeOp {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Guard {
     pub path: String,
     pub version: u64
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TreeCas {
     pub guards: Vec<Guard>,
     pub ops: Vec<TreeOp>
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum VrApiRsp {
     Ok,
     TreeOpResult(TreeOpResult),
@@ -85,7 +85,7 @@ pub enum VrApiRsp {
     Error(VrApiError)
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum TreeOpResult {
     Ok(Option<Version>),
     Empty(Option<Version>),
@@ -96,7 +96,7 @@ pub enum TreeOpResult {
     Keys(Vec<(String, Version)>)
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum VrApiError {
     NotFound(String),
     AlreadyExists(String),

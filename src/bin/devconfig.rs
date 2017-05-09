@@ -31,5 +31,5 @@ fn main() {
         admin_host: admin_host,
         api_host: api_host,
     };
-    config.write_path("config.json");
+    config.write_path("config.json").unwrap();
 }

@@ -12,22 +12,24 @@ no_timerfd = ["rabble/no_timerfd", "amy/no_timerfd"]
 
 [dependencies]
 libc = "0.1"
-rustc-serialize = "0.3"
 time = "*"
-uuid = "0.1"
+uuid = { version = "0.5", features = ["serde", "v4"] }
 rand = "0.3"
-rmp-serialize = "0.7"
 slog = {version = "1", features = ["max_level_trace"]}
 slog-stdlog = "1"
 slog-term = "1.1"
 slog-envlogger = "0.5"
-amy = "0.7"
+amy = "^0.7.2"
 funfsm = "0.2"
-orset = "0.1"
-rabble = "0.3"
+orset = "0.2"
+rabble = "0.4"
 protobuf = "1.0.24"
 vertree = "0.1"
 lazy_static = "0.1"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+rmp-serde = "0.13"
 
 [dev-dependencies]
 assert_matches = "1.0"

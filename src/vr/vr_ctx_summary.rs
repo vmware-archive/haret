@@ -10,7 +10,7 @@ use super::vr_ctx::VrCtx;
 /// such as the log. In a production system, shipping this for admin requests would be unnecessarily
 /// wasteful. All important details of a replica will instead be populated inside a VrCtxSummary
 /// instead.
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VrCtxSummary {
     pub state: String,
     pub pid: Pid,

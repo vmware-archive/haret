@@ -6,12 +6,17 @@
 // Crates we don't manage
 extern crate rand;
 extern crate libc;
-extern crate rustc_serialize;
 extern crate time;
 extern crate uuid;
 #[macro_use]
 extern crate slog;
 extern crate protobuf;
+
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
+
 
 // Crates we manage
 #[macro_use]

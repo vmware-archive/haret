@@ -3,7 +3,6 @@
 
 extern crate haret;
 extern crate uuid;
-extern crate rustc_serialize;
 extern crate protobuf;
 
 #[macro_use]

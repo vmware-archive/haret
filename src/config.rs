@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fs::File;
-use std::io::{Read, Write};
-use rustc_serialize::json;
+use std::io::{self, Read, Write};
+use serde_json::{self};
+use error::VrError;
 
-#[derive(Debug, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub node_name: String,
     pub cluster_host: String, // ip:port or dns name used on cluster network
@@ -18,23 +19,22 @@ impl Config {
         Config::read_path("config.json")
     }
 
-    pub fn write(&self) {
-        self.write_path("config.json");
+    pub fn write(&self) -> Result<(), VrError> {
+        self.write_path("config.json")
     }
 
     fn read_path(path: &str) -> Config {
         let mut file = File::open(path).unwrap();
         let mut string = String::new();
         file.read_to_string(&mut string).unwrap();
-        let config: Config = json::decode(&string).unwrap();
+        let config: Config = serde_json::from_str(&string).unwrap();
         config
     }
 
-    // TODO: return errors instead of crashing
-    pub fn write_path(&self, path: &str) {
+    pub fn write_path(&self, path: &str) -> Result<(), VrError> {
         let mut file = File::create(path).unwrap();
-        let string = json::encode(&self).unwrap().into_bytes();
-        file.write_all(&string).unwrap();
+        let string = serde_json::to_string(&self).map_err(|e| io::Error::from(e))?.into_bytes();
+        file.write_all(&string).map_err(|e| e.into())
     }
 
 }
@@ -53,7 +53,7 @@ mod tests {
             api_host: "127.0.0.1:5002".to_string()
         };
 
-        config.write_path(path);
+        config.write_path(path).unwrap();
         let config2 = Config::read_path(path);
         assert_eq!(config, config2);
     }
