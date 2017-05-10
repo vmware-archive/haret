@@ -7,6 +7,10 @@ run:
 test:
 	cargo test
 
+lint:
+	@echo cargo clipppy
+	@cargo clippy || (echo "Install clippy with 'cargo install clippy'"; exit 1)
+
 SHELL := /bin/bash
 .PHONY: devrel launch stop start-dev% stop-dev%
 NUM_NODES=3
