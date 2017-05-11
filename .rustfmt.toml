@@ -1,0 +1,8 @@
+fn_call_width = 80
+struct_trailing_comma = "Never"
+struct_lit_trailing_comma = "Never"
+enum_trailing_comma = false
+match_wildcard_trailing_comma = false
+type_punctuation_density = "Compressed"
+wrap_match_arms = false
+use_try_shorthand = true
