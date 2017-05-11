@@ -1,8 +1,11 @@
 fn_call_width = 80
-struct_trailing_comma = "Never"
-struct_lit_trailing_comma = "Never"
-enum_trailing_comma = false
-match_wildcard_trailing_comma = false
-type_punctuation_density = "Compressed"
-wrap_match_arms = false
+array_width = 80
+trailing_comma = "Never"
+chain_indent = "Visual"
+closure_block_indent_threshold = 1
+comment_width = 80
+condense_wildcard_suffices = true
+fn_args_paren_newline = false
+normalize_comments = true
 use_try_shorthand = true
+wrap_comments = true
