@@ -1,5 +1,6 @@
  * Start Date: 2017-05-10
  * Haret issues: https://github.com/vmware/haret/issues/93
+ * References: [Viewstamped Replication Revisited](http://pmg.csail.mit.edu/papers/vr-revisited.pdf)
 
 # Summary
 
