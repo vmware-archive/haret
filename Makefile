@@ -11,6 +11,10 @@ lint:
 	@echo cargo clipppy
 	@cargo clippy || (echo "Install clippy with 'cargo install clippy'"; exit 1)
 
+format:
+	@which rustfmt || cargo install rustfmt
+	cargo fmt -- --write-mode=overwrite
+
 SHELL := /bin/bash
 .PHONY: devrel launch stop start-dev% stop-dev%
 NUM_NODES=3
