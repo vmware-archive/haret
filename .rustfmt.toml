@@ -8,4 +8,7 @@ condense_wildcard_suffices = true
 fn_args_paren_newline = false
 normalize_comments = true
 use_try_shorthand = true
-wrap_comments = true
+
+# Newlines are not wrapped correctly resulting in lines of varying length
+wrap_comments = false
+write_mode = "Overwrite"
