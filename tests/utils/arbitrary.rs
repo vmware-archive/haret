@@ -17,11 +17,11 @@ impl Arbitrary for Path {
         let range = Range::new(1u8, 11u8);
         let depth = range.ind_sample(g);
         let labels = ['a', 'b', 'c', 'd', 'e'];
-        let mut path = String::with_capacity((depth*2 - 1) as usize);
+        let mut path = String::with_capacity((depth * 2 - 1) as usize);
         path = (0..depth).fold(path, |mut acc, _| {
-                acc.push('/');
-                acc.push(*g.choose(&labels).unwrap());
-                acc
+            acc.push('/');
+            acc.push(*g.choose(&labels).unwrap());
+            acc
         });
         Path(path)
     }
@@ -46,7 +46,7 @@ impl Arbitrary for Op {
             85...90 => Op::ViewChange,
             90...92 => Op::CrashPrimary,
             92...95 => Op::CrashBackup,
-            _ => Op::Restart
+            _ => Op::Restart,
         }
     }
 }
@@ -57,10 +57,10 @@ pub struct ClientRequest(pub VrMsg);
 impl Arbitrary for ClientRequest {
     fn arbitrary<G: Gen>(g: &mut G) -> ClientRequest {
         ClientRequest(VrMsg::ClientRequest {
-            client_id: "test-client".to_string(),
-            request_num: 0, // This will get mutated
-            op: ApiReq::arbitrary(g).0
-        })
+                          client_id: "test-client".to_string(),
+                          request_num: 0, // This will get mutated
+                          op: ApiReq::arbitrary(g).0
+                      })
     }
 }
 
@@ -72,9 +72,19 @@ impl Arbitrary for ApiReq {
         let range = Range::new(0, 3);
         let path = Path::arbitrary(g).0;
         let op = match range.ind_sample(&mut thread_rng()) {
-            0 => TreeOp::CreateNode {path: path, ty: NodeType::Blob},
-            1 => TreeOp::BlobPut {path: path, val: b"hello".to_vec()},
-            _ => TreeOp::BlobGet {path: path}
+            0 => {
+                TreeOp::CreateNode {
+                    path: path,
+                    ty: NodeType::Blob
+                }
+            }
+            1 => {
+                TreeOp::BlobPut {
+                    path: path,
+                    val: b"hello".to_vec()
+                }
+            }
+            _ => TreeOp::BlobGet { path: path },
         };
         ApiReq(VrApiReq::TreeOp(op))
     }

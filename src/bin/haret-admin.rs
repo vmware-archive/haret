@@ -70,7 +70,7 @@ fn run_script(flag: &str, mut args: Args, mut sock: TcpStream) {
 }
 
 fn run(command: &str, sock: &mut TcpStream) -> Result<String> {
-    let req = try!(parse(&command));
+    let req = parse(&command)?;
     exec(req, sock)
 }
 
@@ -88,7 +88,7 @@ fn parse(command: &str) -> Result<AdminReq> {
         Some("metrics") => parse_metrics(&mut iter),
         Some("vr") => parse_vr(&mut iter),
         Some(_) => Err(help()),
-        None => Err(help())
+        None => Err(help()),
     }
 }
 
@@ -108,14 +108,15 @@ fn parse_cluster(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
                 println!("'join' takes a single argument");
                 return Err(help());
             }
-            NodeId::from_str(args[0]).map(|node_id| AdminReq::Join(node_id))
-                                     .map_err(|s| Error::new(ErrorKind::InvalidInput, s))
-        },
+            NodeId::from_str(args[0])
+                .map(|node_id| AdminReq::Join(node_id))
+                .map_err(|s| Error::new(ErrorKind::InvalidInput, s))
+        }
         Some("status") => {
             parse_no_args("cluster status", &mut iter).map(|_| AdminReq::GetClusterStatus)
-        },
+        }
         Some(_) => Err(help()),
-        None => Err(help())
+        None => Err(help()),
     }
 }
 
@@ -129,7 +130,7 @@ fn parse_metrics(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
                     Err(help())
                 }
             }
-        },
+        }
         None => {
             println!("Error: Please provide a pid to get metrics for");
             Err(help())
@@ -140,10 +141,12 @@ fn parse_metrics(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
 fn parse_vr(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some("create") => parse_vr_create(iter),
-        Some("namespaces") => parse_no_args("vr namespaces", &mut iter).map(|_| AdminReq::GetNamespaces),
+        Some("namespaces") => {
+            parse_no_args("vr namespaces", &mut iter).map(|_| AdminReq::GetNamespaces)
+        }
         Some("replica") => parse_vr_replica(iter),
         Some("primary") => parse_vr_primary(iter),
-        _ => Err(help())
+        _ => Err(help()),
     }
 }
 
@@ -157,15 +160,15 @@ fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminReq> {
                     Err(help())
                 }
             }
-        },
-        None => Err(help())
+        }
+        None => Err(help()),
     }
 }
 
 fn parse_vr_primary(iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some(namespace_id) => Ok(AdminReq::GetPrimary(NamespaceId(namespace_id.to_string()))),
-        None => Err(help())
+        None => Err(help()),
     }
 }
 
@@ -182,20 +185,22 @@ fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminReq> {
             if pidopts.iter().any(|p| p.is_err()) {
                 return Err(Error::new(ErrorKind::InvalidInput, "Failed to parse pids"));
             }
-            let pids: Vec<_> = pidopts.into_iter().map(|p| {
+            let pids: Vec<_> = pidopts.into_iter()
+                                      .map(|p| {
                 let mut p = p.unwrap();
                 p.group = Some(namespace_id.to_string());
                 p
-            }).collect();
+            })
+                                      .collect();
             Ok(AdminReq::CreateNamespace(pids))
-        },
-        _ => Err(help())
+        }
+        _ => Err(help()),
     }
 }
 
 fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
-    try!(write_msg(req, sock));
-    match try!(read_msg(sock)) {
+    write_msg(req, sock)?;
+    match read_msg(sock)? {
         AdminMsg::Rpy(rpy) => {
             match rpy {
                 AdminRpy::Ok => Ok("ok".to_string()),
@@ -205,46 +210,48 @@ fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
                 AdminRpy::NamespaceId(id) => Ok(id.0),
                 AdminRpy::Namespaces(namespaces) => Ok(format!("{:#?}", namespaces)),
                 AdminRpy::ReplicaState(state) => Ok(format!("{:#?}", state)),
-                AdminRpy::ReplicaNotFound(pid) => Err(Error::new(ErrorKind::NotFound,
-                                                                 pid.to_string())),
-                AdminRpy::Primary(pid) => Ok(pid.map_or("None".to_string(), |p| p.to_string())),
+                AdminRpy::ReplicaNotFound(pid) => {
+                    Err(Error::new(ErrorKind::NotFound, pid.to_string()))
+                }
+                AdminRpy::Primary(pid) => {
+                    Ok(pid.map_or("None".to_string(), |p| p.to_string()))
+                }
                 AdminRpy::ClusterStatus(status) => Ok(format!("{:#?}", status)),
-                AdminRpy::Metrics(metrics) => Ok(format!("{:#?}", metrics))
+                AdminRpy::Metrics(metrics) => Ok(format!("{:#?}", metrics)),
             }
-        },
-        msg => Err(Error::new(ErrorKind::InvalidData,
-                              format!("Invalid reply from server: {:?}", msg)))
+        }
+        msg => {
+            Err(Error::new(ErrorKind::InvalidData, format!("Invalid reply from server: {:?}", msg)))
+        }
     }
 }
 
 fn read_msg(sock: &mut TcpStream) -> Result<AdminMsg> {
     let mut header = [0; 4];
-    try!(sock.read_exact(&mut header));
+    sock.read_exact(&mut header)?;
     let len = unsafe { u32::from_be(mem::transmute(header)) };
     let mut buf = vec![0; len as usize];
-    try!(sock.read_exact(&mut buf));
+    sock.read_exact(&mut buf)?;
     let mut decoder = Deserializer::new(&buf[..]);
-    Deserialize::deserialize(&mut decoder).map_err(|e| {
-        Error::new(ErrorKind::InvalidData, e.to_string())
-    })
+    Deserialize::deserialize(&mut decoder)
+        .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
 }
 
 fn write_msg(req: AdminReq, sock: &mut TcpStream) -> Result<()> {
     let mut encoded = Vec::new();
-    try!(AdminMsg::Req(req).serialize(&mut Serializer::new(&mut encoded)).map_err(|_| {
-        Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data")
-    }));
+    AdminMsg::Req(req)
+        .serialize(&mut Serializer::new(&mut encoded))
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data"))?;
     let len: u32 = encoded.len() as u32;
     // 4 byte len header
     let header: [u8; 4] = unsafe { mem::transmute(len.to_be()) };
-    try!(sock.write_all(&header));
+    sock.write_all(&header)?;
     sock.write_all(&encoded)
 }
 
 
 fn help() -> Error {
-    let string  =
-"Usage: haret-admin <IpAddress> [-e <command>]
+    let string = "Usage: haret-admin <IpAddress> [-e <command>]
 
     Commands:
         cluster join <NodeId>

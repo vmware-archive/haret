@@ -5,10 +5,14 @@ use rabble::Pid;
 use super::replica::VersionedReplicas;
 use super::vr_ctx::VrCtx;
 
-/// This is all the state about a `VrCtx` that can be retrieved and sent over the wire to admin
-/// clients.. There is a lot of information maintained in a `VrCtx` that is expensive to transmit,
-/// such as the log. In a production system, shipping this for admin requests would be unnecessarily
-/// wasteful. All important details of a replica will instead be populated inside a VrCtxSummary
+/// This is all the state about a `VrCtx` that can be retrieved and sent over
+/// the wire to admin
+/// clients.. There is a lot of information maintained in a `VrCtx` that is
+/// expensive to transmit,
+/// such as the log. In a production system, shipping this for admin requests
+/// would be unnecessarily
+/// wasteful. All important details of a replica will instead be populated
+/// inside a VrCtxSummary
 /// instead.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VrCtxSummary {

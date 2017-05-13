@@ -15,7 +15,7 @@ pub struct QuorumTracker<T> {
 
 /// Do we have a quorum when including the replica making the request?
 impl<T> QuorumTracker<T> {
-   pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker<T> {
+    pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker<T> {
         QuorumTracker {
             quorum_size: quorum_size,
             expiration: SteadyTime::now() + *timeout,

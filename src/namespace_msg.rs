@@ -19,10 +19,12 @@ pub enum NamespaceMsg {
     /// Register a client with the primary of a namespace
     RegisterClient(ClientId, NamespaceId),
 
-    /// API Addresses are published from the node they live on to all other nodes.
+    /// API Addresses are published from the node they live on to all other
+    /// nodes.
     ApiAddr(String),
 
-    /// The following four messages are sent from a VM to indicate a change in membership state for
+    /// The following four messages are sent from a VM to indicate a change in
+    /// membership state for
     /// a given namespace
     Reconfiguration {
         namespace_id: NamespaceId,
@@ -33,4 +35,3 @@ pub enum NamespaceMsg {
     NewPrimary(Pid),
     ClearPrimary(NamespaceId)
 }
-

@@ -39,8 +39,4 @@ mod msg;
 
 pub use msg::Msg;
 pub use namespace_mgr::NamespaceMgr;
-pub use namespace_msg::{
-    NamespaceMsg,
-    ClientId,
-    NamespaceId
-};
+pub use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};

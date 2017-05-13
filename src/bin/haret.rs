@@ -38,10 +38,9 @@ fn main() {
     // Create and start the namespace manager
     let namespace_mgr = NamespaceMgr::new(node.clone(), config.clone(), logger.clone());
     info!(logger, "Starting Namespace Manager"; "pid" => namespace_mgr.pid.to_string());
-    let mut namespace_mgr_service = Service::new(namespace_mgr.pid.clone(), node.clone(), namespace_mgr).unwrap();
-    handles.push(thread::spawn(move || {
-        namespace_mgr_service.wait();
-    }));
+    let mut namespace_mgr_service =
+        Service::new(namespace_mgr.pid.clone(), node.clone(), namespace_mgr).unwrap();
+    handles.push(thread::spawn(move || { namespace_mgr_service.wait(); }));
 
     // Create and start the admin server
     let admin_pid = Pid {
@@ -54,9 +53,7 @@ fn main() {
     let handler: TcpServerHandler<AdminConnectionHandler, MsgpackSerializer<AdminMsg>> =
         TcpServerHandler::new(admin_pid.clone(), &config.admin_host, 5000, None);
     let mut admin_service = Service::new(admin_pid, node.clone(), handler).unwrap();
-    handles.push(thread::spawn(move || {
-        admin_service.wait();
-    }));
+    handles.push(thread::spawn(move || { admin_service.wait(); }));
 
     // Create and start the API server
     let api_pid = Pid {
@@ -69,9 +66,7 @@ fn main() {
     let handler: TcpServerHandler<ApiConnectionHandler, ProtobufSerializer<ApiMsg>> =
         TcpServerHandler::new(api_pid.clone(), &config.api_host, 5000, None);
     let mut api_service = Service::new(api_pid, node.clone(), handler).unwrap();
-    handles.push(thread::spawn(move || {
-        api_service.wait();
-    }));
+    handles.push(thread::spawn(move || { api_service.wait(); }));
 
 
     for h in handles {
