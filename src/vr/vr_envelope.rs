@@ -34,4 +34,3 @@ impl From<VrEnvelope> for Envelope<Msg> {
         }
     }
 }
-

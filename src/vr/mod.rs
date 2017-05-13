@@ -16,34 +16,19 @@ mod vr_ctx_summary;
 pub mod vr_fsm;
 pub mod vr_ctx;
 
-pub use self::vr_fsm::{
-    VrTypes
-};
+pub use self::vr_fsm::VrTypes;
 
-pub use self::vr_ctx::{
-    VrCtx
-};
+pub use self::vr_ctx::VrCtx;
 
 pub use self::vr_ctx_summary::VrCtxSummary;
 
-pub use self::replica::{
-    Replica,
-    VersionedReplicas
-};
+pub use self::replica::{Replica, VersionedReplicas};
 
 pub use self::vrmsg::VrMsg;
 pub use self::vr_envelope::VrEnvelope;
 pub use self::fsm_output::FsmOutput;
 
-pub use self::vr_api_messages::{
-    VrApiReq,
-    VrApiRsp,
-    VrApiError,
-    TreeOp,
-    TreeCas,
-    NodeType,
-    Guard,
-    TreeOpResult
-};
+pub use self::vr_api_messages::{VrApiReq, VrApiRsp, VrApiError, TreeOp, TreeCas, NodeType, Guard,
+                                TreeOpResult};
 
 pub use self::backend::VrBackend;

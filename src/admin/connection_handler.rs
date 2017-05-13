@@ -44,8 +44,7 @@ impl AdminConnectionHandler {
     }
 
     fn write_successive_replies(&mut self,
-                                output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>)
-    {
+                                output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>) {
         self.waiting_for += 1;
         while self.waiting_for != self.total_requests {
             if let Some(rpy) = self.out_of_order_replies.remove(&self.waiting_for) {
@@ -81,35 +80,40 @@ impl ConnectionHandler for AdminConnectionHandler {
 
     fn handle_envelope(&mut self,
                        envelope: Envelope<Msg>,
-                       output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>)
-    {
-        let Envelope {msg, correlation_id, ..} = envelope;
+                       output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>) {
+        let Envelope {
+            msg,
+            correlation_id,
+            ..
+        } = envelope;
         let correlation_id = correlation_id.unwrap();
         let rpy = match msg {
             rabble::Msg::User(Msg::AdminRpy(rpy)) => rpy,
             rabble::Msg::ClusterStatus(status) => AdminRpy::ClusterStatus(status),
             rabble::Msg::Timeout => AdminRpy::Timeout,
             rabble::Msg::Metrics(metrics) => AdminRpy::Metrics(metrics),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
         if correlation_id.request == Some(self.waiting_for) {
             output.push(ConnectionMsg::Client(AdminMsg::Rpy(rpy), correlation_id));
             self.write_successive_replies(output);
         } else {
-            self.out_of_order_replies.insert(correlation_id.request.unwrap(), rpy);
+            self.out_of_order_replies
+                .insert(correlation_id.request.unwrap(), rpy);
         }
     }
 
     fn handle_network_msg(&mut self,
                           msg: AdminMsg,
-                          output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>)
-    {
+                          output: &mut Vec<ConnectionMsg<AdminConnectionHandler>>) {
         if let AdminMsg::Req(req) = msg {
             let envelope = match req {
-                AdminReq::GetReplicaState(pid) =>
-                    self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid)),
-                AdminReq::GetMetrics(pid) =>
-                    self.make_rabble_msg_envelope(pid.clone(), rabble::Msg::GetMetrics),
+                AdminReq::GetReplicaState(pid) => {
+                    self.make_envelope(pid.clone(), AdminReq::GetReplicaState(pid))
+                }
+                AdminReq::GetMetrics(pid) => {
+                    self.make_rabble_msg_envelope(pid.clone(), rabble::Msg::GetMetrics)
+                }
                 _ => {
                     let pid = self.namespace_mgr.clone();
                     self.make_envelope(pid, req)

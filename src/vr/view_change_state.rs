@@ -27,7 +27,7 @@ impl Latest {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ViewChangeState {
     pub responses: QuorumTracker<VrMsg>,
-    latest: Latest,
+    latest: Latest
 }
 
 impl ViewChangeState {
@@ -43,32 +43,38 @@ impl ViewChangeState {
     }
 
     pub fn compute_latest_state(&mut self, current: Latest) -> Latest {
-        self.responses.drain()
+        self.responses
+            .drain()
             .map(|(_, msg)| convert_do_view_change_msg_to_latest(msg))
             .fold(current, |mut latest, other| {
-                if (other.last_normal_view > latest.last_normal_view) ||
-                    (other.last_normal_view == latest.last_normal_view && other.op > latest.op)
-                {
-                   latest.last_normal_view = other.last_normal_view;
-                   latest.op = other.op;
-                   latest.log = other.log;
-                }
-                if other.commit_num > latest.commit_num {
-                    latest.commit_num = other.commit_num;
-                }
-                latest
-            })
+            if (other.last_normal_view > latest.last_normal_view) ||
+               (other.last_normal_view == latest.last_normal_view && other.op > latest.op) {
+                latest.last_normal_view = other.last_normal_view;
+                latest.op = other.op;
+                latest.log = other.log;
+            }
+            if other.commit_num > latest.commit_num {
+                latest.commit_num = other.commit_num;
+            }
+            latest
+        })
     }
 }
 
 fn convert_do_view_change_msg_to_latest(msg: VrMsg) -> Latest {
-    if let VrMsg::DoViewChange{op, last_normal_view, commit_num, log, ..} = msg {
+    if let VrMsg::DoViewChange {
+               op,
+               last_normal_view,
+               commit_num,
+               log,
+               ..
+           } = msg {
         return Latest {
-            last_normal_view: last_normal_view,
-            commit_num: commit_num,
-            op: op,
-            log: log
-        };
+                   last_normal_view: last_normal_view,
+                   commit_num: commit_num,
+                   op: op,
+                   log: log
+               };
     }
     unreachable!()
 }

@@ -1,7 +1,8 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/// An assert that doesn't panic on failure, but instead returns a result<(), String> with an
+/// An assert that doesn't panic on failure, but instead returns a result<(),
+/// String> with an
 /// appropriate error message.
 #[macro_export]
 macro_rules! safe_assert {

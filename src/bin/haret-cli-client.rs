@@ -57,7 +57,7 @@ fn run_interactive(mut client: HaretClient) {
         }
         match run(command, &mut client) {
             Ok(result) => println!("{}", result),
-            Err(err) => println!("{}", err)
+            Err(err) => println!("{}", err),
         }
     }
 }
@@ -82,7 +82,7 @@ fn run_script(flag: &str, mut args: Args, mut client: HaretClient) {
 }
 
 fn run(command: String, mut client: &mut HaretClient) -> Result<String> {
-    let req = try!(parse(command, &mut client));
+    let req = parse(command, &mut client)?;
     exec(req, client)
 }
 
@@ -96,114 +96,112 @@ struct Command {
     pattern: &'static str,
     description: &'static str,
     handler: fn(Vec<&str>, &mut HaretClient) -> ApiRequest,
-    consensus: bool,
+    consensus: bool
 }
 
 fn commands() -> Vec<Command> {
-    vec![
-        Command {
-            pattern: "list-namespaces",
-            description: "List all namespaces",
-            handler: list_namespaces,
-            consensus: false
-        },
-        Command {
-            pattern: "enter $namespace_id",
-            description: "Enter a namespace to issue consensus requests",
-            handler: enter_namespace,
-            consensus: false
-        },
-        Command {
-            pattern: "ls",
-            description: "List all keys in the current namespace",
-            handler: ls,
-            consensus: true,
-        },
-        Command {
-            pattern: "create *blob,set,queue $path",
-            description: "Create a new node at <path> of type blob, set or queue",
-            handler: create,
-            consensus: true,
-        },
-        Command {
-            pattern: "blob put $key $val",
-            description: "Put a blob to the given key",
-            handler: blob_put,
-            consensus: true,
-        },
-        Command {
-            pattern: "blob get $key",
-            description: "Get a blob from the given key",
-            handler: blob_get,
-            consensus: true,
-        },
-        Command {
-            pattern: "blob size $key",
-            description: "Get the size of the blob at the given key",
-            handler: blob_size,
-            consensus: true,
-        },
-        Command {
-            pattern : "queue push $path $val",
-            description: "Push a blob onto the back of the queue at <path>",
-            handler: queue_push,
-            consensus: true,
-        },
-        Command {
-            pattern: "queue pop $path",
-            description: "Pop a blob off the front of the queue at <path>",
-            handler: queue_pop,
-            consensus: true,
-        },
-        Command {
-            pattern: "queue front $path",
-            description: "Get a copy of the blob at the front of the queue without removing it",
-            handler: queue_front,
-            consensus: true,
-        },
-        Command {
-            pattern: "queue back $path",
-            description: "Get a copy of the blob at the back of the queue without removing it",
-            handler: queue_back,
-            consensus: true,
-        },
-        Command {
-            pattern: "queue len $path",
-            description: "Get the lenght of the queue at <path>",
-            handler: queue_len,
-            consensus: true,
-        },
-        Command {
-            pattern : "set insert $path $val",
-            description: "Insert a blob into the set at <path>",
-            handler: set_insert,
-            consensus: true,
-        },
-        Command {
-            pattern : "set remove $path $val",
-            description: "Remove a blob from the set at <path>",
-            handler: set_remove,
-            consensus: true,
-        },
-        Command {
-            pattern : "set contains $path $val",
-            description: "Return true if the set at <path> contains <val>",
-            handler: set_contains,
-            consensus: true,
-        },
-        Command {
-            pattern : "set union +path",
-            description: "Return the union of the sets at the given paths",
-            handler: set_union,
-            consensus: true,
-        },
-        Command {
-            pattern: "set intersection $path1 $path2",
-            description: "Return the intersection of the sets at the given paths",
-            handler: set_intersection,
-            consensus: true,
-        }
-    ]
+    vec![Command {
+             pattern: "list-namespaces",
+             description: "List all namespaces",
+             handler: list_namespaces,
+             consensus: false
+         },
+         Command {
+             pattern: "enter $namespace_id",
+             description: "Enter a namespace to issue consensus requests",
+             handler: enter_namespace,
+             consensus: false
+         },
+         Command {
+             pattern: "ls",
+             description: "List all keys in the current namespace",
+             handler: ls,
+             consensus: true
+         },
+         Command {
+             pattern: "create *blob,set,queue $path",
+             description: "Create a new node at <path> of type blob, set or queue",
+             handler: create,
+             consensus: true
+         },
+         Command {
+             pattern: "blob put $key $val",
+             description: "Put a blob to the given key",
+             handler: blob_put,
+             consensus: true
+         },
+         Command {
+             pattern: "blob get $key",
+             description: "Get a blob from the given key",
+             handler: blob_get,
+             consensus: true
+         },
+         Command {
+             pattern: "blob size $key",
+             description: "Get the size of the blob at the given key",
+             handler: blob_size,
+             consensus: true
+         },
+         Command {
+             pattern: "queue push $path $val",
+             description: "Push a blob onto the back of the queue at <path>",
+             handler: queue_push,
+             consensus: true
+         },
+         Command {
+             pattern: "queue pop $path",
+             description: "Pop a blob off the front of the queue at <path>",
+             handler: queue_pop,
+             consensus: true
+         },
+         Command {
+             pattern: "queue front $path",
+             description: "Get a copy of the blob at the front of the queue without removing it",
+             handler: queue_front,
+             consensus: true
+         },
+         Command {
+             pattern: "queue back $path",
+             description: "Get a copy of the blob at the back of the queue without removing it",
+             handler: queue_back,
+             consensus: true
+         },
+         Command {
+             pattern: "queue len $path",
+             description: "Get the lenght of the queue at <path>",
+             handler: queue_len,
+             consensus: true
+         },
+         Command {
+             pattern: "set insert $path $val",
+             description: "Insert a blob into the set at <path>",
+             handler: set_insert,
+             consensus: true
+         },
+         Command {
+             pattern: "set remove $path $val",
+             description: "Remove a blob from the set at <path>",
+             handler: set_remove,
+             consensus: true
+         },
+         Command {
+             pattern: "set contains $path $val",
+             description: "Return true if the set at <path> contains <val>",
+             handler: set_contains,
+             consensus: true
+         },
+         Command {
+             pattern: "set union +path",
+             description: "Return the union of the sets at the given paths",
+             handler: set_union,
+             consensus: true
+         },
+         Command {
+             pattern: "set intersection $path1 $path2",
+             description: "Return the intersection of the sets at the given paths",
+             handler: set_intersection,
+             consensus: true
+         }]
 }
 
 fn pattern_to_help_string(pattern: &str) -> String {
@@ -258,8 +256,12 @@ fn make_help() -> String {
     let commands = commands();
     let mut s = "Usage: haret-cli-client <IpAddress> [-e <command>]\n\n".to_string();
     s.push_str("    Commands\n");
-    let help_patterns: Vec<_> = commands.iter().map(|c| pattern_to_help_string(&c.pattern)).collect();
-    let column2_pos = help_patterns.iter().fold(0, |acc, p| {
+    let help_patterns: Vec<_> =
+        commands.iter()
+                .map(|c| pattern_to_help_string(&c.pattern))
+                .collect();
+    let column2_pos = help_patterns.iter()
+                                   .fold(0, |acc, p| {
         if p.len() > acc {
             return p.len();
         }
@@ -271,8 +273,7 @@ fn make_help() -> String {
         s.push_str(command.description);
         s.push('\n');
     }
-    let rest =
-"
+    let rest = "
     Flags:
         -e <Command>   Non-interactive mode
 
@@ -302,7 +303,10 @@ fn pattern_match(pattern: &'static str, argv: &Vec<&str>) -> bool {
             return true;
         }
         if pattern.starts_with("*") {
-            if pattern[1..].split(",").find(|option| arg == option).is_none() {
+            if pattern[1..]
+                   .split(",")
+                   .find(|option| arg == option)
+                   .is_none() {
                 println!("Argument must be one of: {}", pattern);
                 return false;
             }
@@ -310,7 +314,9 @@ fn pattern_match(pattern: &'static str, argv: &Vec<&str>) -> bool {
         }
         pattern == *arg
     });
-    if matched == false { return false; }
+    if matched == false {
+        return false;
+    }
     if !varargs && pattern.split_whitespace().count() != argv.len() {
         return false;
     }
@@ -326,7 +332,7 @@ fn parse(argv: String, mut client: &mut HaretClient) -> Result<ApiRequest> {
                     <namespace_id>`.";
                 return Err(Error::new(ErrorKind::InvalidInput, msg));
             }
-            return Ok((command.handler)(args, &mut client))
+            return Ok((command.handler)(args, &mut client));
         }
     }
     Err(Error::new(ErrorKind::InvalidInput, "Invalid Input. Type 'help' for commands"))
@@ -384,7 +390,7 @@ fn create(mut args: Vec<&str>, client: &mut HaretClient) -> ApiRequest {
         "blob" => NodeType::BLOB,
         "queue" => NodeType::QUEUE,
         "set" => NodeType::SET,
-        _ => unreachable!()
+        _ => unreachable!(),
     };
     let mut create_node = CreateNode::new();
     create_node.set_path(path.to_string());
@@ -554,12 +560,15 @@ fn tree_op_result_to_string(mut result: TreeOpResult) -> String {
 fn format_blob(blob: Vec<u8>) -> String {
     match String::from_utf8(blob) {
         Ok(s) => format!("{}\n", s),
-        Err(e) => format!("{:?}\n", e.into_bytes())
+        Err(e) => format!("{:?}\n", e.into_bytes()),
     }
 }
 
 fn format_set(mut set: Set) -> String {
-    set.take_val().into_vec().into_iter().fold(String::new(), |mut acc, blob| {
+    set.take_val()
+       .into_vec()
+       .into_iter()
+       .fold(String::new(), |mut acc, blob| {
         acc.push_str(&format_blob(blob));
         acc
     })
@@ -607,14 +616,16 @@ fn api_error_to_string(mut error: ApiError) -> String {
 }
 
 fn exec(req: ApiRequest, client: &mut HaretClient) -> Result<String> {
-    try!(client.write_msg(req).map_err(|_| {
+    client.write_msg(req)
+          .map_err(|_| {
         Error::new(ErrorKind::NotConnected,
                    "Failed to write to socket. Please restart client and try again".to_string())
-    }));
-    let mut api_response = try!(client.read_msg().map_err(|_| {
+    })?;
+    let mut api_response = client.read_msg()
+                                 .map_err(|_| {
         Error::new(ErrorKind::NotConnected,
                    "Failed to read from socket. Please restart client and try again".to_string())
-    }));
+    })?;
 
     if api_response.has_consensus_reply() {
         let mut consensus_reply = api_response.take_consensus_reply();
@@ -626,11 +637,13 @@ fn exec(req: ApiRequest, client: &mut HaretClient) -> Result<String> {
         }
 
         if consensus_reply.has_tree_op_result() {
-           s.push_str(&tree_op_result_to_string(consensus_reply.take_tree_op_result()));
+            s.push_str(&tree_op_result_to_string(consensus_reply.take_tree_op_result()));
         }
 
         if consensus_reply.has_tree_cas_result() {
-            for result in consensus_reply.take_tree_cas_result().take_results().into_iter() {
+            for result in consensus_reply.take_tree_cas_result()
+                                         .take_results()
+                                         .into_iter() {
                 s.push_str(&tree_op_result_to_string(result));
             }
         }
@@ -646,18 +659,19 @@ fn exec(req: ApiRequest, client: &mut HaretClient) -> Result<String> {
         }
 
         s.push_str(&format!("Epoch = {}, View = {}, Client Request Num = {}",
-                            consensus_reply.get_epoch(),
-                            consensus_reply.get_view(),
-                            consensus_reply.get_request_num()));
+                           consensus_reply.get_epoch(),
+                           consensus_reply.get_view(),
+                           consensus_reply.get_request_num()));
         return Ok(s);
     }
 
     if api_response.has_namespaces() {
         let namespaces = api_response.take_namespaces().take_ids().to_vec();
-        return Ok(namespaces.iter().fold(String::new(), |mut acc, namespace_id | {
-                acc.push_str(&namespace_id);
-                acc.push_str("\n");
-                acc
+        return Ok(namespaces.iter()
+                            .fold(String::new(), |mut acc, namespace_id| {
+            acc.push_str(&namespace_id);
+            acc.push_str("\n");
+            acc
         }));
     }
 
@@ -670,18 +684,18 @@ fn exec(req: ApiRequest, client: &mut HaretClient) -> Result<String> {
         let mut redirect = api_response.take_redirect();
         let primary = redirect.take_primary();
         let api_addr = redirect.take_api_addr();
-        try!(client.connect(Some(api_addr)));
-        let req = try!(client.register(Some(primary.clone())));
+        client.connect(Some(api_addr))?;
+        let req = client.register(Some(primary.clone()))?;
         /// Todo: Remove this recursion to prevent potential stack overflow
-        try!(exec(req, client));
+        exec(req, client)?;
         return Ok(format!("Finished Redirecting. Primary = {:?}, API Address = {}",
-                   client.primary.as_ref().unwrap(),
-                   client.api_addr.as_ref().unwrap()))
+                          client.primary.as_ref().unwrap(),
+                          client.api_addr.as_ref().unwrap()));
     }
 
     if api_response.has_retry() {
         let duration = api_response.take_retry().get_milliseconds();
-        return Ok(format!("Primary not found. Please retry in {} seconds.", duration*1000));
+        return Ok(format!("Primary not found. Please retry in {} seconds.", duration * 1000));
     }
 
     if api_response.has_unknown_namespace() {
@@ -701,8 +715,10 @@ fn help() -> Error {
 
 
 // TODO: Put HaretClient into it's own crate
-/// This struct represents the Haret client implementation in rust. It is a low level client that is
-/// useful for building higher level native clients or for building clients in other langauges via
+/// This struct represents the Haret client implementation in rust. It is a low
+/// level client that is
+/// useful for building higher level native clients or for building clients in
+/// other langauges via
 /// FFI.
 struct HaretClient {
     pub client_id: String,
@@ -734,18 +750,19 @@ impl HaretClient {
     pub fn connect(&mut self, api_addr: Option<String>) -> Result<()> {
         if api_addr.is_none() && self.api_addr.is_none() {
             return Err(Error::new(ErrorKind::InvalidInput,
-                              "API Address unknown. Please call connect with an api_addr."));
+                                  "API Address unknown. Please call connect with an api_addr."));
         }
         if api_addr.is_some() {
             self.api_addr = api_addr;
         }
-        self.sock = Some(try!(TcpStream::connect(&self.api_addr.as_ref().unwrap()[..])));
+        self.sock = Some(TcpStream::connect(&self.api_addr.as_ref().unwrap()[..])?);
         Ok(())
     }
 
     /// Register the client id on this node for the given namespace.
     ///
-    /// This function returns the registration message to be written or an error if the primary is
+    /// This function returns the registration message to be written or an
+    /// error if the primary is
     /// unknown.
     pub fn register(&mut self, primary: Option<ApiPid>) -> Result<ApiRequest> {
         if primary.is_none() && self.primary.is_none() {
@@ -754,8 +771,7 @@ impl HaretClient {
 
         if primary.is_some() {
             self.primary = primary;
-            self.namespace_id = Some(self.primary.as_ref().unwrap()
-                                     .get_group().to_string());
+            self.namespace_id = Some(self.primary.as_ref().unwrap().get_group().to_string());
         }
         let namespace_id = self.namespace_id.clone();
         let mut msg = RegisterClient::new();
@@ -769,27 +785,27 @@ impl HaretClient {
     fn write_msg(&mut self, req: ApiRequest) -> Result<()> {
         let mut msg = ApiMsg::new();
         msg.set_request(req);
-        let encoded = try!(msg.write_to_bytes().map_err(|_| {
+        let encoded = msg.write_to_bytes()
+                         .map_err(|_| {
             Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data")
-        }));
+        })?;
         let len: u32 = encoded.len() as u32;
         // 4 byte len header
         let header: [u8; 4] = unsafe { mem::transmute(len.to_be()) };
-        try!(self.sock.as_ref().unwrap().write_all(&header));
-        try!(self.sock.as_ref().unwrap().write_all(&encoded));
+        self.sock.as_ref().unwrap().write_all(&header)?;
+        self.sock.as_ref().unwrap().write_all(&encoded)?;
         self.request_num += 1;
         Ok(())
     }
 
     fn read_msg(&mut self) -> Result<ApiResponse> {
         let mut header = [0; 4];
-        try!(self.sock.as_mut().unwrap().read_exact(&mut header));
+        self.sock.as_mut().unwrap().read_exact(&mut header)?;
         let len = unsafe { u32::from_be(mem::transmute(header)) };
         let mut buf = vec![0; len as usize];
-        try!(self.sock.as_mut().unwrap().read_exact(&mut buf));
-        let mut msg: ApiMsg = try!(parse_from_bytes(&buf[..]).map_err(|e| {
-            Error::new(ErrorKind::InvalidData, e.to_string())
-        }));
+        self.sock.as_mut().unwrap().read_exact(&mut buf)?;
+        let mut msg: ApiMsg = parse_from_bytes(&buf[..])
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
         Ok(msg.take_response())
     }
 }

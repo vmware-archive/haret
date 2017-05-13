@@ -26,12 +26,12 @@ pub struct PrepareRequests {
 }
 
 impl PrepareRequests {
-    pub fn new(num_replicas: usize, timeout_ms: u64 ) -> PrepareRequests {
+    pub fn new(num_replicas: usize, timeout_ms: u64) -> PrepareRequests {
         PrepareRequests {
-            quorum_size: num_replicas/2 + 1,
+            quorum_size: num_replicas / 2 + 1,
             timeout_ms: timeout_ms as i64,
             lowest_op: 1,
-            requests: VecDeque::new(),
+            requests: VecDeque::new()
         }
     }
 
@@ -39,11 +39,12 @@ impl PrepareRequests {
         if self.requests.is_empty() {
             self.lowest_op = op;
         }
-        self.requests.push_back(Request {
-            replies: HashSet::with_capacity(self.quorum_size * 2),
-            correlation_id: correlation_id,
-            timeout: SteadyTime::now() + Duration::milliseconds(self.timeout_ms)
-        });
+        self.requests
+            .push_back(Request {
+                           replies: HashSet::with_capacity(self.quorum_size * 2),
+                           correlation_id: correlation_id,
+                           timeout: SteadyTime::now() + Duration::milliseconds(self.timeout_ms)
+                       });
     }
 
     // Returns true if the request exists, false otherwise
@@ -53,8 +54,8 @@ impl PrepareRequests {
                 Some(ref mut request) => {
                     request.replies.insert(replica);
                     return true;
-                },
-                None => return false
+                }
+                None => return false,
             }
         }
         false
@@ -75,13 +76,15 @@ impl PrepareRequests {
     pub fn remove(&mut self, op: u64) -> Vec<Request> {
         let lowest_op = self.lowest_op;
         self.lowest_op = op + 1;
-        self.requests.drain(0..(op - lowest_op + 1) as usize).collect()
+        self.requests
+            .drain(0..(op - lowest_op + 1) as usize)
+            .collect()
     }
 
     pub fn expired(&self) -> bool {
         match self.requests.front() {
             Some(request) => request.timeout > SteadyTime::now(),
-            None => false
+            None => false,
         }
     }
 }

@@ -3,7 +3,7 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
-use serde_json::{self};
+use serde_json;
 use error::VrError;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -33,10 +33,11 @@ impl Config {
 
     pub fn write_path(&self, path: &str) -> Result<(), VrError> {
         let mut file = File::create(path).unwrap();
-        let string = serde_json::to_string(&self).map_err(|e| io::Error::from(e))?.into_bytes();
+        let string = serde_json::to_string(&self)
+            .map_err(|e| io::Error::from(e))?
+            .into_bytes();
         file.write_all(&string).map_err(|e| e.into())
     }
-
 }
 
 #[cfg(test)]

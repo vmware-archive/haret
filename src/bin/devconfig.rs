@@ -13,8 +13,8 @@ fn main() {
     n = 1000 + n * 1000;
 
     let cluster_port = n.to_string();
-    let admin_port = (n+1).to_string();
-    let api_port = (n+2).to_string();
+    let admin_port = (n + 1).to_string();
+    let api_port = (n + 2).to_string();
 
     let mut cluster_host = "127.0.0.1:".to_string();
     cluster_host.push_str(&cluster_port);
@@ -29,7 +29,7 @@ fn main() {
         node_name: name,
         cluster_host: cluster_host,
         admin_host: admin_host,
-        api_host: api_host,
+        api_host: api_host
     };
     config.write_path("config.json").unwrap();
 }

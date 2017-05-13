@@ -41,7 +41,8 @@ pub struct VrCtx {
     /// The number of replicas needed to provide quorum
     pub quorum: u64,
 
-    /// Used by the replica in primary state tracking quorums of Prepare requests
+    /// Used by the replica in primary state tracking quorums of Prepare
+    /// requests
     pub prepare_requests: PrepareRequests,
 
     pub log: Vec<VrMsg>,
@@ -58,21 +59,24 @@ pub struct VrCtx {
     /// Only used when a replica is shutting down
     pub epoch_started_msgs: QuorumTracker<VrMsg>,
 
-    /// Backups wait `idle_timeout` between messages from the primary before initiating a view
+    /// Backups wait `idle_timeout` between messages from the primary before
+    /// initiating a view
     /// change.
     pub idle_timeout: Duration,
 
-    /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
-    /// message to the backups. `idle_timeout` should be at least twice as large as this value.
-    pub primary_tick_ms: u64,
+    /// If the primary doesn't receive a new client request in
+    /// `primary_tick_ms` it sends a commit
+    /// message to the backups. `idle_timeout` should be at least twice as
+    /// large as this value.
+    pub primary_tick_ms: u64
 }
 
 impl VrCtx {
     pub fn new(logger: Logger,
                me: Pid,
                old_config: VersionedReplicas,
-               new_config: VersionedReplicas) -> VrCtx
-    {
+               new_config: VersionedReplicas)
+               -> VrCtx {
         let quorum = new_config.replicas.len() / 2 + 1;
         let idle_timeout = Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
         VrCtx {
@@ -114,15 +118,32 @@ impl VrCtx {
     }
 
     pub fn update_recovery_state(&mut self, msg: VrMsg) {
-        if let VrMsg::RecoveryResponse {epoch, view, nonce, from, op, commit_num, log} = msg {
-            if nonce != self.recovery_state.as_ref().unwrap().nonce { return; }
-            if epoch < self.epoch { return; }
+        if let VrMsg::RecoveryResponse {
+                   epoch,
+                   view,
+                   nonce,
+                   from,
+                   op,
+                   commit_num,
+                   log
+               } = msg {
+            if nonce != self.recovery_state.as_ref().unwrap().nonce {
+                return;
+            }
+            if epoch < self.epoch {
+                return;
+            }
 
-            // TODO: If we get a response from a replica in a later epoch, we are in a weird state
-            // We missed a reconfiguration and the namespace manager hasn't learned of the epoch
-            // change yet. What we really want is to wait for the namespace manager to learn of the
-            // replicas in the later epoch and restart the replica. For now we're ignoring that this
-            // situation can even occur. We just return without processing the message.. This is
+            // TODO: If we get a response from a replica in a later epoch, we are in a
+            // weird state
+            // We missed a reconfiguration and the namespace manager hasn't learned of the
+            // epoch
+            // change yet. What we really want is to wait for the namespace manager to
+            // learn of the
+            // replicas in the later epoch and restart the replica. For now we're ignoring
+            // that this
+            // situation can even occur. We just return without processing the message..
+            // This is
             // clearly wrong.
             if epoch > self.epoch {
                 println!("EPOCH RECONFIGURATION DURING RECOVERY: Replica {} in a bad state",
@@ -137,14 +158,19 @@ impl VrCtx {
             let response_from_primary = op.is_some();
             if response_from_primary && view == self.view {
                 self.recovery_state.as_mut().unwrap().primary = Some(RecoveryPrimary {
-                    pid: from.clone(),
-                    view: view,
-                    op: op.unwrap(),
-                    commit_num: commit_num.unwrap(),
-                    log: log.unwrap()
-                });
+                                                                         pid: from.clone(),
+                                                                         view: view,
+                                                                         op: op.unwrap(),
+                                                                         commit_num:
+                                                                             commit_num.unwrap(),
+                                                                         log: log.unwrap()
+                                                                     });
             }
-            self.recovery_state.as_mut().unwrap().responses.insert(from, ())
+            self.recovery_state
+                .as_mut()
+                .unwrap()
+                .responses
+                .insert(from, ())
         } else {
             unreachable!()
         }
@@ -154,7 +180,12 @@ impl VrCtx {
         if self.recovery_state.as_ref().unwrap().has_quorum(self.view) {
             let mut output = vec![self.set_primary()];
             let commit_num = {
-                let primary_state = self.recovery_state.as_ref().unwrap().primary.as_ref().unwrap();
+                let primary_state = self.recovery_state
+                                        .as_ref()
+                                        .unwrap()
+                                        .primary
+                                        .as_ref()
+                                        .unwrap();
                 self.op = primary_state.op;
                 self.log = primary_state.log.clone();
                 primary_state.commit_num
@@ -167,11 +198,15 @@ impl VrCtx {
     }
 
     pub fn view_change_expired(&self) -> bool {
-        self.view_change_state.as_ref().map_or(false, |s| s.responses.is_expired())
+        self.view_change_state
+            .as_ref()
+            .map_or(false, |s| s.responses.is_expired())
     }
 
     pub fn recovery_expired(&self) -> bool {
-        self.recovery_state.as_ref().map_or(false, |s| s.responses.is_expired())
+        self.recovery_state
+            .as_ref()
+            .map_or(false, |s| s.responses.is_expired())
     }
 
     pub fn clear_epoch_started_msgs(&mut self) {
@@ -185,8 +220,8 @@ impl VrCtx {
 
     pub fn start_state_transfer_new_view(&mut self,
                                          new_view: u64,
-                                         c_id: CorrelationId) -> Vec<FsmOutput>
-    {
+                                         c_id: CorrelationId)
+                                         -> Vec<FsmOutput> {
         self.last_received_time = SteadyTime::now();
         self.view = new_view;
         self.op = self.commit_num;
@@ -202,20 +237,23 @@ impl VrCtx {
         self.broadcast_old_and_new(self.get_state_msg(), CorrelationId::pid(self.pid.clone()))
     }
 
-    /// For a valid VrMsg::ClientRequest | VrMsg::Reconfiguration, broadcast a prepare msg
+    /// For a valid VrMsg::ClientRequest | VrMsg::Reconfiguration, broadcast a
+    /// prepare msg
     pub fn send_prepare(&mut self, envelope: VrEnvelope) -> Vec<FsmOutput> {
         self.last_received_time = SteadyTime::now();
         self.op += 1;
         let prepare = self.prepare_msg(envelope.msg.clone());
         self.log.push(envelope.msg);
-        self.prepare_requests.new_prepare(self.op, envelope.correlation_id.clone());
+        self.prepare_requests
+            .new_prepare(self.op, envelope.correlation_id.clone());
         self.broadcast(prepare, envelope.correlation_id)
     }
 
     pub fn send_prepare_ok(&mut self,
                            msg: VrMsg, // ClientRequest | Reconfiguration
                            commit_num: u64,
-                           correlation_id: CorrelationId) -> Vec<FsmOutput> {
+                           correlation_id: CorrelationId)
+                           -> Vec<FsmOutput> {
         self.last_received_time = SteadyTime::now();
         self.op += 1;
         self.log.push(msg);
@@ -234,11 +272,7 @@ impl VrCtx {
         FsmOutput::Vr(VrEnvelope::new(from, self.pid.clone(), self.new_state_msg(op), c_id))
     }
 
-    pub fn send_recovery_response(&self,
-                                  from: Pid,
-                                  nonce: Uuid,
-                                  c_id: CorrelationId) -> FsmOutput
-    {
+    pub fn send_recovery_response(&self, from: Pid, nonce: Uuid, c_id: CorrelationId) -> FsmOutput {
         let response = self.recovery_response_msg(nonce);
         FsmOutput::Vr(VrEnvelope::new(from, self.pid.clone(), response, c_id))
     }
@@ -275,17 +309,22 @@ impl VrCtx {
 
     pub fn rebroadcast_reconfig(&self) -> Vec<FsmOutput> {
         let reconfig = self.log[(self.op - 1) as usize].clone();
-        if let VrMsg::Reconfiguration {..} = reconfig {
+        if let VrMsg::Reconfiguration { .. } = reconfig {
             let prepare = self.prepare_msg(reconfig);
             return self.broadcast(prepare, CorrelationId::pid(self.pid.clone()));
         }
         unreachable!();
     }
 
-    // During reconfiguration if we are not up to date we need to send a get state request to all
+    // During reconfiguration if we are not up to date we need to send a get state
+    // request to all
     // replicas to ensure we get the latest results.
     pub fn broadcast_old_and_new(&self, msg: VrMsg, c_id: CorrelationId) -> Vec<FsmOutput> {
-        self.old_config.replicas.iter().cloned().chain(self.new_config.replicas.iter().cloned())
+        self.old_config
+            .replicas
+            .iter()
+            .cloned()
+            .chain(self.new_config.replicas.iter().cloned())
             .filter(|pid| *pid != self.pid)
             .map(|pid| self.vr_new(pid, msg.clone(), c_id.clone()))
             .collect()
@@ -293,7 +332,10 @@ impl VrCtx {
 
     /// Wrap a VrMsg in an envelope and send to all old replicas
     pub fn broadcast_old(&self, msg: VrMsg, correlation_id: CorrelationId) -> Vec<FsmOutput> {
-        self.old_config.replicas.iter().cloned()
+        self.old_config
+            .replicas
+            .iter()
+            .cloned()
             .filter(|pid| *pid != self.pid)
             .map(|pid| self.vr_new(pid, msg.clone(), correlation_id.clone()))
             .collect()
@@ -301,14 +343,19 @@ impl VrCtx {
 
     /// Wrap a VrMsg in an envelope and send to all new replicas
     pub fn broadcast(&self, msg: VrMsg, correlation_id: CorrelationId) -> Vec<FsmOutput> {
-        self.new_config.replicas.iter().cloned()
+        self.new_config
+            .replicas
+            .iter()
+            .cloned()
             .filter(|pid| *pid != self.pid)
             .map(|pid| self.vr_new(pid, msg.clone(), correlation_id.clone()))
             .collect()
     }
 
     pub fn has_view_change_quorum(&self) -> bool {
-        self.view_change_state.as_ref().map_or(false, |s| s.has_quorum())
+        self.view_change_state
+            .as_ref()
+            .map_or(false, |s| s.has_quorum())
     }
 
     pub fn become_primary(&mut self) -> Vec<FsmOutput> {
@@ -328,13 +375,13 @@ impl VrCtx {
         for i in last_commit_num..self.commit_num {
             let msg = self.log[i as usize].clone();
             match msg {
-                VrMsg::ClientRequest {ref op, .. } => {
+                VrMsg::ClientRequest { ref op, .. } => {
                     // The client likely hasn't reconnected, don't bother sending a reply here
                     self.backend.call(op.clone());
-                },
-                VrMsg::Reconfiguration {replicas, ..} => {
+                }
+                VrMsg::Reconfiguration { replicas, .. } => {
                     self.epoch += 1;
-                    self.update_for_new_epoch(i+1, replicas);
+                    self.update_for_new_epoch(i + 1, replicas);
                     output.push(self.announce_reconfiguration());
                     output.push(self.set_primary());
                     output.extend_from_slice(&self.broadcast_commit_msg_old());
@@ -342,8 +389,8 @@ impl VrCtx {
                     // proper correlation_id here.
                     let pid = self.pid.clone();
                     output.extend_from_slice(&self.broadcast_epoch_started(CorrelationId::pid(pid)));
-                },
-                _ => unreachable!()
+                }
+                _ => unreachable!(),
             }
         }
         output
@@ -357,7 +404,10 @@ impl VrCtx {
             // TODO: FIXME: Cloning the log is expensive
             log: self.log.clone()
         };
-        let latest = self.view_change_state.as_mut().unwrap().compute_latest_state(current);
+        let latest = self.view_change_state
+                         .as_mut()
+                         .unwrap()
+                         .compute_latest_state(current);
         self.commit_num = latest.commit_num;
         self.op = latest.op;
         self.log = latest.log;
@@ -371,8 +421,8 @@ impl VrCtx {
                          view: u64,
                          op: u64,
                          log: Vec<VrMsg>,
-                         commit_num: u64) -> Vec<FsmOutput>
-    {
+                         commit_num: u64)
+                         -> Vec<FsmOutput> {
         self.last_received_time = SteadyTime::now();
         self.view = view;
         self.op = op;
@@ -389,15 +439,15 @@ impl VrCtx {
         for i in self.commit_num..new_commit_num {
             let msg = self.log[i as usize].clone();
             match msg {
-                VrMsg::ClientRequest {op, ..} => {
+                VrMsg::ClientRequest { op, .. } => {
                     self.backend.call(op);
-                },
-                VrMsg::Reconfiguration {replicas, ..} => {
-                    self.update_for_new_epoch(i+1, replicas);
+                }
+                VrMsg::Reconfiguration { replicas, .. } => {
+                    self.update_for_new_epoch(i + 1, replicas);
                     output.push(self.announce_reconfiguration());
                     output.push(self.set_primary());
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
         self.commit_num = new_commit_num;
@@ -407,23 +457,32 @@ impl VrCtx {
 
     pub fn announce_reconfiguration(&self) -> FsmOutput {
         FsmOutput::Announcement(NamespaceMsg::Reconfiguration {
-            namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_string()),
-            old_config: self.old_config.clone(),
-            new_config: self.new_config.clone()
-        }, self.pid.clone())
+                                    namespace_id: NamespaceId(self.pid
+                                                                  .group
+                                                                  .as_ref()
+                                                                  .unwrap()
+                                                                  .to_string()),
+                                    old_config: self.old_config.clone(),
+                                    new_config: self.new_config.clone()
+                                },
+                                self.pid.clone())
     }
 
-    pub fn send_epoch_started(&mut self, envelope: VrEnvelope) -> Vec<FsmOutput>  {
+    pub fn send_epoch_started(&mut self, envelope: VrEnvelope) -> Vec<FsmOutput> {
         let msg = self.epoch_started_msg();
         let c_id = envelope.correlation_id;
         vec![FsmOutput::Vr(VrEnvelope::new(envelope.from, self.pid.clone(), msg, c_id))]
     }
 
-    pub fn broadcast_epoch_started(&mut self, c_id: CorrelationId) -> Vec<FsmOutput>{
+    pub fn broadcast_epoch_started(&mut self, c_id: CorrelationId) -> Vec<FsmOutput> {
         let msg = self.epoch_started_msg();
-        self.replicas_to_replace().iter().cloned().map(|r| {
+        self.replicas_to_replace()
+            .iter()
+            .cloned()
+            .map(|r| {
             FsmOutput::Vr(VrEnvelope::new(r, self.pid.clone(), msg.clone(), c_id.clone()))
-        }).collect()
+        })
+            .collect()
     }
 
     pub fn replicas_to_replace(&self) -> Vec<Pid> {
@@ -433,38 +492,44 @@ impl VrCtx {
     }
 
     pub fn send_to_primary(&self, msg: VrMsg, c_id: CorrelationId) -> FsmOutput {
-        FsmOutput::Vr(
-            VrEnvelope::new(self.primary.as_ref().unwrap().clone(), self.pid.clone(), msg, c_id)
-        )
+        FsmOutput::Vr(VrEnvelope::new(self.primary.as_ref().unwrap().clone(),
+                                      self.pid.clone(),
+                                      msg,
+                                      c_id))
     }
 
-    /// Return Some(error msg) if the reconfiguration request is invalid. Return None on success.
+    /// Return Some(error msg) if the reconfiguration request is invalid.
+    /// Return None on success.
     pub fn validate_reconfig(&self, envelope: &VrEnvelope) -> Option<FsmOutput> {
-        if let VrMsg::Reconfiguration {client_req_num, epoch, ref replicas} = envelope.msg {
+        if let VrMsg::Reconfiguration {
+                   client_req_num,
+                   epoch,
+                   ref replicas
+               } = envelope.msg {
             if replicas.len() < 3 {
                 let rsp = VrApiRsp::Error(VrApiError::NotEnoughReplicas);
                 let reply = self.client_reply_msg(client_req_num, rsp);
                 return Some(FsmOutput::Vr(VrEnvelope::new(envelope.from.clone(),
-                                            self.pid.clone(),
-                                            reply,
-                                            envelope.correlation_id.clone())));
+                                                          self.pid.clone(),
+                                                          reply,
+                                                          envelope.correlation_id.clone())));
             }
             if epoch < self.epoch || epoch > self.epoch {
                 let rsp = VrApiRsp::Error(VrApiError::BadEpoch);
                 let reply = self.client_reply_msg(client_req_num, rsp);
                 return Some(FsmOutput::Vr(VrEnvelope::new(envelope.from.clone(),
-                                            self.pid.clone(),
-                                            reply,
-                                            envelope.correlation_id.clone())));
+                                                          self.pid.clone(),
+                                                          reply,
+                                                          envelope.correlation_id.clone())));
             }
             if *replicas == self.new_config.replicas {
                 let msg = "No change to existing configuration".to_string();
                 let rsp = VrApiRsp::Error(VrApiError::Msg(msg));
                 let reply = self.client_reply_msg(client_req_num, rsp);
                 return Some(FsmOutput::Vr(VrEnvelope::new(envelope.from.clone(),
-                                            self.pid.clone(),
-                                            reply,
-                                            envelope.correlation_id.clone())));
+                                                          self.pid.clone(),
+                                                          reply,
+                                                          envelope.correlation_id.clone())));
             }
             return None;
         }
@@ -485,50 +550,60 @@ impl VrCtx {
             let msg = self.log[i as usize].clone();
             self.commit_num = i + 1;
             match msg {
-                VrMsg::ClientRequest {ref op, request_num, ..} => {
+                VrMsg::ClientRequest {
+                    ref op,
+                    request_num,
+                    ..
+                } => {
                     let rsp = self.backend.call(op.clone());
                     if i >= lowest_prepared_op - 1 {
                         // This primary prepared this request, and wasn't elected after it was
                         // prepared but before it committed it.
                         let request = iter.next().unwrap();
                         let reply = self.client_reply_msg(request_num, rsp);
-                        output.push(FsmOutput::Vr(VrEnvelope::new(
-                            request.correlation_id.pid.clone(),
-                            self.pid.clone(),
-                            reply,
-                            request.correlation_id)));
+                        output.push(FsmOutput::Vr(VrEnvelope::new(request.correlation_id
+                                                                         .pid
+                                                                         .clone(),
+                                                                  self.pid.clone(),
+                                                                  reply,
+                                                                  request.correlation_id)));
                     }
-                },
-                VrMsg::Reconfiguration {client_req_num, epoch, replicas, ..} => {
+                }
+                VrMsg::Reconfiguration {
+                    client_req_num,
+                    epoch,
+                    replicas,
+                    ..
+                } => {
                     let rsp = VrApiRsp::Ok;
-                    let correlation_id =
-                        if i >= lowest_prepared_op - 1 {
-                            // This replica prepared this request as primary, and wasn't elected after
-                            // it was prepared but before this replica committed it.
-                            let request = iter.next().unwrap();
-                            let reply = VrMsg::ClientReply {
-                                epoch: epoch,
-                                view: 0,
-                                request_num: client_req_num,
-                                value: rsp
-                            };
-                            output.push(FsmOutput::Vr(VrEnvelope::new(
-                                request.correlation_id.pid.clone(),
-                                self.pid.clone(),
-                                reply,
-                                request.correlation_id.clone())));
-                            request.correlation_id
-                        } else {
-                            CorrelationId::pid(self.pid.clone())
+                    let correlation_id = if i >= lowest_prepared_op - 1 {
+                        // This replica prepared this request as primary, and wasn't elected after
+                        // it was prepared but before this replica committed it.
+                        let request = iter.next().unwrap();
+                        let reply = VrMsg::ClientReply {
+                            epoch: epoch,
+                            view: 0,
+                            request_num: client_req_num,
+                            value: rsp
                         };
+                        output.push(FsmOutput::Vr(VrEnvelope::new(request.correlation_id
+                                                                         .pid
+                                                                         .clone(),
+                                                                  self.pid.clone(),
+                                                                  reply,
+                                                                  request.correlation_id.clone())));
+                        request.correlation_id
+                    } else {
+                        CorrelationId::pid(self.pid.clone())
+                    };
                     self.epoch += 1;
-                    self.update_for_new_epoch(i+1, replicas);
+                    self.update_for_new_epoch(i + 1, replicas);
                     output.push(self.announce_reconfiguration());
                     output.push(self.set_primary());
                     output.extend(self.broadcast_commit_msg_old());
                     output.extend_from_slice(&self.broadcast_epoch_started(correlation_id));
-                },
-                _ => unreachable!()
+                }
+                _ => unreachable!(),
             }
         }
         output
@@ -539,31 +614,40 @@ impl VrCtx {
         self.view = 0;
         self.last_normal_view = 0;
 
-        // replicas == self.new_config.replicas can only occur during backup commit of reconfiguration
+        // replicas == self.new_config.replicas can only occur during backup commit of
+        // reconfiguration
         if replicas != self.new_config.replicas {
             mem::swap(&mut self.old_config, &mut self.new_config);
         }
 
-        self.new_config = VersionedReplicas {epoch: self.epoch, op: op, replicas: replicas};
+        self.new_config = VersionedReplicas {
+            epoch: self.epoch,
+            op: op,
+            replicas: replicas
+        };
     }
 
 
     #[inline]
-    /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
+    /// We use a cast to i64 until the stdlib Duration that takes u64 is
+    /// stabilized; It doesn't matter
     /// here since the values are so small.
     pub fn idle_timeout(&self) -> bool {
         SteadyTime::now() - self.last_received_time > self.idle_timeout
     }
 
     #[inline]
-    /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
+    /// We use a cast to i64 until the stdlib Duration that takes u64 is
+    /// stabilized; It doesn't matter
     /// here since the values are so small.
     pub fn primary_idle_timeout(&self) -> bool {
-        SteadyTime::now() - self.last_received_time > Duration::milliseconds(self.primary_tick_ms as i64)
+        SteadyTime::now() - self.last_received_time >
+        Duration::milliseconds(self.primary_tick_ms as i64)
     }
 
     pub fn last_log_entry_is_latest_reconfiguration(&self, epoch: u64, op: u64) -> bool {
-        if let VrMsg::Reconfiguration {epoch: log_epoch, ..} = self.log[(op-1) as usize] {
+        if let VrMsg::Reconfiguration { epoch: log_epoch, .. } =
+            self.log[(op - 1) as usize] {
             if log_epoch + 1 == epoch {
                 return true;
             }
@@ -577,7 +661,13 @@ impl VrCtx {
 
     pub fn set_from_new_state_msg(&mut self, msg: VrMsg) -> Vec<FsmOutput> {
         self.last_received_time = SteadyTime::now();
-        if let VrMsg::NewState {view, op, commit_num, log_tail, ..} = msg {
+        if let VrMsg::NewState {
+                   view,
+                   op,
+                   commit_num,
+                   log_tail,
+                   ..
+               } = msg {
             self.view = view;
             self.op = op;
             for m in log_tail {
@@ -604,7 +694,11 @@ impl VrCtx {
     }
 
     pub fn insert_view_change_message(&mut self, from: Pid, msg: VrMsg) {
-        self.view_change_state.as_mut().unwrap().responses.insert(from, msg);
+        self.view_change_state
+            .as_mut()
+            .unwrap()
+            .responses
+            .insert(from, msg);
     }
 
     pub fn reset_view_change_state(&mut self, view: u64) -> Vec<FsmOutput> {
@@ -630,9 +724,9 @@ impl VrCtx {
         FsmOutput::Vr(VrEnvelope::new(to, self.pid.clone(), msg.clone(), c_id))
     }
 
-    /*************************************************************************/
-    /*******   CONSTRUCT VR MESSAGES   ****/
-    /************************************************************************/
+    /// **********************************************************************
+    /// *****   CONSTRUCT VR MESSAGES   ***
+    /// *********************************************************************
 
     pub fn prepare_msg(&self, msg: VrMsg) -> VrMsg {
         VrMsg::Prepare {
@@ -672,12 +766,12 @@ impl VrCtx {
     }
 
     pub fn recovery_response_msg(&self, nonce: Uuid) -> VrMsg {
-        let (op, commit_num, log) =
-            if self.primary.is_some() && self.primary == Some(self.pid.clone()) {
-                (Some(self.op), Some(self.commit_num), Some(self.log.clone()))
-            } else {
-                (None, None, None)
-            };
+        let (op, commit_num, log) = if self.primary.is_some() &&
+                                       self.primary == Some(self.pid.clone()) {
+            (Some(self.op), Some(self.commit_num), Some(self.log.clone()))
+        } else {
+            (None, None, None)
+        };
         VrMsg::RecoveryResponse {
             epoch: self.epoch,
             view: self.view,

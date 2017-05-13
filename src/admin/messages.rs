@@ -39,4 +39,3 @@ pub enum AdminRpy {
     ClusterStatus(ClusterStatus),
     Metrics(Vec<(String, Metric)>)
 }
-

@@ -1,8 +1,10 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! This module contains code that manages fsm lifetimes and sends and receives their messages. It's
-//! used for testing a single namespace with all replicas running on a single node.
+//! This module contains code that manages fsm lifetimes and sends and receives
+//! their messages. It's
+//! used for testing a single namespace with all replicas running on a single
+//! node.
 
 use std::iter::FromIterator;
 use std::collections::{HashSet, HashMap, VecDeque};
@@ -33,7 +35,8 @@ pub struct Scheduler {
 impl Iterator for Scheduler {
     type Item = FsmOutput;
 
-    /// Return the next message to be sent. It can be manually sent with self.send_once().
+    /// Return the next message to be sent. It can be manually sent with
+    /// self.send_once().
     fn next(&mut self) -> Option<FsmOutput> {
         self.fsm_output.pop_front()
     }
@@ -53,7 +56,11 @@ impl Scheduler {
         };
         let logger = logger();
         let fsms = create_fsms(pids, new_config.clone(), &logger);
-        let pid = Pid {name: "scheduler".to_string(), group: None, node: node_id};
+        let pid = Pid {
+            name: "scheduler".to_string(),
+            group: None,
+            node: node_id
+        };
         Scheduler {
             logger: logger,
             pid: pid,
@@ -104,11 +111,11 @@ impl Scheduler {
                 let (state, _) = self.get_state(&pid).unwrap();
                 debug!(self.logger, format!("first fsm state = {}", state));
             }
-            try!(self.send(&pid, VrMsg::Tick));
+            self.send(&pid, VrMsg::Tick)?;
         }
         // Always start the most recently crashed node - TODO: randomize this?
         if let Some(pid) = self.crashed_nodes.pop() {
-            try!(self.restart(&pid));
+            self.restart(&pid)?;
         }
         Ok(())
     }
@@ -130,7 +137,12 @@ impl Scheduler {
             return;
         }
         let backup = if let Some(primary) = self.primary.clone() {
-            self.fsms.iter().find(|&(& ref pid, _)| *pid != primary).unwrap().0.clone()
+            self.fsms
+                .iter()
+                .find(|&(&ref pid, _)| *pid != primary)
+                .unwrap()
+                .0
+                .clone()
         } else {
             self.fsms.iter().next().unwrap().0.clone()
         };
@@ -140,7 +152,12 @@ impl Scheduler {
 
     pub fn send_to_backup(&mut self, msg: VrMsg) -> Result<Vec<VrEnvelope>, String> {
         let to = if let Some(primary) = self.primary.clone() {
-            self.fsms.iter().find(|&(& ref pid, _)| *pid != primary).unwrap().0.clone()
+            self.fsms
+                .iter()
+                .find(|&(&ref pid, _)| *pid != primary)
+                .unwrap()
+                .0
+                .clone()
         } else {
             self.fsms.iter().next().unwrap().0.clone()
         };
@@ -148,22 +165,25 @@ impl Scheduler {
     }
 
     pub fn send(&mut self, to: &Pid, msg: VrMsg) -> Result<Vec<VrEnvelope>, String> {
-        try!(self.send_msg(to, msg));
+        self.send_msg(to, msg)?;
         self.send_until_empty()
     }
 
     pub fn get_state(&self, replica: &Pid) -> Option<(&'static str, &VrCtx)> {
         match self.fsms.get(replica) {
             Some(checker) => Some(checker.fsm.get_state()),
-            None => None
+            None => None,
         }
     }
 
     pub fn get_states(&self) -> Vec<(&'static str, VrCtx)> {
-        self.fsms.iter().map(|(_, checker)| {
+        self.fsms
+            .iter()
+            .map(|(_, checker)| {
             let (state, ctx) = checker.fsm.get_state();
             (state, ctx.clone())
-        }).collect()
+        })
+            .collect()
     }
 
     pub fn stop(&mut self, replica: &Pid) {
@@ -181,7 +201,7 @@ impl Scheduler {
         // A `Checker` wraps the fsm, so invariants can be checked during operation
         let mut checker = new_checker(ctx, state_fn!(vr_fsm::startup_recovery));
         let envelope = self.make_vr_envelope(replica.clone(), VrMsg::Tick);
-        self.fsm_output.extend(try!(checker.check(envelope)));
+        self.fsm_output.extend(checker.check(envelope)?);
         self.fsms.insert(replica.clone(), checker);
         self.send_until_empty()
     }
@@ -190,15 +210,16 @@ impl Scheduler {
     pub fn send_msg(&mut self, to: &Pid, msg: VrMsg) -> Result<(), String> {
         let envelope = self.make_vr_envelope(to.clone(), msg);
         if let Some(ref mut checker) = self.fsms.get_mut(to) {
-            self.fsm_output.extend(try!(checker.check(envelope)));
+            self.fsm_output.extend(checker.check(envelope)?);
         }
         Ok(())
     }
 
     /// Send a VrEnvelope to an fsm
     pub fn send_envelope(&mut self, envelope: VrEnvelope) -> Result<(), String> {
-        if let Some(ref mut checker) = self.fsms.get_mut(&envelope.to) {
-            self.fsm_output.extend(try!(checker.check(envelope)));
+        if let Some(ref mut checker) =
+            self.fsms.get_mut(&envelope.to) {
+            self.fsm_output.extend(checker.check(envelope)?);
         }
         Ok(())
     }
@@ -209,24 +230,25 @@ impl Scheduler {
             let msg = self.next();
             debug!(self.logger, "send_until_empty"; "msg" => format!("{:#?}", msg));
             match msg {
-                Some(FsmOutput::Vr(ref envelope)) if envelope.to == self.pid =>
-                    replies.push(envelope.clone()),
-                Some(FsmOutput::Vr(envelope)) =>
-                    try!(self.send_envelope(envelope)),
+                Some(FsmOutput::Vr(ref envelope)) if envelope.to == self.pid => {
+                    replies.push(envelope.clone())
+                }
+                Some(FsmOutput::Vr(envelope)) => self.send_envelope(envelope)?,
                 Some(FsmOutput::Announcement(namespace_msg, _)) => {
                     self.handle_announcement(namespace_msg);
-                },
-                None => return Ok(replies)
+                }
+                None => return Ok(replies),
             }
         }
     }
 
-    /// Send all envelopes received, except those ones marked for dropping. Return any client
+    /// Send all envelopes received, except those ones marked for dropping.
+    /// Return any client
     /// replies.
     #[cfg(test)]
     pub fn send_until_empty_with_drop(&mut self,
-                                      drop_target: &Pid) -> Result<Vec<VrEnvelope>, String>
-    {
+                                      drop_target: &Pid)
+                                      -> Result<Vec<VrEnvelope>, String> {
         let mut replies = Vec::new();
         loop {
             match self.next() {
@@ -246,19 +268,23 @@ impl Scheduler {
 
     fn handle_announcement(&mut self, namespace_msg: NamespaceMsg) {
         match namespace_msg {
-            NamespaceMsg::Reconfiguration {old_config, new_config, ..} => {
+            NamespaceMsg::Reconfiguration {
+                old_config,
+                new_config,
+                ..
+            } => {
                 self.reconfigure(old_config, new_config);
-            },
+            }
             NamespaceMsg::Stop(replica) => {
                 self.stop(&replica);
-            },
+            }
             NamespaceMsg::NewPrimary(replica) => {
                 self.primary = Some(replica);
-            },
+            }
             NamespaceMsg::ClearPrimary(_tenant_id) => {
                 self.primary = None;
-            },
-            _ => unreachable!()
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -273,7 +299,9 @@ impl Scheduler {
                 VrCtx::new(self.logger.clone(), replica.clone(), old.clone(), new.clone());
             ctx.idle_timeout = Duration::zero();
             ctx.primary_tick_ms = 0;
-            if self.fsms.contains_key(&replica) { return; }
+            if self.fsms.contains_key(&replica) {
+                return;
+            }
             let checker = new_checker(ctx, state_fn!(vr_fsm::startup_reconfiguration));
             self.fsms.insert(replica, checker);
         }
@@ -282,13 +310,14 @@ impl Scheduler {
 
 fn create_fsms(pids: Vec<Pid>,
                new_config: VersionedReplicas,
-               logger: &Logger) -> HashMap<Pid, Checker<VrTypes>>
-{
+               logger: &Logger)
+               -> HashMap<Pid, Checker<VrTypes>> {
     let mut fsms = HashMap::new();
     for pid in pids {
         let mut ctx =
             VrCtx::new(logger.clone(), pid.clone(), VersionedReplicas::new(), new_config.clone());
-        // Set timeouts to zero, since the only time we send a tick message is when we want the
+        // Set timeouts to zero, since the only time we send a tick message is when we
+        // want the
         // event to occur driven by the timeout.
         ctx.idle_timeout = Duration::zero();
         ctx.primary_tick_ms = 0;
@@ -305,11 +334,16 @@ fn new_checker(ctx: VrCtx, fun: StateFn<VrTypes>) -> Checker<VrTypes> {
 }
 
 fn create_pids(num_replicas: u64, node_id: NodeId) -> Vec<Pid> {
-    (1..num_replicas+1).into_iter().map(|i| Pid {
-        group: Some(Uuid::nil().to_string()),
-        name: format!("r{}", i),
-        node: node_id.clone()
-    }).collect()
+    (1..num_replicas + 1)
+        .into_iter()
+        .map(|i| {
+            Pid {
+                group: Some(Uuid::nil().to_string()),
+                name: format!("r{}", i),
+                node: node_id.clone()
+            }
+        })
+        .collect()
 }
 
 /// Set up logging to go to the terminal and be configured via `RUST_LOG`
@@ -317,4 +351,3 @@ fn logger() -> Logger {
     let drain = slog_term::streamer().async().full().build();
     Logger::root(slog_envlogger::EnvLogger::new(drain.fuse()), o!())
 }
-

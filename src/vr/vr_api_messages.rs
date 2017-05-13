@@ -16,50 +16,53 @@ pub enum NodeType {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum VrApiReq {
     TreeOp(TreeOp),
-    TreeCas(TreeCas),
+    TreeCas(TreeCas)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-// This should maintain the identical format to the vertree version. The only 
+// This should maintain the identical format to the vertree version. The only
 // difference is that the haret one is encodable and decodable
 pub enum TreeOp {
-    Snapshot {directory: String},
-    CreateNode {path: String, ty: NodeType},
-    DeleteNode {path: String},
-    ListKeys {path: String},
-    BlobPut {path: String, val: Vec<u8>},
-    BlobGet {path: String},
-    BlobSize {path: String},
-    QueuePush {path: String, val: Vec<u8>},
-    QueuePop {path: String},
-    QueueFront {path: String},
-    QueueBack {path: String},
-    QueueLen {path: String},
-    SetInsert {path: String, val: Vec<u8>},
-    SetRemove {path: String, val: Vec<u8>},
-    SetContains {path: String, val: Vec<u8>},
-    SetUnion {paths: Vec<String>, sets: Vec<HashSet<Vec<u8>>>},
-    SetIntersection {path1: String, path2: String},
-    SetDifference {path1: String, path2: String},
-    SetSymmetricDifference {path1: String, path2: String},
-    SetSubsetPath {path1: String, path2: String},
-    SetSubsetSet {path: String,  set: HashSet<Vec<u8>>},
-    SetSupersetPath {path1: String, path2: String},
-    SetSupersetSet {path: String,  set: HashSet<Vec<u8>>}
+    Snapshot { directory: String },
+    CreateNode { path: String, ty: NodeType },
+    DeleteNode { path: String },
+    ListKeys { path: String },
+    BlobPut { path: String, val: Vec<u8> },
+    BlobGet { path: String },
+    BlobSize { path: String },
+    QueuePush { path: String, val: Vec<u8> },
+    QueuePop { path: String },
+    QueueFront { path: String },
+    QueueBack { path: String },
+    QueueLen { path: String },
+    SetInsert { path: String, val: Vec<u8> },
+    SetRemove { path: String, val: Vec<u8> },
+    SetContains { path: String, val: Vec<u8> },
+    SetUnion {
+        paths: Vec<String>,
+        sets: Vec<HashSet<Vec<u8>>>
+    },
+    SetIntersection { path1: String, path2: String },
+    SetDifference { path1: String, path2: String },
+    SetSymmetricDifference { path1: String, path2: String },
+    SetSubsetPath { path1: String, path2: String },
+    SetSubsetSet { path: String, set: HashSet<Vec<u8>> },
+    SetSupersetPath { path1: String, path2: String },
+    SetSupersetSet { path: String, set: HashSet<Vec<u8>> }
 }
 
 impl TreeOp {
     pub fn is_write(&self) -> bool {
         match *self {
-            TreeOp::Snapshot {..} => true,
-            TreeOp::CreateNode {..} => true,
-            TreeOp::DeleteNode {..} => true,
-            TreeOp::BlobPut {..} => true,
-            TreeOp::QueuePush {..} => true,
-            TreeOp::QueuePop {..} => true,
-            TreeOp::SetInsert {..} => true,
-            TreeOp::SetRemove {..} => true,
-            _ => false
+            TreeOp::Snapshot { .. } => true,
+            TreeOp::CreateNode { .. } => true,
+            TreeOp::DeleteNode { .. } => true,
+            TreeOp::BlobPut { .. } => true,
+            TreeOp::QueuePush { .. } => true,
+            TreeOp::QueuePop { .. } => true,
+            TreeOp::SetInsert { .. } => true,
+            TreeOp::SetRemove { .. } => true,
+            _ => false,
         }
     }
 }
@@ -104,7 +107,11 @@ pub enum VrApiError {
     WrongType(String, NodeType),
     PathMustEndInDirectory(String),
     PathMustBeAbsolute(String),
-    CasFailed {path: String, expected: u64, actual: u64},
+    CasFailed {
+        path: String,
+        expected: u64,
+        actual: u64
+    },
     BadFormat(String),
     Io(String),
     EncodingError(String),

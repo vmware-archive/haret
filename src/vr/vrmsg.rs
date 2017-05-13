@@ -79,12 +79,9 @@ pub enum VrMsg {
         op: u64,
         primary: Option<Pid>,
         commit_num: u64,
-        log_tail: Vec<VrMsg>,
+        log_tail: Vec<VrMsg>
     },
-    Recovery {
-        from: Pid,
-        nonce: Uuid
-    },
+    Recovery { from: Pid, nonce: Uuid },
     RecoveryResponse {
         epoch: u64,
         view: u64,
@@ -101,46 +98,44 @@ pub enum VrMsg {
         old_config: VersionedReplicas,
         new_config: VersionedReplicas
     },
-    EpochStarted {
-        epoch: u64,
-        from: Pid
-    }
+    EpochStarted { epoch: u64, from: Pid }
 }
 
 impl VrMsg {
-    // This is only used for filtering messages in vr_fsm. However we don't ever want to filter
+    // This is only used for filtering messages in vr_fsm. However we don't ever
+    // want to filter
     // client requests from the primary, so we exclude `VrMsg::Reconfiguration`
     pub fn get_epoch(&self) -> Option<u64> {
         match *self {
-            VrMsg::ClientReply {epoch, ..} => Some(epoch),
-            VrMsg::StartViewChange {epoch, ..} => Some(epoch),
-            VrMsg::DoViewChange {epoch, ..} => Some(epoch),
-            VrMsg::StartView {epoch, ..} => Some(epoch),
-            VrMsg::Prepare {epoch, ..} => Some(epoch),
-            VrMsg::PrepareOk {epoch, ..} => Some(epoch),
-            VrMsg::Commit {epoch, ..} => Some(epoch),
-            VrMsg::GetState {epoch, ..} => Some(epoch),
-            VrMsg::NewState {epoch, ..} => Some(epoch),
-            VrMsg::RecoveryResponse {epoch, ..} => Some(epoch),
-            VrMsg::StartEpoch {epoch, ..} => Some(epoch),
-            VrMsg::EpochStarted {epoch, ..} => Some(epoch),
-            _ => None
+            VrMsg::ClientReply { epoch, .. } => Some(epoch),
+            VrMsg::StartViewChange { epoch, .. } => Some(epoch),
+            VrMsg::DoViewChange { epoch, .. } => Some(epoch),
+            VrMsg::StartView { epoch, .. } => Some(epoch),
+            VrMsg::Prepare { epoch, .. } => Some(epoch),
+            VrMsg::PrepareOk { epoch, .. } => Some(epoch),
+            VrMsg::Commit { epoch, .. } => Some(epoch),
+            VrMsg::GetState { epoch, .. } => Some(epoch),
+            VrMsg::NewState { epoch, .. } => Some(epoch),
+            VrMsg::RecoveryResponse { epoch, .. } => Some(epoch),
+            VrMsg::StartEpoch { epoch, .. } => Some(epoch),
+            VrMsg::EpochStarted { epoch, .. } => Some(epoch),
+            _ => None,
         }
     }
 
     pub fn get_view(&self) -> Option<u64> {
         match *self {
-            VrMsg::ClientReply {view, ..} => Some(view),
-            VrMsg::StartViewChange {view, ..} => Some(view),
-            VrMsg::DoViewChange {view, ..} => Some(view),
-            VrMsg::StartView {view, ..} => Some(view),
-            VrMsg::Prepare {view, ..} => Some(view),
-            VrMsg::PrepareOk {view, ..} => Some(view),
-            VrMsg::Commit {view, ..} => Some(view),
-            VrMsg::GetState {view, ..} => Some(view),
-            VrMsg::NewState {view, ..} => Some(view),
-            VrMsg::RecoveryResponse {view, ..} => Some(view),
-            _ => None
+            VrMsg::ClientReply { view, .. } => Some(view),
+            VrMsg::StartViewChange { view, .. } => Some(view),
+            VrMsg::DoViewChange { view, .. } => Some(view),
+            VrMsg::StartView { view, .. } => Some(view),
+            VrMsg::Prepare { view, .. } => Some(view),
+            VrMsg::PrepareOk { view, .. } => Some(view),
+            VrMsg::Commit { view, .. } => Some(view),
+            VrMsg::GetState { view, .. } => Some(view),
+            VrMsg::NewState { view, .. } => Some(view),
+            VrMsg::RecoveryResponse { view, .. } => Some(view),
+            _ => None,
         }
     }
 }

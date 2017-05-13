@@ -21,7 +21,7 @@ pub struct RecoveryState {
     pub nonce: Uuid,
     // Primary from the latest view we've heard from
     pub primary: Option<RecoveryPrimary>,
-    pub responses: QuorumTracker<()>,
+    pub responses: QuorumTracker<()>
 }
 
 impl RecoveryState {
@@ -34,8 +34,9 @@ impl RecoveryState {
     }
 
     pub fn has_quorum(&self, current_view: u64) -> bool {
-        self.responses.has_super_quorum() && self.primary.as_ref().map_or(false, |p| p.view == current_view)
+        self.responses.has_super_quorum() &&
+        self.primary
+            .as_ref()
+            .map_or(false, |p| p.view == current_view)
     }
 }
-
-

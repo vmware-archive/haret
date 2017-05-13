@@ -12,18 +12,24 @@ pub enum FsmOutput {
     Announcement(NamespaceMsg, Pid)
 }
 
-/// Convert from FsmOuptput to Envelope with "self.into()" or Envelope::from(self)
+/// Convert from FsmOuptput to Envelope with "self.into()" or
+/// Envelope::from(self)
 impl From<FsmOutput> for Envelope<Msg> {
     fn from(fsm_output: FsmOutput) -> Envelope<Msg> {
         match fsm_output {
             FsmOutput::Vr(vr_envelope) => vr_envelope.into(),
-            FsmOutput::Announcement(namespace_msg, pid) => Envelope {
-                to: Pid {group: None, name: "namespace_mgr".to_string(), node: pid.node.clone()},
-                from: pid.clone(),
-                msg: rabble::Msg::User(Msg::Namespace(namespace_msg)),
-                correlation_id: Some(CorrelationId::pid(pid))
+            FsmOutput::Announcement(namespace_msg, pid) => {
+                Envelope {
+                    to: Pid {
+                        group: None,
+                        name: "namespace_mgr".to_string(),
+                        node: pid.node.clone()
+                    },
+                    from: pid.clone(),
+                    msg: rabble::Msg::User(Msg::Namespace(namespace_msg)),
+                    correlation_id: Some(CorrelationId::pid(pid))
+                }
             }
         }
     }
 }
-
