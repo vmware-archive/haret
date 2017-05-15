@@ -70,7 +70,7 @@ fn run_script(flag: &str, mut args: Args, mut sock: TcpStream) {
 }
 
 fn run(command: &str, sock: &mut TcpStream) -> Result<String> {
-    let req = try!(parse(&command));
+    let req = parse(&command)?;
     exec(req, sock)
 }
 
@@ -194,8 +194,8 @@ fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminReq> {
 }
 
 fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
-    try!(write_msg(req, sock));
-    match try!(read_msg(sock)) {
+    write_msg(req, sock)?;
+    match read_msg(sock)? {
         AdminMsg::Rpy(rpy) => {
             match rpy {
                 AdminRpy::Ok => Ok("ok".to_string()),
@@ -219,10 +219,10 @@ fn exec(req: AdminReq, sock: &mut TcpStream) -> Result<String> {
 
 fn read_msg(sock: &mut TcpStream) -> Result<AdminMsg> {
     let mut header = [0; 4];
-    try!(sock.read_exact(&mut header));
+    sock.read_exact(&mut header)?;
     let len = unsafe { u32::from_be(mem::transmute(header)) };
     let mut buf = vec![0; len as usize];
-    try!(sock.read_exact(&mut buf));
+    sock.read_exact(&mut buf)?;
     let mut decoder = Deserializer::new(&buf[..]);
     Deserialize::deserialize(&mut decoder).map_err(|e| {
         Error::new(ErrorKind::InvalidData, e.to_string())
@@ -231,13 +231,13 @@ fn read_msg(sock: &mut TcpStream) -> Result<AdminMsg> {
 
 fn write_msg(req: AdminReq, sock: &mut TcpStream) -> Result<()> {
     let mut encoded = Vec::new();
-    try!(AdminMsg::Req(req).serialize(&mut Serializer::new(&mut encoded)).map_err(|_| {
+    AdminMsg::Req(req).serialize(&mut Serializer::new(&mut encoded)).map_err(|_| {
         Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data")
-    }));
+    })?;
     let len: u32 = encoded.len() as u32;
     // 4 byte len header
     let header: [u8; 4] = unsafe { mem::transmute(len.to_be()) };
-    try!(sock.write_all(&header));
+    sock.write_all(&header)?;
     sock.write_all(&encoded)
 }
 

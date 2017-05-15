@@ -82,7 +82,7 @@ fn run_script(flag: &str, mut args: Args, mut client: HaretClient) {
 }
 
 fn run(command: String, mut client: &mut HaretClient) -> Result<String> {
-    let req = try!(parse(command, &mut client));
+    let req = parse(command, &mut client)?;
     exec(req, client)
 }
 
@@ -607,14 +607,14 @@ fn api_error_to_string(mut error: ApiError) -> String {
 }
 
 fn exec(req: ApiRequest, client: &mut HaretClient) -> Result<String> {
-    try!(client.write_msg(req).map_err(|_| {
+    client.write_msg(req).map_err(|_| {
         Error::new(ErrorKind::NotConnected,
                    "Failed to write to socket. Please restart client and try again".to_string())
-    }));
-    let mut api_response = try!(client.read_msg().map_err(|_| {
+    })?;
+    let mut api_response = client.read_msg().map_err(|_| {
         Error::new(ErrorKind::NotConnected,
                    "Failed to read from socket. Please restart client and try again".to_string())
-    }));
+    })?;
 
     if api_response.has_consensus_reply() {
         let mut consensus_reply = api_response.take_consensus_reply();
@@ -670,10 +670,10 @@ fn exec(req: ApiRequest, client: &mut HaretClient) -> Result<String> {
         let mut redirect = api_response.take_redirect();
         let primary = redirect.take_primary();
         let api_addr = redirect.take_api_addr();
-        try!(client.connect(Some(api_addr)));
-        let req = try!(client.register(Some(primary.clone())));
+        client.connect(Some(api_addr))?;
+        let req = client.register(Some(primary.clone()))?;
         /// Todo: Remove this recursion to prevent potential stack overflow
-        try!(exec(req, client));
+        exec(req, client)?;
         return Ok(format!("Finished Redirecting. Primary = {:?}, API Address = {}",
                    client.primary.as_ref().unwrap(),
                    client.api_addr.as_ref().unwrap()))
@@ -739,7 +739,7 @@ impl HaretClient {
         if api_addr.is_some() {
             self.api_addr = api_addr;
         }
-        self.sock = Some(try!(TcpStream::connect(&self.api_addr.as_ref().unwrap()[..])));
+        self.sock = Some(TcpStream::connect(&self.api_addr.as_ref().unwrap()[..])?);
         Ok(())
     }
 
@@ -769,27 +769,27 @@ impl HaretClient {
     fn write_msg(&mut self, req: ApiRequest) -> Result<()> {
         let mut msg = ApiMsg::new();
         msg.set_request(req);
-        let encoded = try!(msg.write_to_bytes().map_err(|_| {
+        let encoded = msg.write_to_bytes().map_err(|_| {
             Error::new(ErrorKind::InvalidInput, "Failed to encode msgpack data")
-        }));
+        })?;
         let len: u32 = encoded.len() as u32;
         // 4 byte len header
         let header: [u8; 4] = unsafe { mem::transmute(len.to_be()) };
-        try!(self.sock.as_ref().unwrap().write_all(&header));
-        try!(self.sock.as_ref().unwrap().write_all(&encoded));
+        self.sock.as_ref().unwrap().write_all(&header)?;
+        self.sock.as_ref().unwrap().write_all(&encoded)?;
         self.request_num += 1;
         Ok(())
     }
 
     fn read_msg(&mut self) -> Result<ApiResponse> {
         let mut header = [0; 4];
-        try!(self.sock.as_mut().unwrap().read_exact(&mut header));
+        self.sock.as_mut().unwrap().read_exact(&mut header)?;
         let len = unsafe { u32::from_be(mem::transmute(header)) };
         let mut buf = vec![0; len as usize];
-        try!(self.sock.as_mut().unwrap().read_exact(&mut buf));
-        let mut msg: ApiMsg = try!(parse_from_bytes(&buf[..]).map_err(|e| {
+        self.sock.as_mut().unwrap().read_exact(&mut buf)?;
+        let mut msg: ApiMsg = parse_from_bytes(&buf[..]).map_err(|e| {
             Error::new(ErrorKind::InvalidData, e.to_string())
-        }));
+        })?;
         Ok(msg.take_response())
     }
 }

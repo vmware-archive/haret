@@ -66,9 +66,9 @@ impl Debugger {
     }
 
     pub fn load_schedule(&mut self, filename: &str) -> Result<(), DbgError> {
-        let mut file = try!(File::open(filename));
+        let mut file = File::open(filename)?;
         let mut encoded = Vec::new();
-        try!(file.read_to_end(&mut encoded));
+        file.read_to_end(&mut encoded)?;
         let mut decoder = Decoder::new(&encoded[..]);
         match Decodable::decode(&mut decoder) {
             Ok(schedule) => self.schedule = schedule,

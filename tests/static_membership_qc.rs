@@ -59,7 +59,7 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
                 op: op,
                 client_id: client_id
             };
-            let mut replies = try!(scheduler.send_to_primary(req.clone()));
+            let mut replies = scheduler.send_to_primary(req.clone())?;
             if replies.len() == 1 {
                 return assert_client_request_correctness(&scheduler, req, replies.pop().unwrap());
             }
@@ -69,11 +69,11 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
             return Err(format!("Invalid client request: {:#?}", r));
         },
         Op::Commit => {
-            try!(scheduler.send_to_primary(VrMsg::Tick));
+            scheduler.send_to_primary(VrMsg::Tick)?;
             assert_basic_correctness(scheduler)
         },
         Op::ViewChange => {
-            try!(scheduler.send_to_backup(VrMsg::Tick));
+            scheduler.send_to_backup(VrMsg::Tick)?;
             assert_basic_correctness(scheduler)
         },
         Op::CrashBackup => {
@@ -85,7 +85,7 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
             assert_basic_correctness(scheduler)
         },
         Op::Restart => {
-            try!(scheduler.restart_crashed_node());
+            scheduler.restart_crashed_node()?;
             assert_basic_correctness(scheduler)
         }
     }
@@ -95,7 +95,7 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
 fn assert_client_request_correctness(scheduler: &Scheduler,
                                      request: VrMsg,
                                      reply: VrEnvelope) -> Result<(), String> {
-    try!(assert_response_matches_internal_replica_state(scheduler, request, reply));
+    assert_response_matches_internal_replica_state(scheduler, request, reply)?;
     assert_vr_invariants(scheduler)
 }
 
@@ -107,8 +107,8 @@ fn assert_basic_correctness(scheduler: &Scheduler) -> Result<(), String> {
 fn assert_vr_invariants(scheduler: &Scheduler) -> Result<(), String> {
     let quorum = scheduler.quorum();
     let states = scheduler.get_states();
-    try!(vr_invariants::assert_single_primary_per_epoch_view(&states));
-    try!(vr_invariants::assert_minority_of_nodes_recovering(quorum, &states));
+    vr_invariants::assert_single_primary_per_epoch_view(&states)?;
+    vr_invariants::assert_minority_of_nodes_recovering(quorum, &states)?;
     vr_invariants::assert_quorum_of_logs_equal_up_to_smallest_commit(quorum, &states)
 }
 

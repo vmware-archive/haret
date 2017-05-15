@@ -38,15 +38,15 @@ impl VrBackend {
     fn run_tree_op(&mut self, tree_op: TreeOp) -> Result<VrApiRsp, vertree::Error> {
         let val = match tree_op {
             TreeOp::Snapshot {directory} => {
-                let s = try!(self.tree.snapshot(&directory));
+                let s = self.tree.snapshot(&directory)?;
                 VrApiRsp::Path(s)
             },
             TreeOp::CreateNode {path, ty} => {
-                self.tree = try!(self.tree.create(&path, ty.into()));
+                self.tree = self.tree.create(&path, ty.into())?;
                 VrApiRsp::Ok
             },
             TreeOp::DeleteNode {path} => {
-                let (_, tree) = try!(self.tree.delete(&path));
+                let (_, tree) = self.tree.delete(&path)?;
                 self.tree = tree;
                 VrApiRsp::Ok
             },
@@ -55,84 +55,84 @@ impl VrBackend {
                 VrApiRsp::TreeOpResult(TreeOpResult::Keys(self.tree.keys()))
             },
             TreeOp::BlobPut {path, val} => {
-                let (reply, tree) = try!(self.tree.blob_put(path, val));
+                let (reply, tree) = self.tree.blob_put(path, val)?;
                 self.tree = tree;
                 reply.into()
             },
             TreeOp::BlobGet {path} => {
-                let reply = try!(self.tree.blob_get(path));
+                let reply = self.tree.blob_get(path)?;
                 reply.into()
             },
             TreeOp::BlobSize {path} => {
-                let reply = try!(self.tree.blob_size(path));
+                let reply = self.tree.blob_size(path)?;
                 reply.into()
             },
             TreeOp::QueuePush {path, val} => {
-                let (reply, tree) = try!(self.tree.queue_push(path, val));
+                let (reply, tree) = self.tree.queue_push(path, val)?;
                 self.tree = tree;
                 reply.into()
             },
             TreeOp::QueuePop {path} => {
-                let (reply, tree) = try!(self.tree.queue_pop(path));
+                let (reply, tree) = self.tree.queue_pop(path)?;
                 self.tree = tree;
                 reply.into()
             },
             TreeOp::QueueFront {path} => {
-                let reply = try!(self.tree.queue_front(path));
+                let reply = self.tree.queue_front(path)?;
                 reply.into()
             },
             TreeOp::QueueBack {path} => {
-                let reply = try!(self.tree.queue_back(path));
+                let reply = self.tree.queue_back(path)?;
                 reply.into()
             },
             TreeOp::QueueLen {path} => {
-                let reply = try!(self.tree.queue_len(path));
+                let reply = self.tree.queue_len(path)?;
                 reply.into()
             },
             TreeOp::SetInsert {path, val} => {
-                let (reply, tree) = try!(self.tree.set_insert(path, val));
+                let (reply, tree) = self.tree.set_insert(path, val)?;
                 self.tree = tree;
                 reply.into()
             },
             TreeOp::SetRemove {path, val} => {
-                let (reply, tree) = try!(self.tree.set_remove(path, val));
+                let (reply, tree) = self.tree.set_remove(path, val)?;
                 self.tree = tree;
                 reply.into()
             },
             TreeOp::SetContains {path, val} => {
-                let reply= try!(self.tree.set_contains(path, val));
+                let reply= self.tree.set_contains(path, val)?;
                 reply.into()
             },
             TreeOp::SetUnion {paths, sets} => {
-                let reply = try!(self.tree.set_union(paths, sets));
+                let reply = self.tree.set_union(paths, sets)?;
                 reply.into()
             },
             TreeOp::SetIntersection {path1, path2} => {
-                let reply = try!(self.tree.set_intersection(&path1, &path2));
+                let reply = self.tree.set_intersection(&path1, &path2)?;
                 reply.into()
             },
             TreeOp::SetDifference {path1, path2} => {
-                let reply = try!(self.tree.set_difference(&path1, &path2));
+                let reply = self.tree.set_difference(&path1, &path2)?;
                 reply.into()
             },
             TreeOp::SetSymmetricDifference {path1, path2} => {
-                let reply = try!(self.tree.set_symmetric_difference(&path1, &path2));
+                let reply = self.tree.set_symmetric_difference(&path1, &path2)?;
                 reply.into()
             },
             TreeOp::SetSubsetPath {path1, path2} => {
-                let reply = try!(self.tree.set_subset(path1, Some(path2), None));
+                let reply = self.tree.set_subset(path1, Some(path2), None)?;
                 reply.into()
             },
             TreeOp::SetSubsetSet {path,  set} => {
-                let reply = try!(self.tree.set_subset(path, None, Some(set)));
+                let reply = self.tree.set_subset(path, None, Some(set))?;
                 reply.into()
             },
             TreeOp::SetSupersetPath {path1, path2} => {
-                let reply = try!(self.tree.set_superset(path1, Some(path2), None));
+                let reply = self.tree.set_superset(path1, Some(path2), None)?;
                 reply.into()
             },
             TreeOp::SetSupersetSet {path, set} => {
-                let reply = try!(self.tree.set_subset(path, None, Some(set)));
+                let reply = self.tree.set_subset(path, None, Some(set))?;
                 reply.into()
             }
         };
@@ -149,7 +149,7 @@ impl VrBackend {
         }
         let guards = guards.into_iter().map(|g| vertree::Guard::from(g)).collect();
         let ops = ops.into_iter().map(|op| vertree::WriteOp::from(op)).collect();
-        let (replies, tree) = try!(self.tree.multi_cas(guards, ops));
+        let (replies, tree) = self.tree.multi_cas(guards, ops)?;
         self.tree = tree;
         let replies = replies.into_iter().map(|r| r.into()).collect();
         Ok(VrApiRsp::TreeCasResult(replies))

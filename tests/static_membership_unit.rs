@@ -53,8 +53,8 @@ fn basic_ops() -> Result<(), String> {
     let primary = &replicas[1];
 
     // See if we get a response to our first operation.
-    try!(scheduler.send_msg(primary, msg.clone()));
-    let replies = try!(scheduler.send_until_empty());
+    scheduler.send_msg(primary, msg.clone())?;
+    let replies = scheduler.send_until_empty()?;
 
     assert_create_response(replies);
 
@@ -73,11 +73,11 @@ fn basic_ops() -> Result<(), String> {
         assert_eq!(primary_ctx.op, 1);
     }
 
-    try!(assert_put_and_get(primary, &mut scheduler));
+    assert_put_and_get(primary, &mut scheduler)?;
 
     // A tick timeout occurs resulting in a commit message being sent. Note that the current
     // timeouts are all 0, therefore no sleeps are necessary and this is deterministic.
-    try!(assert_commit_gets_sent(primary, &mut scheduler, 3));
+    assert_commit_gets_sent(primary, &mut scheduler, 3)?;
 
     // Force a tick timeout at a backup and result in a view change
     assert_second_view_change(&replicas, &mut scheduler)
@@ -93,9 +93,9 @@ fn state_transfer() -> Result<(), String> {
     let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
     let msg = VrMsg::ClientRequest {client_id: "test_client".to_string(), op: op, request_num: 1};
     let primary = &replicas[1];
-    try!(scheduler.send_msg(primary, msg.clone()));
+    scheduler.send_msg(primary, msg.clone())?;
     // dispatch all commands, dropping messages to r1
-    let replies = try!(scheduler.send_until_empty_with_drop(&replicas[0]));
+    let replies = scheduler.send_until_empty_with_drop(&replicas[0])?;
 
     // Ensure we still commit the create op
     assert_create_response(replies);
@@ -109,7 +109,7 @@ fn state_transfer() -> Result<(), String> {
     }
 
     // Send a commit to all nodes and ensure the state transfer
-    try!(assert_commit_gets_sent(primary, &mut scheduler, 1));
+    assert_commit_gets_sent(primary, &mut scheduler, 1)?;
 
     // Ensure r1 has received and committed the op
     let (_, r1_ctx) = scheduler.get_state(&replicas[0]).unwrap();
@@ -130,18 +130,18 @@ fn recovery() -> Result<(), String> {
     let view1_primary = &replicas[1];
 
     // See if we get a response to our first operation.
-    try!(scheduler.send_msg(view1_primary, msg.clone()));
-    let replies = try!(scheduler.send_until_empty());
+    scheduler.send_msg(view1_primary, msg.clone())?;
+    let replies = scheduler.send_until_empty()?;
     assert_create_response(replies);
-    try!(assert_commit_gets_sent(view1_primary, &mut scheduler, 1));
+    assert_commit_gets_sent(view1_primary, &mut scheduler, 1)?;
 
     // Stop the view1_primary and trigger an election
     scheduler.stop(view1_primary);
-    try!(scheduler.send_msg(&replicas[0], VrMsg::Tick));
-    try!(scheduler.send_until_empty());
+    scheduler.send_msg(&replicas[0], VrMsg::Tick)?;
+    scheduler.send_until_empty()?;
 
     // Restart the view1_primary and check the status of the replicas
-    try!(scheduler.restart(view1_primary));
+    scheduler.restart(view1_primary)?;
 
     {
         let (state, ctx) = scheduler.get_state(view1_primary).unwrap();
@@ -161,8 +161,8 @@ fn recovery() -> Result<(), String> {
     }
 
     // Send a tick to the old view1_primary so that it starts recovery
-    try!(scheduler.send_msg(view1_primary, VrMsg::Tick));
-    try!(scheduler.send_until_empty());
+    scheduler.send_msg(view1_primary, VrMsg::Tick)?;
+    scheduler.send_until_empty()?;
 
     // Ensure that the old view1_primary is now a backup with the proper state
     let (state, ctx) = scheduler.get_state(view1_primary).unwrap();
@@ -189,8 +189,8 @@ fn reconfiguration() -> Result<(), String> {
                                      replicas: replicas.clone()};
     let primary = &replicas[1];
     // Send reconfiguration to the primary and commit it
-    try!(scheduler.send_msg(primary, msg.clone()));
-    let mut replies = try!(scheduler.send_until_empty());
+    scheduler.send_msg(primary, msg.clone())?;
+    let mut replies = scheduler.send_until_empty()?;
 
     assert_eq!(replies.len(), 1);
 
@@ -207,8 +207,8 @@ fn reconfiguration() -> Result<(), String> {
     assert_eq!(scheduler.fsms.len(), 4);
 
     // Send a Tick to start reconfiguration state transfer
-    try!(scheduler.send_msg(&replicas[3], VrMsg::Tick));
-    try!(scheduler.send_until_empty());
+    scheduler.send_msg(&replicas[3], VrMsg::Tick)?;
+    scheduler.send_until_empty()?;
     let (state, _) = scheduler.get_state(&replicas[3]).unwrap();
     assert_eq!(state, "backup");
 
@@ -216,8 +216,8 @@ fn reconfiguration() -> Result<(), String> {
 
     // Send a tick to the new replica and dispatch all resulting messages so that it can cause a
     // view change in the new epoch.
-    try!(scheduler.send_msg(&replicas[3], VrMsg::Tick));
-    try!(scheduler.send_until_empty());
+    scheduler.send_msg(&replicas[3], VrMsg::Tick)?;
+    scheduler.send_until_empty()?;
     let (state, ctx) = scheduler.get_state(&replicas[3]).unwrap();
     assert_eq!(ctx.epoch, 2);
     assert_eq!(state, "backup");
@@ -251,8 +251,8 @@ fn assert_new_epoch(replicas: &Vec<Pid>, scheduler: &mut Scheduler) {
 }
 
 fn assert_second_view_change(replicas: &Vec<Pid>, scheduler: &mut Scheduler) -> Result<(), String> {
-    try!(scheduler.send_msg(&replicas[0], VrMsg::Tick));
-    try!(scheduler.send_until_empty());
+    scheduler.send_msg(&replicas[0], VrMsg::Tick)?;
+    scheduler.send_until_empty()?;
     if let Some((state, ctx)) = scheduler.get_state(&replicas[0]) {
         assert_eq!(state, "backup");
         assert_eq!(ctx.view, 2);
@@ -282,14 +282,14 @@ fn assert_commit_gets_sent(primary: &Pid,
                            scheduler: &mut Scheduler,
                            expected_commit: u64) -> Result<(), String>
 {
-    try!(scheduler.send_msg(primary, VrMsg::Tick));
+    scheduler.send_msg(primary, VrMsg::Tick)?;
     for _ in 0..2 {
         if let Some(FsmOutput::Vr(VrEnvelope {to, msg, ..})) = scheduler.next() {
             let msg2 = msg.clone();
             if let VrMsg::Commit {view, commit_num, ..} = msg {
                 assert_eq!(view, 1);
                 assert_eq!(commit_num, expected_commit);
-                try!(scheduler.send_msg(&to, msg2));
+                scheduler.send_msg(&to, msg2)?;
             } else {
                 println!("failing msg = {:#?}", msg);
                 assert!(false);
@@ -298,19 +298,19 @@ fn assert_commit_gets_sent(primary: &Pid,
             assert!(false);
         }
     }
-    try!(scheduler.send_until_empty());
+    scheduler.send_until_empty()?;
     Ok(())
 }
 
 fn assert_put_and_get(primary: &Pid, scheduler: &mut Scheduler) -> Result<(), String> {
     let put_op = VrApiReq::TreeOp(TreeOp::BlobPut { path: "/test_root".to_string(), val: b"hello".to_vec()});
     let put_msg = VrMsg::ClientRequest {client_id: "test_client".to_string(), op: put_op, request_num: 2};
-    try!(scheduler.send_msg(primary, put_msg));
-    try!(scheduler.send_until_empty());
+    scheduler.send_msg(primary, put_msg)?;
+    scheduler.send_until_empty()?;
     let get_op = VrApiReq::TreeOp(TreeOp::BlobGet { path: "/test_root".to_string()});
     let get_msg = VrMsg::ClientRequest {client_id: "test_client".to_string(), op: get_op, request_num: 3};
-    try!(scheduler.send_msg(primary, get_msg));
-    let mut replies = try!(scheduler.send_until_empty());
+    scheduler.send_msg(primary, get_msg)?;
+    let mut replies = scheduler.send_until_empty()?;
 
     // Ensure we get back the value stored
     assert_eq!(replies.len(), 1);

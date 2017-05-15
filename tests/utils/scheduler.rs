@@ -104,11 +104,11 @@ impl Scheduler {
                 let (state, _) = self.get_state(&pid).unwrap();
                 debug!(self.logger, format!("first fsm state = {}", state));
             }
-            try!(self.send(&pid, VrMsg::Tick));
+            self.send(&pid, VrMsg::Tick)?;
         }
         // Always start the most recently crashed node - TODO: randomize this?
         if let Some(pid) = self.crashed_nodes.pop() {
-            try!(self.restart(&pid));
+            self.restart(&pid)?;
         }
         Ok(())
     }
@@ -148,7 +148,7 @@ impl Scheduler {
     }
 
     pub fn send(&mut self, to: &Pid, msg: VrMsg) -> Result<Vec<VrEnvelope>, String> {
-        try!(self.send_msg(to, msg));
+        self.send_msg(to, msg)?;
         self.send_until_empty()
     }
 
@@ -181,7 +181,7 @@ impl Scheduler {
         // A `Checker` wraps the fsm, so invariants can be checked during operation
         let mut checker = new_checker(ctx, state_fn!(vr_fsm::startup_recovery));
         let envelope = self.make_vr_envelope(replica.clone(), VrMsg::Tick);
-        self.fsm_output.extend(try!(checker.check(envelope)));
+        self.fsm_output.extend(checker.check(envelope)?);
         self.fsms.insert(replica.clone(), checker);
         self.send_until_empty()
     }
@@ -190,7 +190,7 @@ impl Scheduler {
     pub fn send_msg(&mut self, to: &Pid, msg: VrMsg) -> Result<(), String> {
         let envelope = self.make_vr_envelope(to.clone(), msg);
         if let Some(ref mut checker) = self.fsms.get_mut(to) {
-            self.fsm_output.extend(try!(checker.check(envelope)));
+            self.fsm_output.extend(checker.check(envelope)?);
         }
         Ok(())
     }
@@ -198,7 +198,7 @@ impl Scheduler {
     /// Send a VrEnvelope to an fsm
     pub fn send_envelope(&mut self, envelope: VrEnvelope) -> Result<(), String> {
         if let Some(ref mut checker) = self.fsms.get_mut(&envelope.to) {
-            self.fsm_output.extend(try!(checker.check(envelope)));
+            self.fsm_output.extend(checker.check(envelope)?);
         }
         Ok(())
     }
@@ -212,7 +212,7 @@ impl Scheduler {
                 Some(FsmOutput::Vr(ref envelope)) if envelope.to == self.pid =>
                     replies.push(envelope.clone()),
                 Some(FsmOutput::Vr(envelope)) =>
-                    try!(self.send_envelope(envelope)),
+                    self.send_envelope(envelope)?,
                 Some(FsmOutput::Announcement(namespace_msg, _)) => {
                     self.handle_announcement(namespace_msg);
                 },
@@ -236,7 +236,7 @@ impl Scheduler {
                     // Drop any messages from peers destined for our drop target replica
                     (),
                 Some(FsmOutput::Vr(envelope)) =>
-                    try!(self.send_envelope(envelope)),
+                    self.send_envelope(envelope)?,
                 Some(FsmOutput::Announcement(namespace_msg, _)) =>
                     self.handle_announcement(namespace_msg),
                 None => return Ok(replies)
