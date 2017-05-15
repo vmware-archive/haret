@@ -276,7 +276,7 @@ impl NamespaceMgr {
     }
 
     fn create_namespace(&mut self, mut new_replicas: Vec<Pid>) -> rabble::Result<NamespaceId> {
-        let namespace_id = try!(validate_group_pids(&new_replicas));
+        let namespace_id = validate_group_pids(&new_replicas)?;
         new_replicas.sort();
         let old_config = VersionedReplicas::new();
         let new_config = VersionedReplicas {epoch: 1, op: 0, replicas: new_replicas};
@@ -375,10 +375,10 @@ impl NamespaceMgr {
 
 impl ServiceHandler<Msg> for NamespaceMgr {
     fn init(&mut self, registrar: &Registrar, _: &Node<Msg>) -> rabble::Result<()> {
-        self.fsm_timer_id = try!(registrar.set_interval(self.tick_period as usize)
-                              .chain_err(|| "Failed to register request timer"));
-        self.management_timer_id = try!(registrar.set_interval(MANAGEMENT_TICK_MS as usize)
-                                     .chain_err(|| "Failed to register request timer"));
+        self.fsm_timer_id = registrar.set_interval(self.tick_period as usize)
+                              .chain_err(|| "Failed to register request timer")?;
+        self.management_timer_id = registrar.set_interval(MANAGEMENT_TICK_MS as usize)
+                                     .chain_err(|| "Failed to register request timer")?;
         Ok(())
     }
 

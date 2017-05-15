@@ -12,7 +12,7 @@ pub fn assert_create_response(scheduler: &Scheduler,
                               request: VrMsg,
                               reply: VrEnvelope) -> Result<(), String>
 {
-    let (request_num, api_req, api_rsp) = try!(match_client_reply(request, reply));
+    let (request_num, api_req, api_rsp) = match_client_reply(request, reply)?;
     let (path, ty) = if let VrApiReq::TreeOp(TreeOp::CreateNode {path, ty}) = api_req {
         (path, ty)
     } else {
@@ -42,7 +42,7 @@ pub fn assert_put_response(scheduler: &Scheduler,
                            request: VrMsg,
                            reply: VrEnvelope) -> Result<(), String>
 {
-    let (request_num, api_req, api_rsp) = try!(match_client_reply(request, reply));
+    let (request_num, api_req, api_rsp) = match_client_reply(request, reply)?;
     let (path, data) =
         if let VrApiReq::TreeOp(TreeOp::BlobPut {path, val, ..}) = api_req {
             (path, val)
@@ -71,7 +71,7 @@ pub fn assert_get_response(scheduler: &Scheduler,
                            request: VrMsg,
                            reply: VrEnvelope) -> Result<(), String>
 {
-    let (request_num, api_req, api_rsp) = try!(match_client_reply(request, reply));
+    let (request_num, api_req, api_rsp) = match_client_reply(request, reply)?;
     let path = if let VrApiReq::TreeOp(TreeOp::BlobGet {path, ..}) = api_req {
         path
     } else {
@@ -116,8 +116,8 @@ pub fn assert_successful_create(scheduler: &Scheduler,
                                 request_num: u64,
                                 ty: NodeType) -> Result<(), String>
 {
-    try!(assert_majority_of_nodes_contain_op(scheduler, request_num));
-    try!(assert_primary_has_committed_op(scheduler, request_num));
+    assert_majority_of_nodes_contain_op(scheduler, request_num)?;
+    assert_primary_has_committed_op(scheduler, request_num)?;
     assert_path_exists_in_primary_backend(scheduler, path.clone(), ty)
 }
 
@@ -126,8 +126,8 @@ pub fn assert_successful_put_or_get(scheduler: &Scheduler,
                                     request_num: u64,
                                     data: Vec<u8>) -> Result<(), String>
 {
-    try!(assert_majority_of_nodes_contain_op(scheduler, request_num));
-    try!(assert_primary_has_committed_op(scheduler, request_num));
+    assert_majority_of_nodes_contain_op(scheduler, request_num)?;
+    assert_primary_has_committed_op(scheduler, request_num)?;
     assert_data_matches_primary_backend(scheduler, path, data)
 }
 
@@ -152,8 +152,8 @@ pub fn assert_primary_has_committed_op(scheduler: &Scheduler,
 {
     if let Some(ref primary) = scheduler.primary {
         let (state, ctx) = scheduler.get_state(primary).unwrap();
-        try!(safe_assert_eq!(state, "primary"));
-        try!(safe_assert_eq!(ctx.op, ctx.commit_num));
+        safe_assert_eq!(state, "primary")?;
+        safe_assert_eq!(ctx.op, ctx.commit_num)?;
         safe_assert!(is_client_request_last_in_log(&ctx, request_num))
     } else {
         fail!()
