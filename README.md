@@ -13,8 +13,8 @@ Start Here if you are an enduser of haret and not interested in building the cod
 Release binaries for `Mac OSX` and `Linux` can be downloaded
 [here](https://github.com/vmware/haret/releases).
 
-Each release directory contains a `config.json` file for running a single node of haret. From the release directory
-containing the `config.json` and binaries, run `haret` in a terminal with the following command to
+Each release directory contains a `config.toml` file for running a single node of haret. From the release directory
+containing the `config.toml` and binaries, run `haret` in a terminal with the following command to
 start a node:
 
 ```

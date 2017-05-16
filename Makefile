@@ -29,7 +29,7 @@ $(eval launch: stop $(foreach n,${nodes},start-${n}))
 dev/%: build
 	mkdir -p $@
 	cp target/debug/haret $@
-	cp config.json $@
+	cp config.toml $@
 	cd $@; \
 	 $(PWD)/target/debug/devconfig $(notdir $@)
 

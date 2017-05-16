@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fs::File;
-use std::io::{self, Read, Write};
-use serde_json::{self};
+use std::io::{Read, Write};
+use toml;
 use error::VrError;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -16,25 +16,25 @@ pub struct Config {
 
 impl Config {
     pub fn read() -> Config {
-        Config::read_path("config.json")
+        Config::read_path("config.toml")
     }
 
     pub fn write(&self) -> Result<(), VrError> {
-        self.write_path("config.json")
+        self.write_path("config.toml")
     }
 
     fn read_path(path: &str) -> Config {
         let mut file = File::open(path).unwrap();
         let mut string = String::new();
         file.read_to_string(&mut string).unwrap();
-        let config: Config = serde_json::from_str(&string).unwrap();
+        let config: Config = toml::from_str(&string).unwrap();
         config
     }
 
     pub fn write_path(&self, path: &str) -> Result<(), VrError> {
         let mut file = File::create(path).unwrap();
-        let string = serde_json::to_string(&self).map_err(|e| io::Error::from(e))?.into_bytes();
-        file.write_all(&string).map_err(|e| e.into())
+        let string = toml::to_string(&self).unwrap();
+        file.write_all(&string.as_bytes()).map_err(|e| e.into())
     }
 
 }
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn read_config() {
-        let path = "/tmp/haret.json";
+        let path = "/tmp/haret.toml";
         let config = Config {
             node_name: "node1".to_string(),
             cluster_host: "192.168.1.1:5000".to_string(),
