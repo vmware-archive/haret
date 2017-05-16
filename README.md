@@ -18,7 +18,7 @@ containing the `config.json` and binaries, run `haret` in a terminal with the fo
 start a node:
 
 ```
-RUST_LOG=haret=info=rabble=info ./haret
+RUST_LOG=haret=info,rabble=info ./haret
 ```
 
 While a haret replication group (namespace) is intended to run in a cluster across multiple physical
