@@ -34,7 +34,7 @@ and clients of haret.
 haret provides administrative and client APIs over TCP connections. Nodes connect with each other
 over TCP connections seperate from both administrative and client connections. The listening hosts
 and ports for each of these interfaces is configured in
- [config.json](https://github.com/vmware/haret/blob/master/config.json).
+ [config.toml](https://github.com/vmware/haret/blob/master/config.toml).
  * `cluster_host` - cluster server for internode communication
  * `vr_api_host` - API server
  * `admin host` - Admin server
