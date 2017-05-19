@@ -12,15 +12,15 @@ extern crate uuid;
 extern crate slog;
 extern crate protobuf;
 
+#[cfg(test)]
+#[macro_use]
+extern crate assert_matches;
+
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate toml;
 
-
-// Crates we manage
-#[macro_use]
-extern crate funfsm;
 extern crate orset;
 extern crate rabble;
 extern crate amy;
@@ -36,6 +36,8 @@ mod namespace_mgr;
 mod namespace_msg;
 mod namespaces;
 mod msg;
+mod disk_mgr;
+mod disk_msgs;
 
 pub use msg::Msg;
 pub use namespace_mgr::NamespaceMgr;
@@ -44,3 +46,4 @@ pub use namespace_msg::{
     ClientId,
     NamespaceId
 };
+pub use disk_mgr::DiskMgr;
