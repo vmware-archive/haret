@@ -8,14 +8,22 @@ use rabble::{Pid, CorrelationId};
 /// Metadata for an individual prepare request
 ///
 /// Metdata is stored in a VecDeque where the index is the operation number.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub correlation_id: CorrelationId,
     replies: HashSet<Pid>,
+
+    // Note that deserialization will return the wrong time.
+    // This is only used in debuggin goutput though.
+    #[serde(skip_serializing, skip_deserializing, default = "now")]
     timeout: SteadyTime
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+fn now() -> SteadyTime {
+    SteadyTime::now()
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PrepareRequests {
     quorum_size: usize,
     timeout_ms: i64,
@@ -26,10 +34,10 @@ pub struct PrepareRequests {
 }
 
 impl PrepareRequests {
-    pub fn new(num_replicas: usize, timeout_ms: u64 ) -> PrepareRequests {
+    pub fn new(num_replicas: usize, timeout_ms: i64 ) -> PrepareRequests {
         PrepareRequests {
             quorum_size: num_replicas/2 + 1,
-            timeout_ms: timeout_ms as i64,
+            timeout_ms: timeout_ms,
             lowest_op: 1,
             requests: VecDeque::new(),
         }
@@ -73,6 +81,9 @@ impl PrepareRequests {
     }
 
     pub fn remove(&mut self, op: u64) -> Vec<Request> {
+        if self.requests.is_empty() {
+            return Vec::new();
+        }
         let lowest_op = self.lowest_op;
         self.lowest_op = op + 1;
         self.requests.drain(0..(op - lowest_op + 1) as usize).collect()

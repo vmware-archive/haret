@@ -344,7 +344,7 @@ impl HaretClient {
 
         if api_response.has_retry() {
             let duration = api_response.take_retry().get_milliseconds();
-            return Ok(format!("Primary not found. Please retry in {} seconds.", duration*1000));
+            return Ok(format!("Primary not found. Please retry in {} seconds.", duration / 1000));
         }
 
         if api_response.has_unknown_namespace() {

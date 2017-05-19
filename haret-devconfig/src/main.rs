@@ -4,6 +4,7 @@
 extern crate haret;
 
 use std::env;
+use std::path::PathBuf;
 use haret::config::Config;
 
 fn main() {
@@ -30,6 +31,7 @@ fn main() {
         cluster_host: cluster_host,
         admin_host: admin_host,
         api_host: api_host,
+        data_dir: PathBuf::from("")
     };
     config.write_path("config.toml").unwrap();
 }

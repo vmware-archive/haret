@@ -264,6 +264,7 @@ fn help() -> Error {
         cluster_host   The ip:port of the cluster server
         admin_host     The ip:port of the admin server
         api_host       The ip:port of the api server
+        data_dir       The directory where data is stored for the current node
 
     Argument formats:
         UngroupedPid   replica_name::node_name

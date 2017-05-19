@@ -15,8 +15,7 @@ use std::thread;
 use rabble::{Pid, NodeId, Service, TcpServerHandler};
 use rabble::serialize::{MsgpackSerializer, ProtobufSerializer};
 use haret::config::Config;
-use haret::Msg;
-use haret::NamespaceMgr;
+use haret::{Msg, NamespaceMgr, DiskMgr};
 use haret::admin::{AdminConnectionHandler, AdminMsg};
 use haret::api::ApiConnectionHandler;
 use haret::api::messages::ApiMsg;
@@ -38,9 +37,19 @@ fn main() {
     // Create and start the namespace manager
     let namespace_mgr = NamespaceMgr::new(node.clone(), config.clone(), logger.clone());
     info!(logger, "Starting Namespace Manager"; "pid" => namespace_mgr.pid.to_string());
-    let mut namespace_mgr_service = Service::new(namespace_mgr.pid.clone(), node.clone(), namespace_mgr).unwrap();
+    let mut namespace_mgr_service = Service::new(namespace_mgr.pid.clone(),
+                                                 node.clone(),
+                                                 namespace_mgr).unwrap();
     handles.push(thread::spawn(move || {
         namespace_mgr_service.wait();
+    }));
+
+    // Create and start the Disk Manager
+    let disk_mgr = DiskMgr::new(node.clone(), config.data_dir, logger.clone());
+    info!(logger, "Starting Disk Manager"; "pid" => disk_mgr.pid.to_string());
+    let mut disk_mgr_service = Service::new(disk_mgr.pid.clone(), node.clone(), disk_mgr).unwrap();
+    handles.push(thread::spawn(move || {
+        disk_mgr_service.wait();
     }));
 
     // Create and start the admin server
@@ -72,7 +81,6 @@ fn main() {
     handles.push(thread::spawn(move || {
         api_service.wait();
     }));
-
 
     for h in handles {
         h.join().unwrap();

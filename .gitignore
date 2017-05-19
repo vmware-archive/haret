@@ -5,3 +5,4 @@ dev
 tests/output
 *~
 *#
+.vscode

@@ -8,10 +8,6 @@ extern crate rand;
 extern crate haret;
 extern crate rabble;
 extern crate time;
-
-#[macro_use]
-extern crate funfsm;
-
 extern crate assert_matches;
 
 #[macro_use]
@@ -28,20 +24,19 @@ mod utils;
 use utils::{vr_invariants, op_invariants};
 use utils::scheduler::Scheduler;
 use utils::arbitrary::{Op, ClientRequest};
-use haret::vr::{VrMsg, VrApiReq, VrEnvelope, TreeOp};
+use rabble::Envelope;
+use haret::vr::{vr_msg, VrMsg, VrApiReq, TreeOp};
+use haret::Msg;
 
 /// Test that a fixed replica set (no reconfigurations) properly runs VR operations
 quickcheck! {
     fn prop_static_membership(ops: Vec<Op>) -> bool {
         let mut scheduler = Scheduler::new(3);
-        scheduler.elect_initial_leader();
         let mut client_req_num = 0;
         for op in ops {
             if let Err(s) = assert_op(op.clone(), &mut scheduler, &mut client_req_num) {
                 let errmsg = format!("{:?} Error: {}", op, s);
                 error!(scheduler.logger, errmsg);
-                println!("Crashed nodes: {:#?}", scheduler.crashed_nodes);
-                println!("States: {:#?}", scheduler.get_states());
                 return false;
             }
         }
@@ -51,29 +46,26 @@ quickcheck! {
 
 fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Result<(), String> {
     match op {
-        Op::ClientRequest(ClientRequest(VrMsg::ClientRequest{op, client_id, ..})) => {
+        Op::ClientRequest(ClientRequest(vr_msg::ClientRequest {op, client_id, ..})) => {
             // Client requests are generated with invalid client request nums
             *client_req_num += 1;
-            let req = VrMsg::ClientRequest {
+            let req = VrMsg::ClientRequest(vr_msg::ClientRequest {
                 request_num: *client_req_num,
                 op: op,
                 client_id: client_id
-            };
-            let mut replies = scheduler.send_to_primary(req.clone())?;
+            });
+            let mut replies = scheduler.send_to_primary(req.clone());
             if replies.len() == 1 {
                 return assert_client_request_correctness(&scheduler, req, replies.pop().unwrap());
             }
             safe_assert_eq!(replies.len(), 0)
         },
-        Op::ClientRequest(r) => {
-            return Err(format!("Invalid client request: {:#?}", r));
-        },
         Op::Commit => {
-            scheduler.send_to_primary(VrMsg::Tick)?;
+            scheduler.send_to_primary(VrMsg::Tick);
             assert_basic_correctness(scheduler)
         },
         Op::ViewChange => {
-            scheduler.send_to_backup(VrMsg::Tick)?;
+            wait_for_view_change(scheduler);
             assert_basic_correctness(scheduler)
         },
         Op::CrashBackup => {
@@ -82,11 +74,26 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
         },
         Op::CrashPrimary => {
             scheduler.stop_primary();
+            wait_for_view_change(scheduler);
             assert_basic_correctness(scheduler)
         },
         Op::Restart => {
-            scheduler.restart_crashed_node()?;
+            scheduler.restart_crashed_node();
             assert_basic_correctness(scheduler)
+        }
+    }
+}
+
+// Keep trying until view change completes
+// It can fail if the primary of the next view is down or recovering
+// This is a normal part of the VRR protocol
+//
+// TODO: Add a timeout so the test doesn't run forever
+fn wait_for_view_change(scheduler: &mut Scheduler) {
+    loop {
+        scheduler.send_to_backup(VrMsg::Tick);
+        if scheduler.primary.is_some() {
+            break;
         }
     }
 }
@@ -94,7 +101,7 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
 /// Assert that all correctness conditions are maintained after each client request to the group
 fn assert_client_request_correctness(scheduler: &Scheduler,
                                      request: VrMsg,
-                                     reply: VrEnvelope) -> Result<(), String> {
+                                     reply: Envelope<Msg>) -> Result<(), String> {
     assert_response_matches_internal_replica_state(scheduler, request, reply)?;
     assert_vr_invariants(scheduler)
 }
@@ -115,15 +122,18 @@ fn assert_vr_invariants(scheduler: &Scheduler) -> Result<(), String> {
 
 fn assert_response_matches_internal_replica_state(scheduler: &Scheduler,
                                                   request: VrMsg,
-                                                  reply: VrEnvelope) -> Result<(), String>
+                                                  reply: Envelope<Msg>) -> Result<(), String>
 {
     match request {
-        VrMsg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::CreateNode{..}), ..} =>
-            op_invariants::assert_create_response(scheduler, request, reply),
-        VrMsg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobPut{..}), ..} =>
-            op_invariants::assert_put_response(scheduler, request, reply),
-        VrMsg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobGet{..}), ..} =>
-            op_invariants::assert_get_response(scheduler, request, reply),
+        VrMsg::ClientRequest(
+            vr_msg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::CreateNode{..}), ..}) =>
+                op_invariants::assert_create_response(scheduler, request, reply),
+        VrMsg::ClientRequest(
+            vr_msg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobPut{..}), ..}) =>
+                op_invariants::assert_put_response(scheduler, request, reply),
+        VrMsg::ClientRequest(
+            vr_msg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobGet{..}), ..}) =>
+                op_invariants::assert_get_response(scheduler, request, reply),
         _ => fail!()
     }
 }

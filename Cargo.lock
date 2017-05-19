@@ -165,7 +165,7 @@ dependencies = [
  "lazy_static 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "orset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "protobuf 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "protobuf 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "quickcheck 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rabble 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -207,7 +207,7 @@ name = "haret-client"
 version = "0.1.0"
 dependencies = [
  "haret 0.1.0",
- "protobuf 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "protobuf 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "protobuf"
-version = "1.2.2"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -367,7 +367,7 @@ dependencies = [
  "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "net2 0.2.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "orset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "protobuf 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "protobuf 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rmp-serde 0.13.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -704,7 +704,7 @@ dependencies = [
 "checksum num-iter 0.1.33 (registry+https://github.com/rust-lang/crates.io-index)" = "f7d1891bd7b936f12349b7d1403761c8a0b85a18b148e9da4429d5d102c1a41e"
 "checksum num-traits 0.1.39 (registry+https://github.com/rust-lang/crates.io-index)" = "1708c0628602a98b52fad936cf3edb9a107af06e52e49fdf0707e884456a6af6"
 "checksum orset 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "403a860cfab9be3c99fb8ca860c86bb17b85fd0bb7ff223174456a16645f625c"
-"checksum protobuf 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "c3e2ed6fe8ff3b20b44bb4b4f54de12ac89dc38cb451dce8ae5e9dcd1507f738"
+"checksum protobuf 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "2e7d69f870f68f28b141c8374e4e8980461cf380c13f64adabbe2a37612f4048"
 "checksum quickcheck 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "02c2411d418cea2364325b18a205664f9ef8252e06b2e911db97c0b0d98b1406"
 "checksum quote 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)" = "7a6e920b65c65f10b2ae65c831a81a073a89edd28c7cce89475bff467ab4167a"
 "checksum rabble 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "4414d6b460a7b54a2b21daba76bdf73a70e753e12253c7f576323ee901dab498"
