@@ -5,7 +5,7 @@ mod replica;
 mod backend;
 mod quorum_tracker;
 mod prepare_requests;
-mod vrmsg;
+mod vr_msg;
 mod vr_api_messages;
 mod fsm_output;
 mod vr_envelope;

@@ -2,23 +2,148 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use time::SteadyTime;
-use funfsm::{FsmTypes, StateFn};
 use namespace_msg::NamespaceMsg;
 use super::vrmsg::VrMsg;
 use super::vr_ctx::VrCtx;
 use super::fsm_output::FsmOutput;
 use super::vr_envelope::VrEnvelope;
+use std::convert::From;
 
-pub type Transition = (StateFn<VrTypes>, Vec<FsmOutput>);
-
-#[derive(Debug, Clone)]
-pub struct VrTypes;
-
-impl FsmTypes for VrTypes {
-    type Context = VrCtx;
-    type Msg = VrEnvelope;
-    type Output = FsmOutput;
+pub trait Transition<Msg> {
+    fn next(self,
+            msg: Msg,
+            from: Pid,
+            correlation_id: CorrelationId,
+            output: &mut Vec<FsmOutput>) -> VrStates;
 }
+
+/// Generate a state struct: `$struct_name` from a set of fields
+///
+/// Generate `impl From<$struct_name> for VrStates`
+macro_rules! state {
+    ($struct_name:ident {
+        $( $field:ident: $ty:ident ),*
+    }) => {
+        #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+        pub struct $struct_name {
+            $( pub $field: $ty ),*
+        }
+
+        impl From<$struct_name> for VrStates {
+            fn from(msg: $struct_name) -> VrStates {
+                VrMsg::$struct_name(msg)
+            }
+        }
+    }
+}
+
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum VrStates {
+    Primary(Primary),
+    Backup(Backup),
+    WaitForNewState(WaitForNewState),
+    WaitForStartViewChange(WaitForStartViewChange),
+    WaitForDoViewChange(WaitForDoViewChange),
+    WaitForStartView(WaitForStartView),
+    Recovery(Recovery),
+    ReconfigurationWaitForPrepareOk(ReconfigurationWaitForPrepareOk),
+    ReconfigurationWaitForNewState(ReconfigurationWaitForNewState),
+    Leaving(Leaving),
+    Shutdown(Shutdown)
+}
+
+/// The primary state of the VR protocol operating in normal mode
+state!(Primary {
+    pub ctx: VrCtx,
+    pub prepare_requests: PrepareRequests,
+    /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
+    /// message to the backups. `idle_timeout` should be at least twice as large as this value.
+    pub tick_ms: u64
+});
+
+/// The backup state of the VR protocol operating in normal mode
+state!(Backup {
+    pub ctx: VrCtx,
+    pub primary: Pid,
+    /// Backups wait `idle_timeout` between messages from the primary before initiating a view
+    /// change.
+    pub idle_timeout: Duration
+});
+
+/// When a backup realizes it's behind it enters state transfer
+///
+/// In this state, the backup is waiting for a `NewState` message
+state!(WaitForNewState {
+    pub ctx: VrCtx,
+    pub idle_timeout: Duration
+});
+
+/// The part of the view change state in the VR protocol state machine where a replica is waiting
+/// for a quorum of `StartViewChange` messages.
+state!(WaitForStartViewChange {
+    pub ctx: VrCtx,
+    pub state: ViewChangeState
+});
+
+/// The part of the view change state in the VR protocol state machine the proposed primary is
+/// waiting for a quorum of `DoViewChange` messages.
+state!(WaitForDoViewChange {
+    pub ctx: VrCtx,
+    pub state: ViewChangeState
+});
+
+/// The part of the view change state in the VR protocol state machine where a replica is waiting
+/// for a `StartView` message from the new primary. It has already sent a `DoViewChange` to the
+/// proposed primary for this view.
+state!(WaitForStartView {
+    pub ctx: VrCtx,
+    pub proposed_primary: Pid
+});
+
+/// The recovery state of the VR Protocol where a replica is recovering data from a quorum of
+/// replicas
+state!(Recovery {
+    pub ctx: VrCtx,
+    pub state: RecoveryState
+});
+
+/// The first step for the primary in the reconfiguration part of the VR protocol
+///
+/// The primary has sent a `Prepare` containing the reconfiguration and is waiting for a quorum of
+/// `PrepareOk` messages
+state!(ReconfigurationWaitForPrepareOk {
+    pub ctx: VrCtx,
+    pub prepare_requests: PrepareRequests,
+    /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
+    /// message to the backups. `idle_timeout` should be at least twice as large as this value.
+    pub tick_ms: u64
+});
+
+/// The state where a new replica is added to the group as part of Reconfiguration
+///
+/// In this state the replica is waiting for a `NewState` msg
+state!(ReconfigurationWaitForNewState {
+    pub ctx: VrCtx,
+    pub idle_timeout: Duration
+});
+
+/// The state where a replica is in the process of shutting down
+///
+/// The replica received a reconfiguration request in its log and it is not in the new
+/// configuration.
+/// The replica is waiting for a quorum of EpochStarted messages from the new config so that it can
+/// shut down.
+state!(Leaving {
+    pub ctx: VrCtx,
+    pub msgs: QuorumTracker<EpochStarted>
+});
+
+/// The replica has left and has told the namespace manager to shut it down.
+///
+/// It doesn't respond to any messages from here on out
+state!(Shutdown {});
+
 
 macro_rules! check_epoch {
     ($ctx:ident, $envelope:ident, $state:ident) => {

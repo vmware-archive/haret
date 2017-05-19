@@ -25,12 +25,11 @@ pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
 pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
 
 
-/// The internal state of the VR FSM.
+/// The internal state of the VR FSM shared among all states
 #[derive(Debug, Clone)]
 pub struct VrCtx {
     pub logger: Logger,
     pub pid: Pid,
-    pub primary: Option<Pid>,
     pub epoch: u64,
     pub view: u64,
     pub op: u64,
@@ -41,30 +40,10 @@ pub struct VrCtx {
     /// The number of replicas needed to provide quorum
     pub quorum: u64,
 
-    /// Used by the replica in primary state tracking quorums of Prepare requests
-    pub prepare_requests: PrepareRequests,
-
     pub log: Vec<VrMsg>,
     pub backend: VrBackend,
     pub old_config: VersionedReplicas,
     pub new_config: VersionedReplicas,
-
-    /// Only used during recovery
-    pub recovery_state: Option<RecoveryState>,
-
-    /// Only used during view change
-    pub view_change_state: Option<ViewChangeState>,
-
-    /// Only used when a replica is shutting down
-    pub epoch_started_msgs: QuorumTracker<VrMsg>,
-
-    /// Backups wait `idle_timeout` between messages from the primary before initiating a view
-    /// change.
-    pub idle_timeout: Duration,
-
-    /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
-    /// message to the backups. `idle_timeout` should be at least twice as large as this value.
-    pub primary_tick_ms: u64,
 }
 
 impl VrCtx {
@@ -78,7 +57,6 @@ impl VrCtx {
         VrCtx {
             logger: logger.new(o!("component" => "vr_ctx", "node_id" => me.node.to_string())),
             pid: me,
-            primary: None,
             epoch: new_config.epoch,
             view: 0,
             op: 0,
@@ -86,17 +64,10 @@ impl VrCtx {
             last_received_time: SteadyTime::now(),
             last_normal_view: 0,
             quorum: quorum as u64,
-            prepare_requests: PrepareRequests::new(new_config.replicas.len(),
-                                                   DEFAULT_IDLE_TIMEOUT_MS),
             log: Vec::new(),
             backend: VrBackend::new(),
             old_config: old_config,
             new_config: new_config,
-            recovery_state: None,
-            view_change_state: None,
-            epoch_started_msgs: QuorumTracker::new(quorum, &idle_timeout),
-            idle_timeout: idle_timeout,
-            primary_tick_ms: DEFAULT_PRIMARY_TICK_MS
         }
     }
 
