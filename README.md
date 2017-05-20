@@ -1,6 +1,6 @@
 # haret
 
-haret provides a distributed service built on proven protocols that exposes strongly consistent coordination primitives via an easy to use API, in order to satisfy the essential dependencies of many distributed applications. You can read more about why we decided to build haret [here](https://github.com/vmware/haret/blob/master/docs/why.md).
+haret provides a distributed service built on proven protocols that exposes strongly consistent coordination primitives via an easy to use API, in order to satisfy the essential dependencies of many distributed applications. You can read more about [why we decided to build haret](https://github.com/vmware/haret/blob/master/docs/why.md).
 
 This README contains quickstart instructions for both developers and users. More information
 about using haret can be found in the *rough and incomplete* [User
@@ -10,8 +10,7 @@ Guide](https://github.com/vmware/haret/blob/master/docs/haret-user-guide.md).
 Start Here if you are an enduser of haret and not interested in building the code.
 
 ## Running a replication group on a single node
-Release binaries for `Mac OSX` and `Linux` can be downloaded
-[here](https://github.com/vmware/haret/releases).
+Release binaries for `Mac OSX` and `Linux` [can be downloaded](https://github.com/vmware/haret/releases).
 
 Each release directory contains a `config.toml` file for running a single node of haret. From the release directory
 containing the `config.toml` and binaries, run `haret` in a terminal with the following command to
