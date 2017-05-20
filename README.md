@@ -96,8 +96,8 @@ below](#joining-3-nodes-to-create-a-cluster) detail joining nodes together to fo
 Start here if you are looking to hack on haret.
 
 ## Setting up a development cluster
- * Install [Rust](https://doc.rust-lang.org/book/). Some features that haret requires are not yet part of stable or beta builds. The nightly channel of 1.16.0 from January 8, 2017 works. It can be installed by using:
-   * curl -sSf https://static.rust-lang.org/rustup.sh | sh -s -- --channel=nightly --date=2017-01-08
+ * Install [Rust](https://doc.rust-lang.org/book/). Haret builds on any stable version after rust 1.15
+   * curl -sSf https://static.rust-lang.org/rustup.sh | sh -s -- --channel=stable
  * Install [rlwrap](https://linux.die.net/man/1/rlwrap) so that you can have readline support on CLIs
  * Build a 3 node development cluster and launch 3 nodes on localhost
    * `cd haret && make launch`
