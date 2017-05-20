@@ -226,7 +226,8 @@ impl From<vertree::Reply> for VrApiRsp {
 
 impl From<vertree::Error> for VrApiRsp {
     fn from(error: vertree::Error) -> VrApiRsp {
-        let err = match error.into_kind() {
+        let vertree::Error(kind, _) = error;
+        let err = match kind {
             ErrorKind::AlreadyExists(path) => VrApiError::AlreadyExists(path),
             ErrorKind::DoesNotExist(path) => VrApiError::DoesNotExist(path),
             ErrorKind::WrongType(path, ty) => VrApiError::WrongType(path, ty.into()),
