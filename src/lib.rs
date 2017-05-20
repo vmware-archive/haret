@@ -1,8 +1,6 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#![feature(custom_derive, plugin)]
-
 // Crates we don't manage
 extern crate rand;
 extern crate libc;
