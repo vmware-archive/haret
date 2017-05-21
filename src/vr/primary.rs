@@ -1,5 +1,8 @@
+use std::convert::{From, Into};
 use vr_fsm::{Transition, VrStates, Primary, Backup};
-use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk};
+use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
+use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
+use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 
 impl Transition<ClientRequest> for Primary {
     fn next(mut self,
@@ -24,10 +27,48 @@ impl Transition<PrepareOk> for Primary {
         if op <= ctx.commit_num {
             return self.into();
         }
-        if self.ctx.has_commit_quorum(op, from) {
+        if self.has_commit_quorum(op, from) {
             debug!(self.ctx.logger, "primary: has commit quorum: op = {}", op);
-            return self.primary_commit(op, output);
+            return self.commit(op, output);
         }
+        self.into()
+    }
+}
+
+impl Transition<Tick> for Primary {
+    fn next(mut self,
+            _: Tick,
+            _: Pid,
+            _: CorrelationId,
+            output: &mut Vec<FsmOutput>) -> VrStates
+    if self.idle_timeout() {
+        self.broadcast_commit_msg(output);
+    }
+    self.into()
+}
+
+impl Transition<GetState> for Primary {
+    fn next(mut self,
+            msg: GetState,
+            _: Pid,
+            cid: CorrelationId,
+            output: &mut Vec<FsmOutput>) -> VrStates
+    {
+        let GetState {op, from, ..} = msg;
+        output.push(self.ctx.send_new_state(op, from, cid));
+        self.into()
+    }
+}
+
+impl Transition<Recovery> for Primary {
+    fn next(mut self,
+            msg: Recovery,
+            _: Pid,
+            cid: CorrelationId,
+            output: &mut Vec<FsmOutput>) -> VrStates
+    {
+        let Recovery {from, nonce} = msg;
+        output.push(self.ctx.send_recovery_response(from, nonce, cid));
         self.into()
     }
 }
@@ -49,8 +90,36 @@ impl Transition<Reconfiguration> for Primary {
     }
 }
 
+impl Transition<StartEpoch> for Primary {
+    fn next(mut self,
+            msg: StartEpoch,
+            from: Pid,
+            cid: CorrelationId,
+            output: &mut Vec<FsmOutput>) -> VrStates
+    {
+        self.ctx.send_epoch_started(msg, from, cid, output);
+        self.into()
+    }
+}
+
+
 impl Primary {
-    fn send_prepare(&mut self, msg: Msg, from: Pid, cid: CorrelationId, output: &mut Vec<FsmOutput>) {
+    fn new(ctx: VrCtx) -> Primary {
+        Primary {
+            ctx: ctx,
+            prepare_requests: PrepareRequests::new(new_config.replicas.len(),
+                                                   DEFAULT_IDLE_TIMEOUT_MS),
+            tick_ms: DEFAULT_PRIMARY_TICK_MS,
+            reconfiguration_in_progress: false
+        }
+    }
+
+    fn send_prepare(&mut self,
+                    msg: Msg,
+                    from: Pid,
+                    cid: CorrelationId,
+                    output: &mut Vec<FsmOutput>)
+    {
         self.ctx.last_received_time = SteadyTime::now();
         self.ctx.op += 1;
         let prepare = Prepare {
@@ -70,7 +139,7 @@ impl Primary {
         self.prepare_requests.has_quorum(op)
     }
 
-    pub fn primary_commit(self, new_commit_num: u64, output: &mut Vec<FsmOutput>) -> VrStates {
+    pub fn commit(self, new_commit_num: u64, output: &mut Vec<FsmOutput>) -> VrStates {
         let lowest_prepared_op = self.prepare_requests.lowest_op;
         let mut iter = self.prepare_requests.remove(new_commit_num).into_iter();
         let commit_num = self.ctx.commit_num;
@@ -118,8 +187,8 @@ impl Primary {
                         self.ctx.epoch += 1;
                         self.ctx.update_for_new_epoch(i+1, replicas);
                         output.push(self.ctx.announce_reconfiguration());
-                        output.push(self.ctx.set_primary());
-                        output.extend(self.ctx.broadcast_commit_msg_old());
+                        output.push(self.set_primary());
+                        output.extend(self.broadcast_commit_msg_old());
                         // We don't bother sending 'StartEpoch` requests to the new replicas here,
                         // since they aren't yet online.
                         return self.enter_transitioning(output);
@@ -127,18 +196,20 @@ impl Primary {
                 }
             }
         }
+        self.into()
     }
 
     /// The primary has just committed the reconfiguration request. It must now determine whether it
     /// is the primary of view 0 in the new epoch, a backup in the new epoch, or it is being
-    /// shutdown
+    /// shutdown.
     fn enter_transitioning(mut self, output: &mut Vec<FsmOutput>) -> VrStates {
         if self.ctx.is_leaving() {
             return Leaving::from(self).into();
         }
         // Tell replicas that are being replaced to shutdown
         output.extend_from_slice(&ctx.broadcast_epoch_started(envelope.correlation_id));
-        if ctx.is_primary() {
+        if self.ctx.is_primary() {
+            self.reconfiguration_in_progress = false;
             // Stay a primary
             return self.into();
         }
@@ -177,12 +248,39 @@ impl Primary {
         FsmOutput::Vr(VrEnvelope::new(to.clone(), self.ctx.pid.clone(), reply, cid.clone()))
     }
 
-    pub fn client_reply_msg(&self, client_req_num: u64, value: VrApiRsp) -> VrMsg {
+    fn client_reply_msg(&self, client_req_num: u64, value: VrApiRsp) -> VrMsg {
         ClientReply {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
             request_num: client_req_num,
             value: value
         }.into()
+    }
+
+    fn commit_msg(&self) -> VrMsg {
+        Commit {
+            epoch: self.ctx.epoch,
+            view: self.ctx.view,
+            commit_num: self.ctx.commit_num
+        }.into()
+    }
+
+    fn broadcast_commit_msg(&self, output: &mut Vec<FsmOutput>) {
+        self.ctx.broadcast(self.commit_msg(), CorrelationId::pid(self.ctx.pid.clone()), output);
+    }
+
+    fn broadcast_commit_msg_old(&self, output: &mut Vec<FsmOutput>) {
+        self.ctx.broadcast_old(self.commit_msg(), CorrelationId::pid(self.ctx.pid.clone()))
+    }
+
+    fn set_primary(&mut self) -> FsmOutput {
+        let primary = self.ctx.compute_primary();
+        FsmOutput::Announcement(NamespaceMsg::NewPrimary(primary), self.ctx.pid.clone())
+    }
+
+
+    fn idle_timeout(&self) -> bool {
+        SteadyTime::now() - self.ctx.last_received_time >
+            Duration::milliseconds(self.tick_ms as i64)
     }
 }
