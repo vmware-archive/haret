@@ -47,7 +47,6 @@ pub enum VrStates {
     WaitForDoViewChange(WaitForDoViewChange),
     WaitForStartView(WaitForStartView),
     Recovery(Recovery),
-    ReconfigurationWaitForPrepareOk(ReconfigurationWaitForPrepareOk),
     ReconfigurationWaitForNewState(ReconfigurationWaitForNewState),
     Leaving(Leaving),
     Shutdown(Shutdown)
@@ -59,7 +58,8 @@ state!(Primary {
     pub prepare_requests: PrepareRequests,
     /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
     /// message to the backups. `idle_timeout` should be at least twice as large as this value.
-    pub tick_ms: u64
+    pub tick_ms: u64,
+    pub reconfiguration_in_progress: bool
 });
 
 /// The backup state of the VR protocol operating in normal mode
