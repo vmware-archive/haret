@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::mem;
 use std::iter::FromIterator;
 use time::{Duration, SteadyTime};
-use super::vrmsg::VrMsg;
+use super::vrmsg::{VrMsg, ClientOp};
 use super::replica::VersionedReplicas;
 use super::fsm_output::FsmOutput;
 use super::vr_envelope::VrEnvelope;
@@ -157,6 +157,20 @@ impl VrCtx {
         self.log.truncate(self.op as usize);
         self.broadcast_old_and_new(self.get_state_msg(), CorrelationId::pid(self.pid.clone()))
     }
+
+    pub fn start_state_transfer_new_view(&mut self,
+                                         new_view: u64,
+                                         cid: CorrelationId,
+                                         output: &mut Vec<FsmOutput>)
+    {
+        self.last_received_time = SteadyTime::now();
+        self.view = new_view;
+        self.op = self.commit_num;
+        self.log.truncate(self.op as usize);
+        output.push(self.send_get_state_to_random_replica(cid));
+    }
+
+
 
     pub fn send_new_state(&mut self, op: u64, from: Pid, cid: CorrelationId) -> FsmOutput {
         FsmOutput::Vr(VrEnvelope::new(from, self.pid.clone(), self.new_state_msg(op), cid))

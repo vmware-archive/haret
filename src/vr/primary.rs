@@ -1,105 +1,60 @@
 use std::convert::{From, Into};
+
+#[macro_use]
 use vr_fsm::{Transition, VrStates, Primary, Backup};
 use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
 use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 
-impl Transition<ClientRequest> for Primary {
-    fn next(mut self,
-            msg: ClientRequest,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.send_prepare(msg, from, cid, output);
-        self.into()
+handle!(ClientRequest, Primary, {
+    self.send_prepare(msg, from, cid, output);
+    self.into()
+});
+
+handle!(PrepareOk, Primary, {
+    let PrepareOk {op, from, ..} = msg;
+    if op <= ctx.commit_num {
+        return self.into();
     }
+    if self.has_commit_quorum(op, from) {
+        debug!(self.ctx.logger, "primary: has commit quorum: op = {}", op);
+        return self.commit(op, output);
+    }
+    self.into()
 }
 
-impl Transition<PrepareOk> for Primary {
-    fn next(mut self,
-            msg: PrepareOk,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        let PrepareOk {op, from, ..} = msg;
-        if op <= ctx.commit_num {
-            return self.into();
-        }
-        if self.has_commit_quorum(op, from) {
-            debug!(self.ctx.logger, "primary: has commit quorum: op = {}", op);
-            return self.commit(op, output);
-        }
-        self.into()
-    }
-}
-
-impl Transition<Tick> for Primary {
-    fn next(mut self,
-            _: Tick,
-            _: Pid,
-            _: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
+handle!(Tick, Primary, {
     if self.idle_timeout() {
         self.broadcast_commit_msg(output);
     }
     self.into()
 }
 
-impl Transition<GetState> for Primary {
-    fn next(mut self,
-            msg: GetState,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        let GetState {op, from, ..} = msg;
-        output.push(self.ctx.send_new_state(op, from, cid));
-        self.into()
-    }
+handle!(GetState, Primary, {
+    let GetState {op, from, ..} = msg;
+    output.push(self.ctx.send_new_state(op, from, cid));
+    self.into()
 }
 
-impl Transition<Recovery> for Primary {
-    fn next(mut self,
-            msg: Recovery,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        let Recovery {from, nonce} = msg;
-        output.push(self.ctx.send_recovery_response(from, nonce, cid));
-        self.into()
-    }
+handle!(Recovery, Primary, {
+    let Recovery {from, nonce} = msg;
+    output.push(self.ctx.send_recovery_response(from, nonce, cid));
+    self.into()
 }
 
-impl Transition<Reconfiguration> for Primary {
-    fn next(mut self,
-            msg: Reconfiguration,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        if let Some(err_envelope) = self.validate_reconfig(&msg, &from, &cid) {
-            output.push(err_envelope);
-            return self.into();
-        }
-        self.reconfiguration_in_progress = true;
-        self.send_prepare(msg, from, cid, output);
-        self.into()
+handle!(Reconfiguration, Primary, {
+    if let Some(err_envelope) = self.validate_reconfig(&msg, &from, &cid) {
+        output.push(err_envelope);
+        return self.into();
     }
+    self.reconfiguration_in_progress = true;
+    self.send_prepare(msg, from, cid, output);
+    self.into()
 }
 
-impl Transition<StartEpoch> for Primary {
-    fn next(mut self,
-            msg: StartEpoch,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.ctx.send_epoch_started(msg, from, cid, output);
-        self.into()
-    }
+handle!(StartEpoch, Primary, {
+    self.ctx.send_epoch_started(msg, from, cid, output);
+    self.into()
 }
 
 

@@ -17,6 +17,21 @@ pub trait Transition<Msg> {
             output: &mut Vec<FsmOutput>) -> VrStates;
 }
 
+/// Generate an impl of Transition<$Msg> for $State
+#[macro_export]
+macro_rules! handle {
+    ($Msg:ty, $State:ty, $Code:block) => {
+        #[allow(unused_variables)]
+        impl Transition<$Msg> for $State {
+            fn next(self,
+                    msg: $Msg,
+                    from: Pid,
+                    cid: CorrelationId,
+                    output: &mut Vec<FsmOutput>) -> VrStates $Code
+        }
+    }
+}
+
 /// Generate a state struct: `$struct_name` from a set of fields
 ///
 /// Generate `impl From<$struct_name> for VrStates`
@@ -65,32 +80,28 @@ state!(Primary {
 /// The backup state of the VR protocol operating in normal mode
 state!(Backup {
     pub ctx: VrCtx,
-    pub primary: Pid,
-    /// Backups wait `idle_timeout` between messages from the primary before initiating a view
-    /// change.
-    pub idle_timeout: Duration
+    pub primary: Pid
 });
 
 /// When a backup realizes it's behind it enters state transfer
 ///
 /// In this state, the backup is waiting for a `NewState` message
 state!(WaitForNewState {
-    pub ctx: VrCtx,
-    pub idle_timeout: Duration
+    pub ctx: VrCtx
 });
 
 /// The part of the view change state in the VR protocol state machine where a replica is waiting
 /// for a quorum of `StartViewChange` messages.
 state!(WaitForStartViewChange {
     pub ctx: VrCtx,
-    pub state: ViewChangeState
+    pub msgs: QuorumTracker<StartViewChange>
 });
 
 /// The part of the view change state in the VR protocol state machine the proposed primary is
 /// waiting for a quorum of `DoViewChange` messages.
 state!(WaitForDoViewChange {
     pub ctx: VrCtx,
-    pub state: ViewChangeState
+    pub state: DoViewChangeState
 });
 
 /// The part of the view change state in the VR protocol state machine where a replica is waiting
@@ -98,7 +109,7 @@ state!(WaitForDoViewChange {
 /// proposed primary for this view.
 state!(WaitForStartView {
     pub ctx: VrCtx,
-    pub proposed_primary: Pid
+    pub primary: Pid
 });
 
 /// The recovery state of the VR Protocol where a replica is recovering data from a quorum of
@@ -115,8 +126,8 @@ state!(Recovery {
 state!(ReconfigurationWaitForPrepareOk {
     pub ctx: VrCtx,
     pub prepare_requests: PrepareRequests,
-    /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
-    /// message to the backups. `idle_timeout` should be at least twice as large as this value.
+    /// If the primary doesn't receive a new client request in `tick_ms` it sends a commit
+    /// message to the backups. `ctx.idle_timeout` should be at least twice as large as this value.
     pub tick_ms: u64
 });
 
@@ -124,8 +135,7 @@ state!(ReconfigurationWaitForPrepareOk {
 ///
 /// In this state the replica is waiting for a `NewState` msg
 state!(ReconfigurationWaitForNewState {
-    pub ctx: VrCtx,
-    pub idle_timeout: Duration
+    pub ctx: VrCtx
 });
 
 /// The state where a replica is in the process of shutting down

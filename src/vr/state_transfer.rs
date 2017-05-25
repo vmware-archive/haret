@@ -1,28 +1,38 @@
 use std::convert::{From, Into};
 use vr_fsm::{WaitForNewState, Transition, VrStates, Backup};
 
-impl Transition<NewState> for WaitForNewState {
-    fn next(mut self,
-            msg: NewState,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>)
-    {
-        self.become_backup(msg, output)
+handle!(NewState, WaitForNewState, {
+    self.become_backup(msg, output)
+}
+
+handle!(Tick, WaitForNewState, {
+    if self.ctx.idle_timeout() {
+        output.push(self.ctx.send_get_state_to_random_replica(cid));
+    }
+    self.into()
+}
+
+impl From<WaitForStartViewChange> for WaitForNewState {
+    fn from(state: WaitForStartViewChange) -> WaitForNewState {
+        WaitForNewState {
+            ctx: state.ctx
+        }
     }
 }
 
-impl Transition<Tick> for WaitForNewState {
-    fn next(mut self,
-            _: Tick,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>)
-    {
-        if self.ctx.idle_timeout() {
-            output.push(self.ctx.send_get_state_to_random_replica(cid));
+impl From<WaitForStartView> for WaitForNewState {
+    fn from(state: WaitForStartView) -> WaitForNewState {
+        WaitForNewState {
+            ctx: state.ctx
         }
-        self.into()
+    }
+}
+
+impl From<Backup> for WaitForNewState {
+    fn from(state: Backup) -> WaitForNewState {
+        WaitForNewState {
+            ctx: state.ctx
+        }
     }
 }
 

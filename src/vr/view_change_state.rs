@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use time::Duration;
-use super::vrmsg::VrMsg;
+use super::vrmsg::DoViewChange;
 use super::quorum_tracker::QuorumTracker;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -10,7 +10,7 @@ pub struct Latest {
     pub last_normal_view: u64,
     pub commit_num: u64,
     pub op: u64,
-    pub log: Vec<VrMsg>
+    pub log: Vec<ClientOp>
 }
 
 impl Latest {
@@ -24,9 +24,20 @@ impl Latest {
     }
 }
 
+impl From<DoViewChange> for Latest {
+    fn from(msg: DoViewChange) -> Latest {
+    let VrMsg::DoViewChange{op, last_normal_view, commit_num, log, ..} = msg;
+    Latest {
+        last_normal_view: last_normal_view,
+        commit_num: commit_num,
+        op: op,
+        log: log
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct ViewChangeState {
-    pub responses: QuorumTracker<VrMsg>,
+pub struct DoViewChangeState {
+    pub responses: QuorumTracker<DoViewChange>,
     latest: Latest,
 }
 
@@ -44,7 +55,7 @@ impl ViewChangeState {
 
     pub fn compute_latest_state(&mut self, current: Latest) -> Latest {
         self.responses.drain()
-            .map(|(_, msg)| convert_do_view_change_msg_to_latest(msg))
+            .map(|(_, msg)| msg.into())
             .fold(current, |mut latest, other| {
                 if (other.last_normal_view > latest.last_normal_view) ||
                     (other.last_normal_view == latest.last_normal_view && other.op > latest.op)
@@ -61,14 +72,3 @@ impl ViewChangeState {
     }
 }
 
-fn convert_do_view_change_msg_to_latest(msg: VrMsg) -> Latest {
-    if let VrMsg::DoViewChange{op, last_normal_view, commit_num, log, ..} = msg {
-        return Latest {
-            last_normal_view: last_normal_view,
-            commit_num: commit_num,
-            op: op,
-            log: log
-        };
-    }
-    unreachable!()
-}

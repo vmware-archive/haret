@@ -4,185 +4,174 @@ use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, Pre
 use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 
-impl Transition<StartViewChange> for WaitForStartViewChange {
-    fn next(mut self,
-            msg: StartViewChange,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.ctx.last_received_time = SteadyTime::now();
-        self.insert_view_change_message(from, msg.into());
-        if self.has_view_change_quorum() {
-            let computed_primary = self.ctx.compute_primary();
-            if compute_primary == self.ctx.pid {
-                self.ctx.reset_view_change_state(ctx.view, output);
-                return WaitForDoViewChange::from(self).into();
-            }
-            output.push(self.send_do_view_change(computed_primary));
-            return WaitForStartView::from(self).into();
+handle!(StartViewChange, WaitForStartViewChange, {
+    self.ctx.last_received_time = SteadyTime::now();
+    self.msgs.insert(from, msg);
+    if self.msgs.has_quorum() {
+        let computed_primary = self.ctx.compute_primary();
+        if compute_primary == self.ctx.pid {
+            return WaitForDoViewChange::from(self).into();
         }
-        self.into()
+        output.push(self.send_do_view_change(computed_primary));
+        return WaitForStartView::from(self).into();
     }
+    self.into()
 }
 
 // Another replica got quorum of StartViewChange messages for this view and computed
 // that we are the primary for this view.
-impl Transition<DoViewChange> for WaitForStartViewChange {
-    fn next(mut self,
-            msg: DoViewChange,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
+handle!(DoViewChange, WaitForStartViewChange, {
+    let new_state = WaitForDoViewChange::from(self);
+    new_state.state.responses.insert(from, msg);
+    if new_state.state.has_quorum() {
+        return new_state.become_primary(output)
+    }
+    new_state.into()
+}
+
+// Another replica was already elected primary for this view.
+handle!(StartView, WaitForStartViewChange, {
+    let StartView{view, op, log, commit_num, ..} = msg;
+    self.become_backup(view, op, log, commit_num, output)
+}
+
+handle!(Tick, WaitForStartViewChange, {
+    if self.msgs.is_expired() {
+        // We didn't receive quorum, increment the view and try again
         self.ctx.last_received_time = SteadyTime::now();
-        self.ctx.reset_view_change_state(ctx.view, output);
-        self.insert_view_change_message(from, msg.into());
-        if self.has_view_change_quorum() {
-            return self.become_primary(output)
-        }
-        WaitForDoViewChange::from(self).into()
+        self.ctx.view += 1;
+        self.msgs = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout.clone());
+        self.ctx.start_view_change(output);
     }
+    self.into()
 }
 
 // Another replica was already elected primary for this view.
-impl Transition<StartView> for WaitForStartViewChange {
-    fn next(mut self,
-            msg: StartView,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        let StartView{view, op, log, commit_num, ..} = msg;
-        self.become_backup(view, op, log, commit_num, output)
-    }
-}
-
-impl Transition<Tick> for WaitForStartViewChange {
-    fn next(mut self,
-            msg: Tick,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        if self.view_change_expired() {
-            self.ctx.reset_and_start_view_change(output);
-        }
-        self.into()
-    }
+handle!(Prepare, WaitForStartViewChange, {
+    self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
+    WaitForNewState::from(self).into()
 }
 
 // Another replica was already elected primary for this view.
-impl Transition<Prepare> for WaitForStartViewChange {
-    fn next(mut self,
-            _: Prepare,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
-        WaitForNewState::from(self).into()
-    }
+handle!(Commit, WaitForStartViewChange, {
+    self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
+    WaitForNewState::from(self).into()
 }
 
-// Another replica was already elected primary for this view.
-impl Transition<Commit> for WaitForStartViewChange {
-    fn next(mut self,
-            _: Commit,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
-        WaitForNewState::from(self).into()
+handle!(DoViewChange, WaitForDoViewChange, {
+    self.state.responses.insert(from, msg);
+    if self.state.has_quorum() {
+        return self.become_primary(output)
     }
+    self.into()
 }
 
-impl Transition<DoViewChange> for WaitForDoViewChange {
-    fn next(mut self,
-            msg: DoViewChange,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.insert_view_change_message(from, msg);
-        if self.has_view_change_quorum() {
-            return self.become_primary(output)
+handle!(Tick, WaitForDoViewChange, {
+    if self.state.responses.is_expired() {
+        // We haven't changed views yet. Transition back to WaitForStartViewChange and try again.
+        let new_state = WaitForStartViewChange::from(self);
+        new_state.ctx.start_view_change(output);
+        return new_state.into();
+    }
+    self.into()
+}
+
+handle!(StartView, WaitForStartView, {
+    let StartView {view, op, log, commit_num, ..} = msg;
+    self.become_backup(view, op, log, commit_num, output)
+}
+
+handle!(Tick, WaitForStartView, {
+    if self.ctx.idle_timeout() {
+        // We haven't changed views yet. Transition back to WaitForStartViewChange and try again.
+        let new_state = WaitForStartViewChange::from(self);
+        new_state.ctx.start_view_change(output);
+        return new_state.into();
+    }
+    self.into()
+}
+
+handle!(Prepare, WaitForStartView, {
+    self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
+    WaitForNewState::from(self).into()
+}
+
+handle!(Commit, WaitForStartView, {
+    self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
+    WaitForNewState::from(self).into()
+}
+
+
+impl From<WaitForStartViewChange> for WaitForDoViewChange {
+    fn from(state: WaitForStartViewChange) -> WaitForDoViewChange {
+        state.ctx.last_received_time = SteadyTime::now();
+        WaitForDoViewChange {
+            ctx: state.ctx
+            state: DoViewChangeState::new(state.ctx.quorum, state.idle_timeout.clone())
         }
-        WaitForDoViewChange::from(self).into()
     }
 }
 
-impl Transition<Tick> for WaitForDoViewChange {
-    fn next(mut self,
-            _: Tick,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        if self.view_change_expired() {
-            // We haven't changed views yet. Try again.
-            self.ctx.reset_and_start_view_change(output);
-            return WaitForStartViewChange::from(self).into();
+impl From<WaitForStartViewChange> for WaitForStartView {
+    fn from(state: WaitForStartViewChange) -> WaitForStartView {
+        let primary = state.ctx.compute_primary();
+        WaitForStartView {
+            ctx: state.ctx,
+            primary: primary
         }
-        self.into()
     }
 }
 
-impl Transition<StartView> for WaitForStartView {
-    fn next(mut self,
-            msg: StartView,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        let StartView {view, op, log, commit_num, ..} = msg;
-        self.become_backup(view, op, log, commit_num, output)
-    }
-}
-
-impl Transition<Tick> for WaitForStartView {
-    fn next(mut self,
-            msg: Tick,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        if self.view_change_expired() {
-            // We haven't changed views yet. Try again.
-            self.ctx.reset_and_start_view_change(output);
-            return WaitForStartViewChange::from(self).into();
+// Quorum of DoViewChange messages was not received, so try again in the next view
+impl From<WaitForDoViewChange> for WaitForStartViewChange {
+    fn from(state: WaitForDoViewChange) -> WaitForStartViewChange {
+        state.ctx.last_received_time = SteadyTime::now();
+        state.ctx.view += 1;
+        WaitForStartViewChange {
+            ctx: state.ctx,
+            msgs: QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout.clone());
         }
-        self.into()
     }
 }
 
-impl Transition<Prepare> for WaitForStartView {
-    fn next(mut self,
-            _: Prepare,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
-        WaitForNewState::from(self).into()
+// Quorum of DoViewChange messages was not received, so try again in the next view
+impl From<WaitForDoViewChange> for WaitForStartViewChange {
+    fn from(state: WaitForDoViewChange) -> WaitForStartViewChange {
+        state.ctx.last_received_time = SteadyTime::now();
+        state.ctx.view += 1;
+        WaitForStartViewChange {
+            ctx: state.ctx,
+            msgs: QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout.clone());
+        }
     }
 }
 
-impl Transition<Commit> for WaitForStartView {
-    fn next(mut self,
-            _: Commit,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.ctx.start_state_transfer_new_view(self.ctx.view, cid, output);
-        WaitForNewState::from(self).into()
+// A StartView message was not received from the new primary, so try again in the next view
+impl From<WaitForStartView>> for WaitForStartViewChange {
+    fn from(state: WaitForStartView)) -> WaitForStartViewChange {
+        state.ctx.last_received_time = SteadyTime::now();
+        state.ctx.view += 1;
+        WaitForStartViewChange {
+            ctx: state.ctx,
+            msgs: QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout.clone());
+        }
     }
 }
+
+impl From<Backup> for WaitForStartViewChange {
+    fn from(state: Backup) -> WaitForStartViewChange {
+        state.ctx.last_received_time = SteadyTime::now();
+        state.ctx.view += 1;
+        WaitForStartViewChange {
+            ctx: state.ctx,
+            msgs: QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout.clone());
+        }
+    }
+}
+
 
 impl WaitForStartViewChange {
-    pub fn become_backup(&mut self,
+    pub fn become_backup(self,
                          view: u64,
                          op: u64,
                          log: Vec<VrMsg>,
@@ -199,13 +188,6 @@ impl WaitForStartViewChange {
         backup.commit(commit_num, output)
     }
 
-    fn insert_view_change_message(&mut self, from: Pid, msg: VrMsg) {
-        self.view_change_state.responses.insert(from, msg);
-    }
-
-    pub fn view_change_expired(&self) -> bool {
-        self.view_change_state.map_or(false, |s| s.responses.is_expired())
-    }
 
     fn send_do_view_change(&self, new_primary: Pid) -> FsmOutput {
         let cid = CorrelationId::pid(self.pid.clone());
@@ -234,9 +216,9 @@ impl WaitForStartViewChange {
             log: self.log.clone()
         };
         let latest = self.view_change_state.compute_latest_state(current);
-        self.op = latest.op;
-        self.log = latest.log;
-        self.last_normal_view = self.view;
+        self.ctx.op = latest.op;
+        self.ctx.log = latest.log;
+        self.ctx.last_normal_view = self.view;
         self.broadcast_start_view_msg(latest.commit_num, output);
         info!(self.logger, "Elected primary";
               "primary" => format!("{:?}", self.primary),
@@ -261,19 +243,4 @@ impl WaitForStartViewChange {
             commit_num: new_commit_num
         }.into()
     }
-
-    pub fn start_state_transfer_new_view(&mut self,
-                                         new_view: u64,
-                                         cid: CorrelationId,
-                                         output: &mut Vec<FsmOutput>)
-    {
-        self.last_received_time = SteadyTime::now();
-        self.view = new_view;
-        self.op = self.commit_num;
-        self.log.truncate(self.op as usize);
-        output.push(self.ctx.send_get_state_to_random_replica(cid));
-    }
-
-
-
 }

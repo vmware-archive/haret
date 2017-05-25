@@ -4,106 +4,64 @@ use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, Pre
 use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS};
 
-impl Transition<Prepare> for Backup {
-    fn next(mut self,
-            prepare: Prepare,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        ctx.last_received_time = SteadyTime::now();
-        let Prepare {op, commit_num, msg, ..} = prepare;
-        if op == self.ctx.op + 1 {
-            // This is the next op in order
-            self.send_prepare_ok(msg, commit_num, cid, output);
-            return self.commit(commit_num, output)
-        } else if op > ctx.op + 1 {
-            output.push(self.ctx.send_get_state_to_random_replica(cid));
-            return WaitForNewState::from(self).into();
-        }
-        self.into()
-    }
-}
-
-impl Transition<Commit> for Backup {
-    fn next(mut self,
-            msg: Commit,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        ctx.last_received_time = SteadyTime::now();
-        let Commit {commit_num, ..} = msg;
-        if commit_num == ctx.commit_num {
-            // We are already up to date
-            return self.into();
-        } else if commit_num == ctx.op {
-            return self.commit(commit_num, output);
-        }
+handle!(Prepare, Backup, {
+    ctx.last_received_time = SteadyTime::now();
+    let Prepare {op, commit_num, msg, ..} = prepare;
+    if op == self.ctx.op + 1 {
+        // This is the next op in order
+        self.send_prepare_ok(msg, commit_num, cid, output);
+        return self.commit(commit_num, output)
+    } else if op > ctx.op + 1 {
         output.push(self.ctx.send_get_state_to_random_replica(cid));
-        WaitForNewState::from(self).into();
+        return WaitForNewState::from(self).into();
     }
+    self.into()
 }
 
-impl Transition<Tick> for Backup {
-    fn next(mut self,
-            _: Tick,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        if self.ctx.idle_timeout() {
-            self.ctx.reset_and_start_view_change(output);
-            return WaitForStartViewChange::from(self).into();
-        }
-        self.into()
+handle!(Commit, Backup, {
+    ctx.last_received_time = SteadyTime::now();
+    let Commit {commit_num, ..} = msg;
+    if commit_num == ctx.commit_num {
+        // We are already up to date
+        return self.into();
+    } else if commit_num == ctx.op {
+        return self.commit(commit_num, output);
     }
+    output.push(self.ctx.send_get_state_to_random_replica(cid));
+    WaitForNewState::from(self).into();
 }
 
-impl Transition<GetState> for Backup {
-    fn next(mut self,
-            msg: GetState,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        let GetState {op, from, ..} = msg;
-        output.push(self.ctx.send_new_state(op, from, cid));
-        self.into()
+handle!(Tick, Backup, {
+    if self.ctx.idle_timeout() {
+        let new_state = WaitForStartViewChange::from(self);
+        new_state.ctx.start_view_change(output);
+        return new_state.into();
     }
+    self.into()
 }
 
-impl Transition<Recovery> for Backup {
-    fn next(mut self,
-            msg: Recovery,
-            _: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        let Recovery {from, nonce} = msg;
-        output.push(self.ctx.send_recovery_response(from, nonce, cid));
-        self.into()
-    }
+handle!(GetState, Backup, {
+    let GetState {op, from, ..} = msg;
+    output.push(self.ctx.send_new_state(op, from, cid));
+    self.into()
 }
 
-impl Transition<StartEpoch> for Backup {
-    fn next(mut self,
-            msg: StartEpoch,
-            from: Pid,
-            cid: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates
-    {
-        self.ctx.send_epoch_started(msg, from, cid, output);
-        self.into()
-    }
+handle!(Recovery, Backup, {
+    let Recovery {from, nonce} = msg;
+    output.push(self.ctx.send_recovery_response(from, nonce, cid));
+    self.into()
+}
+
+handle!(StartEpoch, Backup, {
+    self.ctx.send_epoch_started(msg, from, cid, output);
+    self.into()
 }
 
 impl Backup {
     pub fn new(ctx: VrCtx) -> Backup {
         Backup {
             ctx: ctx,
-            primary: self.ctx.compute_primary(),
-            idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64)
+            primary: self.ctx.compute_primary()
         }
     }
 
