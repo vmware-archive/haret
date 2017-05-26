@@ -1,5 +1,8 @@
 # haret
 
+[![Build
+Status](https://travis-ci.org/vmware/haret.svg?branch=master)](https://travis-ci.org/vmware/haret)
+
 haret provides a distributed service built on proven protocols that exposes strongly consistent coordination primitives via an easy to use API, in order to satisfy the essential dependencies of many distributed applications. You can read more about why we decided to build haret [here](https://github.com/vmware/haret/blob/master/docs/why.md).
 
 This README contains quickstart instructions for both developers and users. More information
