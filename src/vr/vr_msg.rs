@@ -132,15 +132,13 @@ msg!(ClientReply {
 msg!(StartViewChange {
     epoch: u64,
     view: u64,
-    op: u64,
-    from: Pid
+    op: u64
 });
 
 msg!(DoViewChange {
     epoch: u64,
     view: u64,
     op: u64,
-    from: Pid,
     last_normal_view: u64,
     log: Vec<VrMsg>,
     commit_num: u64
@@ -165,8 +163,7 @@ msg!(Prepare {
 msg!(PrepareOk {
     epoch: u64,
     view: u64,
-    op: u64,
-    from: Pid
+    op: u64
 });
 
 msg!(Commit {
@@ -178,8 +175,7 @@ msg!(Commit {
 msg!(GetState {
     epoch: u64,
     view: u64,
-    op: u64,
-    from: Pid
+    op: u64
 });
 
 msg!(NewState {
@@ -192,7 +188,6 @@ msg!(NewState {
 });
 
 msg!(Recovery {
-    from: Pid,
     nonce: Uuid
 });
 
@@ -200,7 +195,6 @@ msg!(RecoveryResponse {
     epoch: u64,
     view: u64,
     nonce: Uuid,
-    from: Pid,
     // The following fields are only valid when sent by the Primary
     op: Option<u64>,
     commit_num: Option<u64>,
@@ -215,7 +209,6 @@ msg!(StartEpoch {
 });
 
 msg!(EpochStarted {
-    epoch: u64,
-    from: Pid
+    epoch: u64
 });
 

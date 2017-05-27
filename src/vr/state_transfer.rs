@@ -12,34 +12,11 @@ handle!(Tick, WaitForNewState, {
     self.into()
 }
 
-impl From<WaitForStartViewChange> for WaitForNewState {
-    fn from(state: WaitForStartViewChange) -> WaitForNewState {
+/// Convert any State to WaitForNewState by taking its ctx
+impl<T: State> From<T> for WaitForNewState {
+    fn from(state: T) -> WaitForNewState {
         WaitForNewState {
-            ctx: state.ctx
-        }
-    }
-}
-
-impl From<WaitForStartView> for WaitForNewState {
-    fn from(state: WaitForStartView) -> WaitForNewState {
-        WaitForNewState {
-            ctx: state.ctx
-        }
-    }
-}
-
-impl From<Backup> for WaitForNewState {
-    fn from(state: Backup) -> WaitForNewState {
-        WaitForNewState {
-            ctx: state.ctx
-        }
-    }
-}
-
-impl From<ReconfigurationWaitForNewState> for WaitForNewState {
-    fn from(state: ReconfigurationWaitForNewState) -> WaitForNewState {
-        WaitForNewState {
-            ctx: state.ctx
+            ctx: state.ctx()
         }
     }
 }

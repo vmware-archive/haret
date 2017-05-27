@@ -14,7 +14,13 @@ pub trait Transition<Msg> {
             msg: Msg,
             from: Pid,
             correlation_id: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates;
+            output: &mut Vec<FsmOutput>) -> VrStates {
+        self.into()
+    };
+}
+
+pub trait State {
+    fn ctx(self) -> VrCtx;
 }
 
 /// Generate an impl of Transition<$Msg> for $State
@@ -49,6 +55,12 @@ macro_rules! state {
                 VrMsg::$struct_name(msg)
             }
         }
+
+        impl State for $struct_name {
+            fn ctx(self) -> VrCtx {
+                self.ctx
+            }
+        }
     }
 }
 
@@ -74,9 +86,41 @@ impl VrStates {
             output: &mut Vec<FsmOutput>) -> VrStates
     {
         match self {
-            VrStates::Primary(s) => next!(s, msg, from, cid, output),
-            VrStates::Backup(s) => next!(s, msg, from, cid, output),
-            VrStates::WaitForNewState(s) => next!(s, msg, from, cid, output)
+            VrStates::Primary(s) => match_msg(s, msg, from, cid, output),
+            VrStates::Backup(s) => match_msg(s, msg, from, cid, output),
+            VrStates::WaitForNewState(s) => match_msg(s, msg, from, cid, output),
+            VrStates::WaitForStartViewChange(s) => match_msg(s, msg, from, cid, output),
+            VrStates::WaitForDoViewChange(s) => match_msg(s, msg, from, cid, output),
+            VrStates::WaitForStartView(s) => match_msg(s, msg, from, cid, output),
+            VrStates::Recovery(s) => match_msg(s, msg, from, cid, output),
+            VrStates::Reconfiguration(s) => match_msg(s, msg, from, cid, output),
+            VrStates::Leaving(s) => match_msg(s, msg, from, cid, output),
+            VrStates::Shutdown(s) => match_msg(s, msg, from, cid, output)
+        }
+    }
+
+    fn match_msg<S: State>(state: S,
+                           msg: VrMsg,
+                           from: Pid,
+                           cid: CorrelationId,
+                           output: &mut Vec<FsmOutput>) -> VrStates {
+        match msg {
+            VrMsg::Tick => state.handle(Tick, from, cid, output),
+            VrMsg::ClientRequest(msg) => state.handle(msg, from, cid, output),
+            VrMsg::Reconfiguration(msg) => state.handle(msg, from, cid, output),
+            VrMsg::ClientReply(msg) => state.handle(msg, from, cid, output),
+            VrMsg::StartViewChange(msg) => state.handle(msg, from, cid, output),
+            VrMsg::DoViewChange(msg) => state.handle(msg, from, cid, output),
+            VrMsg::StartView(msg) => state.handle(msg, from, cid, output),
+            VrMsg::Prepare(msg) => state.handle(msg, from, cid, output),
+            VrMsg::PrepareOk(msg) => state.handle(msg, from, cid, output),
+            VrMsg::Commit(msg) => state.handle(msg, from, cid, output)
+            VrMsg::GetState(msg) => state.handle(msg, from, cid, output),
+            VrMsg::NewState(msg) => state.handle(msg, from, cid, output),
+            VrMsg::Recovery(msg) => state.handle(msg, from, cid, output),
+            VrMsg::RecoveryResponse(msg) => state.handle(msg, from, cid, output),
+            VrMsg::StartEpoch(msg) => state.handle(msg, from, cid, output),
+            VrMsg::EpochStarted(msg) => state.handle(msg, from, cid, output)
         }
     }
 }
@@ -155,142 +199,6 @@ state!(Leaving {
 ///
 /// It doesn't respond to any messages from here on out
 state!(Shutdown {});
-
-
-macro_rules! check_epoch {
-    ($ctx:ident, $envelope:ident, $state:ident) => {
-        if let Some(epoch) = $envelope.msg.get_epoch() {
-            if epoch < $ctx.epoch {
-                return next!($state);
-            }
-            if epoch == $ctx.epoch + 1 {
-                return start_reconfiguration($ctx, $envelope, epoch);
-            }
-            if epoch > $ctx.epoch + 1 {
-                // We have been partitioned for one or multiple reconfigurations. We need to catch up.
-                // We don't know what the old or new configs are to ask for the latest state. Therefore we wait
-                // for a normal message in the new epoch with a 'from' field. We can then begin state transfer
-                // using that replica.
-                return learn_config($ctx, epoch);
-            }
-        }
-    }
-}
-
-macro_rules! check_view {
-    ($ctx:ident, $envelope:ident, $state:ident) => {
-        if let Some(view) = $envelope.msg.get_view() {
-            if view < $ctx.view {
-                return next!($state);
-            }
-            if view > $ctx.view {
-                return handle_later_view($ctx, $envelope, view);
-            }
-        }
-    }
-}
-
-macro_rules! handle_common {
-    ($ctx:ident, $envelope:ident, $state:ident) => {
-        check_epoch!($ctx, $envelope, $state);
-        check_view!($ctx, $envelope, $state);
-    }
-}
-
-/// A new epoch was just seen in the message. If it's a commit message with a `commit_num` equal to
-/// the `op`, it means that it's the reconfiguration being committed and this backup is up to
-/// date. If it's not an up to date config message then we don't know the new nodes. Let's try to
-/// learn those in learn_config before doing state transfer.
-///
-/// Note that this function will never run on newly created replicas in the new group. New
-/// replicas are started knowing the old and new configuration and immediately start state transfer,
-/// thus skipping the need to run this function.
-///
-/// Since this runs only on old nodes
-pub fn start_reconfiguration(ctx: &mut VrCtx, envelope: VrEnvelope, epoch: u64) -> Transition {
-    ctx.epoch = epoch;
-    match envelope.msg {
-        VrMsg::Commit {commit_num, ..} if commit_num == ctx.op => {
-            ctx.last_received_time = SteadyTime::now();
-            // We only handle requests when we have the reconfiguration in the log. Backup commit
-            // will play it and we'll learn the new members.
-            ctx.view = 0;
-            let mut output = ctx.backup_commit(commit_num);
-            if ctx.is_leaving() {
-                ctx.clear_epoch_started_msgs();
-                return next!(leaving, output);
-            }
-            output.extend_from_slice(&ctx.broadcast_epoch_started(envelope.correlation_id));
-            if ctx.is_primary() {
-                return next!(primary, output);
-            }
-            next!(backup, output)
-        },
-
-        // TODO: Fix this to do state transfer from the old group
-        //
-        // We have been partitioned and missed the reconfiguration. At least a quorum of new nodes
-        // is normally processing requests, and the leaving replicas may have shut down.
-        // We don't yet know what the 'new_config' is though.
-        msg => {
-            println!("start_reconfiguration msg = {:#?}, ctx.op = {}", msg, ctx.op);
-            return learn_config(ctx, epoch);
-        }
-    }
-}
-
-pub fn handle_later_view(ctx: &mut VrCtx, envelope: VrEnvelope, new_view: u64) -> Transition {
-    debug!(ctx.logger,
-           "handle_later_view: epoch = {}, new_view = {}, from = {}",
-           ctx.epoch, new_view, envelope.from);
-    match envelope.msg.clone() {
-        VrMsg::StartViewChange {from, ..} => {
-            debug!(ctx.logger,
-                   "handle_later_view: StartViewChange: epoch = {}, new_view = {}, from = {}",
-                   ctx.epoch, new_view, from);
-            let mut output = ctx.reset_view_change_state(new_view);
-            output.extend(ctx.start_view_change());
-            ctx.insert_view_change_message(from, envelope.msg);
-            if ctx.has_view_change_quorum() {
-                let computed_primary = ctx.compute_primary();
-                if computed_primary == ctx.pid {
-                    let view = ctx.view;
-                    output.extend(ctx.reset_view_change_state(view));
-                    return next!(wait_for_do_view_change, output)
-                }
-                output.push(ctx.send_do_view_change(computed_primary));
-                return next!(wait_for_start_view, output);
-            }
-            next!(wait_for_start_view_change, output)
-        },
-        VrMsg::DoViewChange {from, ..} => {
-            debug!(ctx.logger,
-                   "handle_later_view: DoViewChange : epoch = {}, new_view = {}, from = {}",
-                   ctx.epoch, new_view, from);
-            let output = ctx.reset_view_change_state(new_view);
-            ctx.insert_view_change_message(from, envelope.msg);
-            if ctx.has_view_change_quorum() {
-                let output = ctx.become_primary();
-                return next!(primary, output);
-            }
-            next!(wait_for_do_view_change, output)
-        },
-        VrMsg::StartView{op, log, commit_num, ..} => {
-            debug!(ctx.logger, "Start View: DoViewChange : epoch = {}, new_view = {}, from = {}",
-                   ctx.epoch, new_view, envelope.from);
-            let output = ctx.become_backup(new_view, op, log, commit_num);
-            next!(backup, output)
-        },
-        _ => {
-            debug!(ctx.logger,
-                   "handle_later_view: Non-ViewChange msg: epoch = {}, new_view = {}, from = {}",
-                   ctx.epoch, new_view, envelope.from);
-            // We've missed the view change and are likely out of date
-            let output = ctx.start_state_transfer_new_view(new_view, envelope.correlation_id);
-            next!(state_transfer, output)
-        }
-    }
-}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // FSM STATES

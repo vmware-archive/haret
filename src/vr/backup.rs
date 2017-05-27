@@ -21,10 +21,10 @@ handle!(Prepare, Backup, {
 handle!(Commit, Backup, {
     ctx.last_received_time = SteadyTime::now();
     let Commit {commit_num, ..} = msg;
-    if commit_num == ctx.commit_num {
+    if commit_num == self.ctx.commit_num {
         // We are already up to date
         return self.into();
-    } else if commit_num == ctx.op {
+    } else if commit_num == self.ctx.op {
         return self.commit(commit_num, output);
     }
     output.push(self.ctx.send_get_state_to_random_replica(cid));
