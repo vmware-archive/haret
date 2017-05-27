@@ -75,72 +75,6 @@ impl VrCtx {
         self.primary.as_ref().map_or(false, |p| *p == self.pid)
     }
 
-    fn new_recovery_state(&self) -> RecoveryState {
-        RecoveryState::new(self.quorum, self.idle_timeout.clone())
-    }
-
-    pub fn start_recovery(&mut self) -> Vec<FsmOutput> {
-        self.recovery_state = Some(self.new_recovery_state());
-        self.broadcast(self.recovery_msg(), CorrelationId::pid(self.pid.clone()))
-    }
-
-    pub fn update_recovery_state(&mut self, msg: VrMsg) {
-        if let VrMsg::RecoveryResponse {epoch, view, nonce, from, op, commit_num, log} = msg {
-            if nonce != self.recovery_state.as_ref().unwrap().nonce { return; }
-            if epoch < self.epoch { return; }
-
-            // TODO: If we get a response from a replica in a later epoch, we are in a weird state
-            // We missed a reconfiguration and the namespace manager hasn't learned of the epoch
-            // change yet. What we really want is to wait for the namespace manager to learn of the
-            // replicas in the later epoch and restart the replica. For now we're ignoring that this
-            // situation can even occur. We just return without processing the message.. This is
-            // clearly wrong.
-            if epoch > self.epoch {
-                println!("EPOCH RECONFIGURATION DURING RECOVERY: Replica {} in a bad state",
-                         self.pid);
-                return;
-            }
-
-            if view > self.view {
-                self.view = view;
-            }
-
-            let response_from_primary = op.is_some();
-            if response_from_primary && view == self.view {
-                self.recovery_state.as_mut().unwrap().primary = Some(RecoveryPrimary {
-                    pid: from.clone(),
-                    view: view,
-                    op: op.unwrap(),
-                    commit_num: commit_num.unwrap(),
-                    log: log.unwrap()
-                });
-            }
-            self.recovery_state.as_mut().unwrap().responses.insert(from, ())
-        } else {
-            unreachable!()
-        }
-    }
-
-    pub fn commit_recovery(&mut self) -> Option<Vec<FsmOutput>> {
-        if self.recovery_state.as_ref().unwrap().has_quorum(self.view) {
-            let mut output = vec![self.set_primary()];
-            let commit_num = {
-                let primary_state = self.recovery_state.as_ref().unwrap().primary.as_ref().unwrap();
-                self.op = primary_state.op;
-                self.log = primary_state.log.clone();
-                primary_state.commit_num
-            };
-            output.extend_from_slice(&self.backup_commit(commit_num));
-            self.recovery_state = Some(self.new_recovery_state());
-            return Some(output);
-        }
-        None
-    }
-
-    pub fn recovery_expired(&self) -> bool {
-        self.recovery_state.as_ref().map_or(false, |s| s.responses.is_expired())
-    }
-
     pub fn clear_epoch_started_msgs(&mut self) {
         self.epoch_started_msgs = QuorumTracker::new(self.quorum as usize, &self.idle_timeout);
     }
@@ -199,26 +133,23 @@ impl VrCtx {
         FsmOutput::Vr(VrEnvelope::new(to, self.pid.clone(), msg, cid))
     }
 
-    pub fn broadcast_start_epoch(&self) -> Vec<FsmOutput> {
-        self.broadcast(self.start_epoch_msg(), CorrelationId::pid(self.pid.clone()))
-    }
-
-    pub fn rebroadcast_reconfig(&self) -> Vec<FsmOutput> {
-        let reconfig = self.log[(self.op - 1) as usize].clone();
-        if let VrMsg::Reconfiguration {..} = reconfig {
-            let prepare = self.prepare_msg(reconfig);
-            return self.broadcast(prepare, CorrelationId::pid(self.pid.clone()));
-        }
-        unreachable!();
+    pub fn broadcast_start_epoch(&self, output: &mut Vec<FsmOutput>) {
+        self.broadcast(self.start_epoch_msg(), CorrelationId::pid(self.pid.clone()), output)
     }
 
     // During reconfiguration if we are not up to date we need to send a get state request to all
     // replicas to ensure we get the latest results.
-    pub fn broadcast_old_and_new(&self, msg: VrMsg, cid: CorrelationId) -> Vec<FsmOutput> {
-        self.old_config.replicas.iter().cloned().chain(self.new_config.replicas.iter().cloned())
-            .filter(|pid| *pid != self.pid)
-            .map(|pid| self.vr_new(pid, msg.clone(), cid.clone()))
-            .collect()
+    pub fn broadcast_old_and_new(&self, msg: VrMsg,
+                                 cid: CorrelationId,
+                                 output: &mut Vec<FsmOutput>)
+    {
+        output.extend(self.old_config
+                      .replicas
+                      .iter()
+                      .cloned()
+                      .chain(self.new_config.replicas.iter().cloned())
+                      .filter(|pid| *pid != self.pid)
+                      .map(|pid| self.vr_new(pid, msg.clone(), cid.clone())));
     }
 
     /// Wrap a VrMsg in an envelope and send to all old replicas
@@ -404,13 +335,6 @@ impl VrCtx {
             primary: self.primary.clone(),
             commit_num: self.commit_num,
             log_tail: (&self.log[op as usize..self.op as usize]).to_vec()
-        }.into()
-    }
-
-    pub fn recovery_msg(&self) -> VrMsg {
-        Recovery {
-            from: self.pid.clone(),
-            nonce: self.recovery_state.as_ref().unwrap().nonce.clone()
         }.into()
     }
 

@@ -52,7 +52,6 @@ macro_rules! state {
     }
 }
 
-
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum VrStates {
     Primary(Primary),
@@ -65,6 +64,21 @@ pub enum VrStates {
     ReconfigurationWaitForNewState(ReconfigurationWaitForNewState),
     Leaving(Leaving),
     Shutdown(Shutdown)
+}
+
+impl VrStates {
+    fn next(self,
+            msg: VrMsg,
+            from: Pid,
+            cid: CorrelationId,
+            output: &mut Vec<FsmOutput>) -> VrStates
+    {
+        match self {
+            VrStates::Primary(s) => next!(s, msg, from, cid, output),
+            VrStates::Backup(s) => next!(s, msg, from, cid, output),
+            VrStates::WaitForNewState(s) => next!(s, msg, from, cid, output)
+        }
+    }
 }
 
 /// The primary state of the VR protocol operating in normal mode
@@ -117,18 +131,6 @@ state!(WaitForStartView {
 state!(Recovery {
     pub ctx: VrCtx,
     pub state: RecoveryState
-});
-
-/// The first step for the primary in the reconfiguration part of the VR protocol
-///
-/// The primary has sent a `Prepare` containing the reconfiguration and is waiting for a quorum of
-/// `PrepareOk` messages
-state!(ReconfigurationWaitForPrepareOk {
-    pub ctx: VrCtx,
-    pub prepare_requests: PrepareRequests,
-    /// If the primary doesn't receive a new client request in `tick_ms` it sends a commit
-    /// message to the backups. `ctx.idle_timeout` should be at least twice as large as this value.
-    pub tick_ms: u64
 });
 
 /// The state where a new replica is added to the group as part of Reconfiguration
@@ -313,121 +315,3 @@ pub fn startup_reconfiguration(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
     next!(reconfiguration_wait_for_new_state, output)
 }
 
-
-/// This is the state of the primary after it has sent a Prepare message containing the client
-/// reconfiguration request.
-pub fn wait_for_reconfiguration_prepare_ok(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
-    handle_common!(ctx, envelope, wait_for_reconfiguration_prepare_ok);
-    match envelope.msg {
-        VrMsg::PrepareOk {op, ref from, ..} if op == ctx.op => {
-            if ctx.has_commit_quorum(op, from.clone()) {
-                let output = ctx.primary_commit(op);
-                // We committed the reconfiguration request
-                if ctx.is_primary() {
-                    return next!(primary, output);
-                }
-                return next!(backup, output)
-            }
-            next!(wait_for_reconfiguration_prepare_ok)
-        },
-        VrMsg::Tick => {
-            // If we haven't received quorum of PrepareOk in time then re-broadcast Prepare
-            if ctx.prepare_requests.expired() {
-                let output = ctx.rebroadcast_reconfig();
-                return next!(wait_for_reconfiguration_prepare_ok, output);
-            }
-            next!(wait_for_reconfiguration_prepare_ok)
-        }
-        _ => next!(wait_for_reconfiguration_prepare_ok)
-    }
-}
-
-pub fn reconfiguration_wait_for_new_state(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
-    handle_common!(ctx, envelope, reconfiguration_wait_for_new_state);
-    match envelope.msg {
-        VrMsg::NewState {op, ..} if op >= ctx.new_config.op => {
-            let mut output = ctx.set_from_new_state_msg(envelope.msg);
-            if ctx.is_leaving() {
-                ctx.clear_epoch_started_msgs();
-                return next!(leaving, output)
-            }
-            output.extend_from_slice(&ctx.broadcast_epoch_started(envelope.correlation_id));
-            if ctx.is_primary() {
-                return next!(primary, output)
-            }
-            next!(backup, output)
-        },
-        VrMsg::Tick => {
-            // If we haven't gotten a NewState in time then re-broadcast GetState
-            if ctx.idle_timeout() {
-                let output = ctx.start_state_transfer_reconfiguration();
-                return next!(reconfiguration_wait_for_new_state, output);
-            }
-            next!(reconfiguration_wait_for_new_state)
-        },
-        _ => next!(reconfiguration_wait_for_new_state)
-    }
-}
-
-
-/// A replica has just started back up and needs to recover its log from other replicas
-pub fn recovery(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
-    match envelope.msg {
-        VrMsg::RecoveryResponse {..} => {
-            ctx.update_recovery_state(envelope.msg);
-            ctx.commit_recovery().map_or(next!(recovery), |output| next!(backup, output))
-        },
-        VrMsg::Tick => {
-            if ctx.recovery_expired() {
-                let output = ctx.start_recovery();
-                next!(recovery, output)
-            } else {
-                next!(recovery)
-            }
-        },
-        _ => next!(recovery)
-    }
-}
-
-
-/// A replica is in this state after it has a reconfiguration request in its log and it is not in
-/// the new configuration. It is waiting for f' + 1 EpochStarted messages so that it can shutdown.
-pub fn leaving(ctx: &mut VrCtx, envelope: VrEnvelope) -> Transition {
-    match envelope.msg {
-        // TODO: What if epoch > ctx.epoch ?
-        VrMsg::EpochStarted {epoch, ref from, ..} if epoch == ctx.epoch => {
-            ctx.epoch_started_msgs.insert(from.clone(), envelope.msg.clone());
-            if ctx.epoch_started_msgs.has_quorum() {
-                ctx.clear_epoch_started_msgs();
-                let output = vec![FsmOutput::Announcement(NamespaceMsg::Stop(ctx.pid.clone()),
-                                                          ctx.pid.clone())];
-                return next!(shutdown, output)
-            }
-            next!(leaving)
-        },
-        VrMsg::Tick => {
-            if ctx.epoch_started_msgs.is_expired() {
-                let output = ctx.broadcast_start_epoch();
-                return next!(leaving, output);
-            }
-            next!(leaving)
-        }
-        _ => next!(leaving)
-    }
-}
-
-/// This replica has already told the dispatcher to shut it down. It just waits in this state and
-/// doesn't respond to any messages from this point out.
-pub fn shutdown(_ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
-    next!(shutdown)
-}
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// END OF FSM STATES
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-fn learn_config(_ctx: &mut VrCtx, _epoch: u64) -> Transition {
-    unimplemented!();
-}

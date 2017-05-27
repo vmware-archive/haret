@@ -36,6 +36,14 @@ impl From<Backup> for WaitForNewState {
     }
 }
 
+impl From<ReconfigurationWaitForNewState> for WaitForNewState {
+    fn from(state: ReconfigurationWaitForNewState) -> WaitForNewState {
+        WaitForNewState {
+            ctx: state.ctx
+        }
+    }
+}
+
 impl WaitForNewState {
     pub fn become_backup(&mut self, msg: NewState, output: &mut Vec<FsmOutput>) -> VrStates {
         self.last_received_time = SteadyTime::now();
