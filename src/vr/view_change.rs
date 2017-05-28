@@ -5,6 +5,13 @@ use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 
 handle!(StartViewChange, WaitForStartViewChange, {
+    // Old messages we want to ignore. For New ones we want to wait until a primary is elected,
+    // since we know we are out of date and need to perform state transfer, which will fail until
+    // a replica is in normal mode.
+    if msg.epoch != self.ctx.epoch {
+        return self.into();
+    }
+
     self.ctx.last_received_time = SteadyTime::now();
     self.msgs.insert(from, msg);
     if self.msgs.has_quorum() {
@@ -21,6 +28,14 @@ handle!(StartViewChange, WaitForStartViewChange, {
 // Another replica got quorum of StartViewChange messages for this view and computed
 // that we are the primary for this view.
 handle!(DoViewChange, WaitForStartViewChange, {
+    // Old messages we want to ignore. We don't want to become the primary here either, since we
+    // didn't participate in reconfiguration, and therefore haven't yet learned about how many
+    // replicas we need to get quorum. We just want to wait until another replica is elected
+    // primary and then transfer state from it.
+    if msg.epoch != self.ctx.epoch {
+        return self.into();
+    }
+
     let new_state = WaitForDoViewChange::from(self);
     new_state.state.responses.insert(from, msg);
     if new_state.state.has_quorum() {

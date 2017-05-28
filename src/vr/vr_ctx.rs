@@ -53,7 +53,7 @@ impl VrCtx {
                new_config: VersionedReplicas) -> VrCtx
     {
         let quorum = new_config.replicas.len() / 2 + 1;
-       let idle_timeout = Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
+        let idle_timeout = Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
         VrCtx {
             logger: logger.new(o!("component" => "vr_ctx", "node_id" => me.node.to_string())),
             pid: me,
@@ -244,6 +244,7 @@ impl VrCtx {
         self.last_normal_view = 0;
         mem::swap(&mut self.old_config, &mut self.new_config);
         self.new_config = VersionedReplicas {epoch: self.epoch, op: op, replicas: replicas};
+        self.quorum = self.new_config.replicas.len() / 2 + 1;
     }
 
     #[inline]

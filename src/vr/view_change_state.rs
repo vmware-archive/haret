@@ -71,4 +71,3 @@ impl ViewChangeState {
             })
     }
 }
-
