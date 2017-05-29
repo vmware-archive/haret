@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use uuid::Uuid;
-use rabble::{Pid, CorrelationId};
-use rand::{thread_rng, Rng};
+use rabble::{Pid, CorrelationId}; use rand::{thread_rng, Rng};
 use slog::Logger;
 use std::collections::HashSet;
 use std::mem;
@@ -119,20 +118,6 @@ impl VrCtx {
         FsmOutput::Vr(VrEnvelope::new(from, self.pid.clone(), response, cid))
     }
 
-    pub fn send_get_state_to_random_replica(&self, cid: CorrelationId) -> FsmOutput {
-        self.send_to_random_replica(self.get_state_msg(), cid)
-    }
-
-    fn send_to_random_replica(&self, msg: VrMsg, cid: CorrelationId) -> FsmOutput {
-        let mut rng = thread_rng();
-        let mut to = self.pid.clone();
-        while to == self.pid {
-            let index = rng.gen_range(0, self.new_config.replicas.len());
-            to = self.new_config.replicas[index].clone()
-        }
-        FsmOutput::Vr(VrEnvelope::new(to, self.pid.clone(), msg, cid))
-    }
-
     pub fn broadcast_start_epoch(&self, output: &mut Vec<FsmOutput>) {
         self.broadcast(self.start_epoch_msg(), CorrelationId::pid(self.pid.clone()), output)
     }
@@ -173,37 +158,6 @@ impl VrCtx {
                       .filter(|pid| *pid != self.pid)
                       .map(|pid| self.vr_new(pid, msg.clone(), cid.clone())));
     }
-
-    pub fn has_view_change_quorum(&self) -> bool {
-        self.view_change_state.as_ref().map_or(false, |s| s.has_quorum())
-    }
-
-    pub fn new_primary_commit(&mut self, last_commit_num: u64) -> Vec<FsmOutput> {
-        let mut output = Vec::new();
-        for i in last_commit_num..self.commit_num {
-            let msg = self.log[i as usize].clone();
-            match msg {
-                VrMsg::ClientRequest {ref op, .. } => {
-                    // The client likely hasn't reconnected, don't bother sending a reply here
-                    self.backend.call(op.clone());
-                },
-                VrMsg::Reconfiguration {replicas, ..} => {
-                    self.epoch += 1;
-                    self.update_for_new_epoch(i+1, replicas);
-                    output.push(self.announce_reconfiguration());
-                    output.push(self.set_primary());
-                    output.extend_from_slice(&self.broadcast_commit_msg_old());
-                    // TODO: If we tracked VrEnvelope in the log instead of VrMsg, we would have a
-                    // proper cid here.
-                    let pid = self.pid.clone();
-                    output.extend_from_slice(&self.broadcast_epoch_started(CorrelationId::pid(pid)));
-                },
-                _ => unreachable!()
-            }
-        }
-        output
-    }
-
 
     pub fn announce_reconfiguration(&self) -> FsmOutput {
         FsmOutput::Announcement(NamespaceMsg::Reconfiguration {
@@ -294,12 +248,6 @@ impl VrCtx {
         self.start_view_change(output);
     }
 
-    pub fn start_view_change(&mut self, output: &mut Vec<FsmOutput>) {
-        let msg = self.start_view_change_msg();
-        let cid = CorrelationId::pid(self.pid.clone());
-        self.broadcast(msg, cid, output);
-    }
-
     /// Create a new `FsmOut::Vr(..)` variant
     fn vr_new(&self, to: Pid, msg: VrMsg, cid: CorrelationId) -> FsmOutput {
         FsmOutput::Vr(VrEnvelope::new(to, self.pid.clone(), msg.clone(), cid))
@@ -357,16 +305,6 @@ impl VrCtx {
         }.into()
     }
 
-    pub fn get_state_msg(&self) -> VrMsg {
-        GetState {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            from: self.pid.clone()
-        }.into()
-    }
-
-
     pub fn start_epoch_msg(&self) -> VrMsg {
         StartEpoch {
             epoch: self.epoch,
@@ -375,16 +313,6 @@ impl VrCtx {
             new_config: self.new_config.clone()
         }.into()
     }
-
-    pub fn start_view_change_msg(&self) -> VrMsg {
-        StartViewChange {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            from: self.pid.clone()
-        }.into()
-    }
-
 
     pub fn epoch_started_msg(&self) -> VrMsg {
         EpochStarted {
