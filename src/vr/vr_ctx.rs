@@ -83,28 +83,6 @@ impl VrCtx {
         self.new_config.replicas[index].clone()
     }
 
-    pub fn start_state_transfer_reconfiguration(&mut self) -> Vec<FsmOutput> {
-        self.last_received_time = SteadyTime::now();
-        self.view = 0;
-        self.op = self.commit_num;
-        self.log.truncate(self.op as usize);
-        self.broadcast_old_and_new(self.get_state_msg(), CorrelationId::pid(self.pid.clone()))
-    }
-
-    pub fn start_state_transfer_new_view(&mut self,
-                                         new_view: u64,
-                                         cid: CorrelationId,
-                                         output: &mut Vec<FsmOutput>)
-    {
-        self.last_received_time = SteadyTime::now();
-        self.view = new_view;
-        self.op = self.commit_num;
-        self.log.truncate(self.op as usize);
-        output.push(self.send_get_state_to_random_replica(cid));
-    }
-
-
-
     pub fn send_new_state(&mut self, op: u64, from: Pid, cid: CorrelationId) -> FsmOutput {
         FsmOutput::Vr(VrEnvelope::new(from, self.pid.clone(), self.new_state_msg(op), cid))
     }
@@ -120,21 +98,6 @@ impl VrCtx {
 
     pub fn broadcast_start_epoch(&self, output: &mut Vec<FsmOutput>) {
         self.broadcast(self.start_epoch_msg(), CorrelationId::pid(self.pid.clone()), output)
-    }
-
-    // During reconfiguration if we are not up to date we need to send a get state request to all
-    // replicas to ensure we get the latest results.
-    pub fn broadcast_old_and_new(&self, msg: VrMsg,
-                                 cid: CorrelationId,
-                                 output: &mut Vec<FsmOutput>)
-    {
-        output.extend(self.old_config
-                      .replicas
-                      .iter()
-                      .cloned()
-                      .chain(self.new_config.replicas.iter().cloned())
-                      .filter(|pid| *pid != self.pid)
-                      .map(|pid| self.vr_new(pid, msg.clone(), cid.clone())));
     }
 
     /// Wrap a VrMsg in an envelope and send to all old replicas
@@ -201,7 +164,6 @@ impl VrCtx {
         self.quorum = self.new_config.replicas.len() / 2 + 1;
     }
 
-    #[inline]
     /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
     /// here since the values are so small.
     pub fn idle_timeout(&self) -> bool {

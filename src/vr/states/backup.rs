@@ -1,30 +1,12 @@
 use std::convert::{From, Into};
+#[macro_use]
 use vr_fsm::{Transition, VrStates, Primary, Backup};
 use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
 use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS};
 
-
-macro_rules! up_to_date {
-    ($Self:ident, $Msg:ident, $Cid:ident, $Output:ident) => {
-        if $Msg.epoch < $Self.ctx.epoch {
-            return $Self.into();
-        }
-        if $Msg.epoch > $Self.ctx.epoch {
-            // Reconfiguration has already occurred since a primary in the new epoch is accepting
-            // requests and sending Prepare messages.
-            return $Self.become_backup_in_new_epoch($Msg.epoch, $Msg.view, $Output);
-        }
-        if $Msg.view < $Self.ctx.view {
-            return $Self.into();
-        }
-        if $Msg.view > $Self.ctx.view {
-            return WaitForNewState::start_state_transfer_new_view($Self, $Msg.view, $Cid, $Output);
-        }
-    }
-
 handle!(Prepare, Backup, {
-    up_to_date!(self, msg, cid, output);
+    up_to_date!(self, from, msg, cid, output);
     self.ctx.last_received_time = SteadyTime::now();
     let Prepare {op, commit_num, msg, ..} = prepare;
     if op == self.ctx.op + 1 {
@@ -32,13 +14,13 @@ handle!(Prepare, Backup, {
         self.send_prepare_ok(msg, commit_num, cid, output);
         return self.commit(commit_num, output)
     } else if op > ctx.op + 1 {
-        return WaitForNewState::start_state_transfer_same_view(self, output);
+        return StateTransfer::start_same_view(self, output);
     }
     self.into()
 }
 
 handle!(Commit, Backup, {
-    up_to_date!(self, msg, cid, output);
+    up_to_date!(self, from, msg, cid, output);
     self.ctx.last_received_time = SteadyTime::now();
     if msg.commit_num == self.ctx.commit_num {
         // We are already up to date
@@ -46,7 +28,7 @@ handle!(Commit, Backup, {
     } else if msg.commit_num == self.ctx.op {
         return self.commit(msg.commit_num, output);
     }
-    WaitForNewState::start_state_transfer_same_view(self, output)
+    StateTransfer::start_same_view(self, output)
 }
 
 handle!(StartViewChange, Backup, {
@@ -60,7 +42,7 @@ handle!(StartViewChange, Backup, {
         return self.into();
     }
 
-    WaitForStartViewChange::start_view_change(self, msg, output)
+    StartViewChange::start_view_change(self, msg, output)
 });
 
 handle!(DoViewChange, Backup, {
@@ -74,7 +56,7 @@ handle!(DoViewChange, Backup, {
     if msg.view <= self.ctx.view {
         return self.into();
     }
-    WaitForDoViewChange::do_view_change(self, from, msg, output)
+    DoViewChange::start_do_view_change(self, from, msg, output)
 });
 
 handle!(StartView, Backup, {
@@ -87,12 +69,14 @@ handle!(StartView, Backup, {
     // A primary has been elected in a new view / epoch
     // Even if the epoch is larger here, we will learn it and the new config by playing the log
     let StartView {view, op, log, commit_num, ..} = msg;
-    Backup::become(view, op, log, commit_num, output)
+    Backup::become_backup(view, op, log, commit_num, output)
 });
 
 handle!(Tick, Backup, {
     if self.ctx.idle_timeout() {
-        let new_state = WaitForStartViewChange::from(self);
+        self.ctx.last_received_time = SteadyTime::now();
+        self.ctx.view += 1;
+        let new_state = StartViewChange::from(self);
         new_state.broadcast_start_view_change(output);
         return new_state.into();
     }
@@ -100,6 +84,7 @@ handle!(Tick, Backup, {
 }
 
 handle!(GetState, Backup, {
+    up_to_date!(self, from, msg, cid, output);
     let GetState {epoch, view, op} = msg;
     if epoch != self.ctx.epoch || view != self.ctx.view {
         return self.into()
@@ -139,7 +124,7 @@ impl Backup {
     }
 
     /// Transition to a backup after receiving a `StartView` message
-    pub fn become<S: State>(state: S,
+    pub fn become_backup<S: State>(state: S,
                             view: u64,
                             op: u64,
                             log: Vec<VrMsg>,
@@ -164,12 +149,18 @@ impl Backup {
                 ClientOp::Request(ClientRequest {op, ..}) => {
                     self.ctx.backend.call(op);
                 },
-                ClientOp::Reconfiguration(Reconfiguration {replicas, ..}) => {
+                ClientOp::Reconfiguration(Reconfiguration {epoch, replicas, ..}) => {
+                    self.ctx.epoch = epoch;
                     self.ctx.update_for_new_epoch(i+1, replicas);
-                    self.commit_num = i + 1;
                     output.push(self.ctx.announce_reconfiguration());
                     output.push(self.set_primary());
-                    return self.enter_transitioning(output);
+
+                    // If the reconfiguration is not the last in the log, we don't want to
+                    // transition, as the reconfiguration has already happened.
+                    if new_commit_num  == self.ctx.log.len() {
+                        self.commit_num = new_commit_num;
+                        return self.enter_transitioning(output);
+                    }
                 },
             }
         }

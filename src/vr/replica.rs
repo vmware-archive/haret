@@ -11,29 +11,21 @@ use super::vr_ctx_summary::VrCtxSummary;
 use super::super::admin::{AdminReq, AdminRpy};
 
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
-/// It also takes care to only pass messages of type VrEnvelope to the FSM.
 pub struct Replica {
     pid: Pid,
-    fsm: Fsm<VrTypes>
+    state: VrStates
 }
 
 impl Replica {
-    pub fn new(pid: Pid, fsm: Fsm<VrTypes>) -> Replica {
+    pub fn new(pid: Pid, state: VrStates) -> Replica {
         Replica {
             pid: pid,
-            fsm: fsm
+            state: VrStates
         }
     }
 }
 
 impl Process<Msg> for Replica {
-    fn init(&mut self, from: Pid) -> Vec<Envelope<Msg>> {
-        let c_id = CorrelationId::pid(self.pid.clone());
-        let envelope = VrEnvelope::new(self.pid.clone(), from, VrMsg::Tick, c_id);
-        // Convert Vec<FsmOuput> to Vec<Envelope<Msg>>
-        self.fsm.send(envelope).into_iter().map(|e| e.into()).collect()
-    }
-
     fn handle(&mut self,
               msg: rabble::Msg<Msg>,
               from: Pid,
@@ -44,7 +36,7 @@ impl Process<Msg> for Replica {
                                                    |c_id| c_id);
         match msg {
             rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
-                let (state, ctx) = self.fsm.get_state();
+                let (state, ctx) = self.state.get_state();
                 let summary = VrCtxSummary::new(state, ctx);
                 let rpy = AdminRpy::ReplicaState(summary);
                 let msg = rabble::Msg::User(Msg::AdminRpy(rpy));

@@ -14,7 +14,8 @@ pub trait Transition<Msg> {
             msg: Msg,
             from: Pid,
             correlation_id: CorrelationId,
-            output: &mut Vec<FsmOutput>) -> VrStates {
+            output: &mut Vec<FsmOutput>) -> VrStates
+    {
         self.into()
     };
 }
@@ -28,9 +29,9 @@ pub trait State {
 macro_rules! handle {
     ($Msg:ty, $State:ty, $Code:block) => {
         #[allow(unused_variables)]
-        impl Transition<$Msg> for $State {
+        impl Transition<vr_msg::$Msg> for $State {
             fn next(self,
-                    msg: $Msg,
+                    msg: vr_msg::$Msg,
                     from: Pid,
                     cid: CorrelationId,
                     output: &mut Vec<FsmOutput>) -> VrStates $Code
@@ -64,16 +65,34 @@ macro_rules! state {
     }
 }
 
+macro_rules! up_to_date {
+    ($Self:ident, $From:ident, $Msg:ident, $Cid:ident, $Output:ident) => {
+        if $Msg.epoch < $Self.ctx.epoch {
+            return $Self.into();
+        }
+        if $Msg.epoch > $Self.ctx.epoch {
+            // Reconfiguration has already occurred since a primary in the new epoch is accepting
+            // requests and sending Prepare messages.
+            return StateTransfer::start_epoch($Self, $From, $Cid, $Msg.epoch, $Msg.view, $Output);
+        }
+        if $Msg.view < $Self.ctx.view {
+            return $Self.into();
+        }
+        if $Msg.view > $Self.ctx.view {
+            return StateTransfer::start_view($Self, $Msg.view, $Cid, $Output);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum VrStates {
     Primary(Primary),
     Backup(Backup),
-    WaitForNewState(WaitForNewState),
-    WaitForStartViewChange(WaitForStartViewChange),
-    WaitForDoViewChange(WaitForDoViewChange),
-    WaitForStartView(WaitForStartView),
+    StateTransfer(StateTransfer),
+    StartViewChange(StartViewChange),
+    DoViewChange(DoViewChange),
+    StartView(StartView),
     Recovery(Recovery),
-    ReconfigurationWaitForNewState(ReconfigurationWaitForNewState),
     Leaving(Leaving),
     Shutdown(Shutdown)
 }
@@ -88,12 +107,11 @@ impl VrStates {
         match self {
             VrStates::Primary(s) => match_msg(s, msg, from, cid, output),
             VrStates::Backup(s) => match_msg(s, msg, from, cid, output),
-            VrStates::WaitForNewState(s) => match_msg(s, msg, from, cid, output),
-            VrStates::WaitForStartViewChange(s) => match_msg(s, msg, from, cid, output),
-            VrStates::WaitForDoViewChange(s) => match_msg(s, msg, from, cid, output),
-            VrStates::WaitForStartView(s) => match_msg(s, msg, from, cid, output),
+            VrStates::StateTransfer(s) => match_msg(s, msg, from, cid, output),
+            VrStates::StartViewChange(s) => match_msg(s, msg, from, cid, output),
+            VrStates::DoViewChange(s) => match_msg(s, msg, from, cid, output),
+            VrStates::StartView(s) => match_msg(s, msg, from, cid, output),
             VrStates::Recovery(s) => match_msg(s, msg, from, cid, output),
-            VrStates::Reconfiguration(s) => match_msg(s, msg, from, cid, output),
             VrStates::Leaving(s) => match_msg(s, msg, from, cid, output),
             VrStates::Shutdown(s) => match_msg(s, msg, from, cid, output)
         }
@@ -144,20 +162,20 @@ state!(Backup {
 /// When a backup realizes it's behind it enters state transfer
 ///
 /// In this state, the backup is waiting for a `NewState` message
-state!(WaitForNewState {
+state!(StateTransfer {
     pub ctx: VrCtx
 });
 
 /// The part of the view change state in the VR protocol state machine where a replica is waiting
 /// for a quorum of `StartViewChange` messages.
-state!(WaitForStartViewChange {
+state!(StartViewChange {
     pub ctx: VrCtx,
     pub msgs: QuorumTracker<StartViewChange>
 });
 
 /// The part of the view change state in the VR protocol state machine the proposed primary is
 /// waiting for a quorum of `DoViewChange` messages.
-state!(WaitForDoViewChange {
+state!(DoViewChange {
     pub ctx: VrCtx,
     pub state: DoViewChangeState
 });
@@ -165,7 +183,7 @@ state!(WaitForDoViewChange {
 /// The part of the view change state in the VR protocol state machine where a replica is waiting
 /// for a `StartView` message from the new primary. It has already sent a `DoViewChange` to the
 /// proposed primary for this view.
-state!(WaitForStartView {
+state!(StartView {
     pub ctx: VrCtx,
     pub primary: Pid
 });
@@ -175,13 +193,6 @@ state!(WaitForStartView {
 state!(Recovery {
     pub ctx: VrCtx,
     pub state: RecoveryState
-});
-
-/// The state where a new replica is added to the group as part of Reconfiguration
-///
-/// In this state the replica is waiting for a `NewState` msg
-state!(ReconfigurationWaitForNewState {
-    pub ctx: VrCtx
 });
 
 /// The state where a replica is in the process of shutting down
@@ -204,12 +215,6 @@ state!(Shutdown {});
 // FSM STATES
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Startup states always receive a tick message to kick things off
-
-/// Start this FSM as part of a newly created namespace
-pub fn startup_new_namespace(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {
-    let output = ctx.reset_and_start_view_change();
-    next!(wait_for_start_view_change, output)
-}
 
 /// Start this FSM in recovery mode
 pub fn startup_recovery(ctx: &mut VrCtx, _: VrEnvelope) -> Transition {

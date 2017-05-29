@@ -345,8 +345,12 @@ impl NamespaceMgr {
                                 new_config);
        ctx.idle_timeout = self.idle_timeout.clone();
        ctx.primary_tick_ms = self.primary_tick_ms;
-       let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(vr_fsm::startup_new_namespace));
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
+       let state = if pid == ctx.compute_primary() {
+           VrStates::Primary(Primary::new(ctx))
+       } else {
+           VrStates::Backup(Backup::new(ctx));
+       };
+       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
        self.local_replicas.insert(pid);
     }
 

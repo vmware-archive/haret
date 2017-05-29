@@ -7,11 +7,58 @@ use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 
 handle!(ClientRequest, Primary, {
+    if msg.epoch != self.ctx.epoch || msg.view != self.ctx.view {
+        // TODO: Inform client about the change in epoch
+        // Redirect to the primary with the correct epoch
+        return self.into();
+    }
     self.send_prepare(msg, from, cid, output);
     self.into()
 });
 
+handle!(Reconfiguration, Primary, {
+    if msg.epoch != self.ctx.epoch || msg.view != self.ctx.view {
+        // TODO: Inform client about the change in epoch
+        // Redirect to the primary with the correct epoch
+        return self.into();
+    }
+    if let Some(err_envelope) = self.validate_reconfig(&msg, &from, &cid) {
+        output.push(err_envelope);
+        return self.into();
+    }
+    self.reconfiguration_in_progress = true;
+    self.send_prepare(msg, from, cid, output);
+    self.into()
+});
+
+
+handle!(Prepare, Primary, {
+    up_to_date!(self, from, msg, cid, output);
+    unreachable!()
+});
+
+handle!(Commit, Primary, {
+    up_to_date!(self, from, msg, cid, output);
+    unreachable!()
+});
+
+handle!(StartViewChange, Primary, {
+    up_to_date!(self, from, msg, cid, output);
+    state.into()
+});
+
+handle!(DoViewChange, Primary, {
+    up_to_date!(self, from, msg, cid, output);
+    self.into()
+});
+
+handle!(StartView, Primary {
+    up_to_date!(self, from, msg, cid, output);
+    unreachable!()
+}):
+
 handle!(PrepareOk, Primary, {
+    up_to_date!(self, from, msg, cid, output);
     let PrepareOk {op, from, ..} = msg;
     if op <= ctx.commit_num {
         return self.into();
@@ -21,42 +68,31 @@ handle!(PrepareOk, Primary, {
         return self.commit(op, output);
     }
     self.into()
-}
+});
 
 handle!(Tick, Primary, {
     if self.idle_timeout() {
+        self.ctx.last_received_time = SteadyTime::now();
         self.broadcast_commit_msg(output);
     }
     self.into()
-}
+});
 
 handle!(GetState, Primary, {
-    let GetState {op, from, ..} = msg;
-    output.push(self.ctx.send_new_state(op, from, cid));
+    up_to_date!(self, from, msg, cid, output);
+    output.push(self.ctx.send_new_state(msg.op, from, cid));
     self.into()
-}
+});
 
 handle!(Recovery, Primary, {
-    let Recovery {from, nonce} = msg;
-    output.push(self.ctx.send_recovery_response(from, nonce, cid));
+    output.push(self.ctx.send_recovery_response(from, msg.nonce, cid));
     self.into()
-}
-
-handle!(Reconfiguration, Primary, {
-    if let Some(err_envelope) = self.validate_reconfig(&msg, &from, &cid) {
-        output.push(err_envelope);
-        return self.into();
-    }
-    self.reconfiguration_in_progress = true;
-    self.send_prepare(msg, from, cid, output);
-    self.into()
-}
+});
 
 handle!(StartEpoch, Primary, {
     self.ctx.send_epoch_started(msg, from, cid, output);
     self.into()
-}
-
+});
 
 impl Primary {
     fn new(ctx: VrCtx) -> Primary {
@@ -106,7 +142,7 @@ impl Primary {
                     let rsp = self.ctx.backend.call(op);
                     if i >= lowest_prepared_op - 1 {
                         // This primary prepared this request, and wasn't elected after it was
-                        // prepared but before it committed it.
+                        // prepared but before it was committed.
                         let cid = iter.next().unwrap().correlation_id;
                         let from = cid.pid.clone();
                         output.push(self.client_reply(rsp, request_num, &from, &cid));
@@ -134,20 +170,24 @@ impl Primary {
                             CorrelationId::pid(self.ctx.pid.clone())
                         };
 
+
+                    self.ctx.epoch = epoch;
+                    self.ctx.update_for_new_epoch(i+1, replicas);
+                    output.push(self.ctx.announce_reconfiguration());
+                    output.push(self.set_primary());
+
                     // If the Reconfiguration is the last entry in the log, then this is either the
                     // primary that received the client request, or a view change occurred and this
                     // is a new primary in the epoch of the reconfiguration request processing the
                     // reconfiguration
+                    //
+                    // If the reconfiguration is not the last in the log, we don't want to
+                    // transition, as the reconfiguration has already happened.
                     if new_commit_num == self.ctx.log.len() {
-                        self.ctx.epoch += 1;
-                        self.ctx.update_for_new_epoch(i+1, replicas);
-                        output.push(self.ctx.announce_reconfiguration());
-                        output.push(self.set_primary());
                         output.extend(self.broadcast_commit_msg_old());
                         // We don't bother sending 'StartEpoch` requests to the new replicas here,
                         // since they aren't yet online.
                         return self.enter_transitioning(output);
-                    }
                 }
             }
         }
@@ -183,7 +223,7 @@ impl Primary {
             Some(VrApiError::Msg("Reconfiguration in progress".to_owned()))
         } else if replicas.len() < 3 {
             Some(VrApiError::NotEnoughReplicas)
-        } else if epoch < self.epoch || epoch > self.epoch {
+        } else if epoch != self.epoch {
             Some(VrApiError::BadEpoch)
         } else if *replicas == self.new_config.replicas {
             Some(VrApiError::Msg("No change to existing configuration".to_owned()))
@@ -230,9 +270,11 @@ impl Primary {
 
     fn set_primary(&mut self) -> FsmOutput {
         let primary = self.ctx.compute_primary();
+        info!(self.logger, "Elected primary";
+              "primary" => format!("{:?}", self.primary),
+              "view" => self.view);
         FsmOutput::Announcement(NamespaceMsg::NewPrimary(primary), self.ctx.pid.clone())
     }
-
 
     fn idle_timeout(&self) -> bool {
         SteadyTime::now() - self.ctx.last_received_time >
