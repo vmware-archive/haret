@@ -1,10 +1,20 @@
 use std::convert::{From, Into};
 
 #[macro_use]
-use vr_fsm::{Transition, VrStates, Primary, Backup};
+use vr_fsm::{Transition, VrState, State, Primary, Backup};
 use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
 use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+
+/// The primary state of the VR protocol operating in normal mode
+state!(Primary {
+    pub ctx: VrCtx,
+    pub prepare_requests: PrepareRequests,
+    /// If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
+    /// message to the backups. `idle_timeout` should be at least twice as large as this value.
+    pub tick_ms: u64,
+    pub reconfiguration_in_progress: bool
+});
 
 handle!(ClientRequest, Primary, {
     if msg.epoch != self.ctx.epoch || msg.view != self.ctx.view {
@@ -80,17 +90,17 @@ handle!(Tick, Primary, {
 
 handle!(GetState, Primary, {
     up_to_date!(self, from, msg, cid, output);
-    output.push(self.ctx.send_new_state(msg.op, from, cid));
+    output.push(StateTransfer::send_new_state(&self.ctx, msg.op, from, cid));
     self.into()
 });
 
 handle!(Recovery, Primary, {
-    output.push(self.ctx.send_recovery_response(from, msg.nonce, cid));
+    output.push(Recovery::send_response(&self.ctx, from, msg.nonce, cid));
     self.into()
 });
 
 handle!(StartEpoch, Primary, {
-    self.ctx.send_epoch_started(msg, from, cid, output);
+    Reconfiguration::send_epoch_started(&self.ctx, from, cid, output);
     self.into()
 });
 
@@ -109,7 +119,7 @@ impl Primary {
                     msg: Msg,
                     from: Pid,
                     cid: CorrelationId,
-                    output: &mut Vec<FsmOutput>)
+                    output: &mut Vec<Envelope>)
     {
         self.ctx.last_received_time = SteadyTime::now();
         self.ctx.op += 1;
@@ -130,7 +140,7 @@ impl Primary {
         self.prepare_requests.has_quorum(op)
     }
 
-    pub fn commit(self, new_commit_num: u64, output: &mut Vec<FsmOutput>) -> VrStates {
+    pub fn commit(self, new_commit_num: u64, output: &mut Vec<Envelope>) -> VrState {
         let lowest_prepared_op = self.prepare_requests.lowest_op;
         let mut iter = self.prepare_requests.remove(new_commit_num).into_iter();
         let commit_num = self.ctx.commit_num;
@@ -157,14 +167,14 @@ impl Primary {
                             let cid = iter.next().unwrap().correlation_id;
                             let to = cid.pid.clone();
                             let from = self.ctx.pid.clone();
-                            let reply = ClientReply {
+                            let reply = rabble::Msg::User(Msg::Vr(ClientReply {
                                 epoch: epoch,
                                 view: 0,
                                 request_num: client_req_num,
                                 value: VrApiRsp::Ok
-                            }.into();
+                            }.into()));
                             let cid2 = cid.clone();
-                            output.push(FsmOutput::Vr(VrEnvelope::new(to, from, reply, cid2)));
+                            output.push(Envelope::new(to, from, reply, cid2));
                             cid
                         } else {
                             CorrelationId::pid(self.ctx.pid.clone())
@@ -197,12 +207,12 @@ impl Primary {
     /// The primary has just committed the reconfiguration request. It must now determine whether it
     /// is the primary of view 0 in the new epoch, a backup in the new epoch, or it is being
     /// shutdown.
-    fn enter_transitioning(mut self, output: &mut Vec<FsmOutput>) -> VrStates {
+    fn enter_transitioning(mut self, output: &mut Vec<Envelope>) -> VrState {
         if self.ctx.is_leaving() {
             return Leaving::from(self).into();
         }
         // Tell replicas that are being replaced to shutdown
-        output.extend_from_slice(&ctx.broadcast_epoch_started(envelope.correlation_id));
+        Reconfiguration::broadcast_epoch_started(&self.ctx, output);
         if self.ctx.is_primary() {
             self.reconfiguration_in_progress = false;
             // Stay a primary
@@ -216,7 +226,7 @@ impl Primary {
     fn validate_reconfig(&self
                          from: &Pid,
                          msg: &Reconfiguration,
-                         cid: &CorrelationId) -> Option<FsmOutput>
+                         cid: &CorrelationId) -> Option<Envelope>
     {
         let Reconfiguration {client_req_num, epoch, ref replicas} = msg;
         let err = if self.reconfiguration_in_progress {
@@ -237,19 +247,19 @@ impl Primary {
                     rsp: VrApiRsp,
                     client_req_num: u64,
                     to: &Pid,
-                    cid: &CorrelationId) -> FsmOutput
+                    cid: &CorrelationId) -> Envelope
     {
         let reply = self.ctx.client_reply_msg(client_req_num, rsp);
-        FsmOutput::Vr(VrEnvelope::new(to.clone(), self.ctx.pid.clone(), reply, cid.clone()))
+        Envelope::new(to.clone(), self.ctx.pid.clone(), reply, cid.clone())
     }
 
     fn client_reply_msg(&self, client_req_num: u64, value: VrApiRsp) -> VrMsg {
-        ClientReply {
+        rabble::msg::User(Msg::Vr(ClientReply {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
             request_num: client_req_num,
             value: value
-        }.into()
+        }.into()))
     }
 
     fn commit_msg(&self) -> VrMsg {
@@ -260,20 +270,20 @@ impl Primary {
         }.into()
     }
 
-    fn broadcast_commit_msg(&self, output: &mut Vec<FsmOutput>) {
+    fn broadcast_commit_msg(&self, output: &mut Vec<Envelope>) {
         self.ctx.broadcast(self.commit_msg(), CorrelationId::pid(self.ctx.pid.clone()), output);
     }
 
-    fn broadcast_commit_msg_old(&self, output: &mut Vec<FsmOutput>) {
+    fn broadcast_commit_msg_old(&self, output: &mut Vec<Envelope>) {
         self.ctx.broadcast_old(self.commit_msg(), CorrelationId::pid(self.ctx.pid.clone()))
     }
 
-    fn set_primary(&mut self) -> FsmOutput {
+    fn set_primary(&mut self) -> Envelope {
         let primary = self.ctx.compute_primary();
         info!(self.logger, "Elected primary";
               "primary" => format!("{:?}", self.primary),
               "view" => self.view);
-        FsmOutput::Announcement(NamespaceMsg::NewPrimary(primary), self.ctx.pid.clone())
+        self.ctx.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary))
     }
 
     fn idle_timeout(&self) -> bool {

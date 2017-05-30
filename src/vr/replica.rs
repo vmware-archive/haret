@@ -2,25 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use rabble::{self, Process, Pid, CorrelationId, Envelope};
-use funfsm::Fsm;
 use msg::Msg;
-use super::vr_fsm::VrTypes;
-use super::vr_envelope::VrEnvelope;
-use super::vrmsg::VrMsg;
-use super::vr_ctx_summary::VrCtxSummary;
+use vr_envelope::VrEnvelope;
+use vr_msg::VrMsg;
+use vr_fsm::VrState;
 use super::super::admin::{AdminReq, AdminRpy};
 
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
 pub struct Replica {
     pid: Pid,
-    state: VrStates
+    state: VrState
 }
 
 impl Replica {
-    pub fn new(pid: Pid, state: VrStates) -> Replica {
+    pub fn new(pid: Pid, state: VrState) -> Replica {
         Replica {
             pid: pid,
-            state: VrStates
+            state: VrState
         }
     }
 }
@@ -29,27 +27,23 @@ impl Process<Msg> for Replica {
     fn handle(&mut self,
               msg: rabble::Msg<Msg>,
               from: Pid,
-              correlation_id: Option<CorrelationId>,
+              cid: Option<CorrelationId>,
               output: &mut Vec<Envelope<Msg>>)
     {
-        let correlation_id = correlation_id.map_or(CorrelationId::pid(self.pid.clone()),
-                                                   |c_id| c_id);
+        let cid = cid.map_or(CorrelationId::pid(self.pid.clone()), |c_id| c_id);
         match msg {
             rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
-                let (state, ctx) = self.state.get_state();
-                let summary = VrCtxSummary::new(state, ctx);
-                let rpy = AdminRpy::ReplicaState(summary);
+                let rpy = AdminRpy::ReplicaState(self.state.clone());
                 let msg = rabble::Msg::User(Msg::AdminRpy(rpy));
-                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
+                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(cid));
                 output.push(envelope);
             },
             rabble::Msg::User(Msg::Vr(vrmsg)) => {
-               let vr_envelope = VrEnvelope::new(self.pid.clone(), from, vrmsg, correlation_id);
-               output.extend(self.fsm.send(vr_envelope).into_iter().map(|e| e.into()));
+               self.state.next(msg, from, cid, output);
             },
             _ => {
                 let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));
-                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(correlation_id));
+                let envelope = Envelope::new(from, self.pid.clone(), msg, Some(cid));
                 output.push(envelope);
             }
         }

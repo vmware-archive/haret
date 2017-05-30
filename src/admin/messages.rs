@@ -5,7 +5,7 @@ use rabble::{Pid, NodeId, ClusterStatus, Metric};
 use config::Config;
 use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
-use vr::VrCtxSummary;
+use vr::VrState;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AdminMsg {
@@ -33,7 +33,7 @@ pub enum AdminRpy {
     Config(Config),
     NamespaceId(NamespaceId),
     Namespaces(Namespaces),
-    ReplicaState(VrCtxSummary),
+    ReplicaState(VrState),
     ReplicaNotFound(Pid),
     Primary(Option<Pid>),
     ClusterStatus(ClusterStatus),

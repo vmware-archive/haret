@@ -1,5 +1,12 @@
 use std::convert::{From, Into};
-use vr_fsm::{StateTransfer, Transition, VrStates, Backup};
+use vr_fsm::{StateTransfer, Transition, VrState, Backup};
+
+/// When a backup realizes it's behind it enters state transfer
+///
+/// In this state, the backup is waiting for a `NewState` message
+state!(StateTransfer {
+    pub ctx: VrCtx
+});
 
 handle!(NewState, StateTransfer, {
     // Replicas only respond to state transfer requests in normal mode in the same epoch and view
@@ -53,7 +60,7 @@ impl<T: State> From<T> for StateTransfer {
 }
 
 impl StateTransfer {
-    pub fn become_backup(&mut self, msg: NewState, output: &mut Vec<FsmOutput>) -> VrStates {
+    pub fn become_backup(&mut self, msg: NewState, output: &mut Vec<Envelope>) -> VrState {
         self.last_received_time = SteadyTime::now();
         let NewState {view, op, commit_num, log_tail, ..} = msg;
         self.view = view;
@@ -68,10 +75,10 @@ impl StateTransfer {
 
     /// When a new replica starts after reconfiguration it needs to send a get state request to all
     /// replicas to ensure it gets the latest state.
-    pub fn start_epoch_old_and_new(self,
-                                   cid: CorrelationId,
-                                   new_epoch: u64,
-                                   output: &mut Vec<FsmOutput>) -> VrStates
+    pub fn start_reconfiguration(self,
+                                 cid: CorrelationId,
+                                 new_epoch: u64,
+                                 output: &mut Vec<Envelope>) -> VrState
     {
         output.extend(self.old_config
                       .replicas
@@ -90,7 +97,7 @@ impl StateTransfer {
                           cid: CorrelationId,
                           new_epoch: u64,
                           new_view: u64,
-                          output: &mut Vec<FsmOutput>) -> VrStates
+                          output: &mut Vec<Envelope>) -> VrState
         where S: State
     {
         let mut new_state = StateTransfer::from(state);
@@ -101,14 +108,14 @@ impl StateTransfer {
         new_state.ctx.log.truncate(new_state.op as usize);
         let from = self.pid.clone();
         let msg = self.get_state_msg();
-        output.push(FsmOutput::Vr(VrEnvelope::new(primary, from, msg, cid)));
+        output.push(Envelope::new(primary, from, msg, cid));
         new_state.into()
     }
 
     pub fn start_view<S>(state: S,
                          new_view: u64,
                          cid: CorrelationId,
-                         output: &mut Vec<FsmOutput>) -> VrStates
+                         output: &mut Vec<Envelope>) -> VrState
         where S: State
     {
         let new_state = StateTransfer::from(state);
@@ -123,7 +130,7 @@ impl StateTransfer {
     // Send a state transfer message
     pub fn start_same_view<S>(state: S,
                               cid: CorrelationId,
-                              output: &mut Vec<FsmOutput>) -> VrStates
+                              output: &mut Vec<Envelope>) -> VrState
         where S: State
     {
         let new_state = StateTransfer::from(state);
@@ -131,9 +138,14 @@ impl StateTransfer {
         new_state.into()
     }
 
+    pub fn send_new_state(ctx: &VrCtx, op: u64, to: Pid, cid: CorrelationId) -> Envelope {
+        let msg = StateTransfer::new_state_msg(ctx, op);
+        Envelope::new(to, ctx.pid.clone(), msg, cid)
+    }
+
     fn send_get_state_to_random_replica(&mut self,
                                         cid: CorrelationId,
-                                        output: &mut Vec<FsmOutput>) {
+                                        output: &mut Vec<Envelope>) {
         let msg = self.get_state_msg();
         let mut rng = thread_rng();
         let mut to = self.pid.clone();
@@ -141,15 +153,27 @@ impl StateTransfer {
             let index = rng.gen_range(0, self.new_config.replicas.len());
             to = self.new_config.replicas[index].clone()
         }
-        output.push(FsmOutput::Vr(VrEnvelope::new(to, self.pid.clone(), msg, cid)));
+        output.push(Envelope::new(to, self.pid.clone(), msg, cid));
     }
 
-    fn get_state_msg(&self) -> VrMsg {
-        GetState {
+    fn get_state_msg(&self) -> rabble::Msg {
+        rabble::Msg::User(Msg::Vr(GetState {
             epoch: self.epoch,
             view: self.view,
             op: self.op,
             from: self.pid.clone()
-        }.into()
+        }.into()))
     }
+
+    fn new_state_msg(ctx: &VrCtx, op: u64) -> rabble::Msg {
+        rabble::Msg::User(Msg::Vr(NewState {
+            epoch: ctx.epoch,
+            view: ctx.view,
+            op: ctx.op,
+            primary: ctx.primary.clone(),
+            commit_num: ctx.commit_num,
+            log_tail: (&ctx.log[op as usize..ctx.op as usize]).to_vec()
+        }.into()))
+    }
+
 }

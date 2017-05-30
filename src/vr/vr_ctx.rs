@@ -10,8 +10,6 @@ use std::iter::FromIterator;
 use time::{Duration, SteadyTime};
 use super::vrmsg::{VrMsg, ClientOp};
 use super::replica::VersionedReplicas;
-use super::fsm_output::FsmOutput;
-use super::vr_envelope::VrEnvelope;
 use super::VrBackend;
 use super::prepare_requests::PrepareRequests;
 use super::quorum_tracker::QuorumTracker;
@@ -25,7 +23,7 @@ pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
 
 
 /// The internal state of the VR FSM shared among all states
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VrCtx {
     pub logger: Logger,
     pub pid: Pid,
@@ -40,7 +38,10 @@ pub struct VrCtx {
     pub quorum: u64,
 
     pub log: Vec<ClientOp>,
+
+    #[serde(skip)]
     pub backend: VrBackend,
+
     pub old_config: VersionedReplicas,
     pub new_config: VersionedReplicas,
 }
@@ -70,6 +71,18 @@ impl VrCtx {
         }
     }
 
+    pub fn namespace_mgr_envelope(msg: NamespaceMsg) -> Envelope {
+        let to = Pid {
+            group: None,
+            name: "namespace_mgr".to_owned(),
+            node: self.ctx.pid.node.clone()
+        };
+        let from = self.pid.clone();
+        let cid = Some(CorrelationId::pid(self.ctx.pid.clone()));
+        let msg = rabble::Msg::User(Msg::Namespace(msg));
+        Envelope::new(to, from, msg, cid)
+    }
+
     pub fn is_primary(&self) -> bool {
         self.primary.as_ref().map_or(false, |p| *p == self.pid)
     }
@@ -83,76 +96,41 @@ impl VrCtx {
         self.new_config.replicas[index].clone()
     }
 
-    pub fn send_new_state(&mut self, op: u64, from: Pid, cid: CorrelationId) -> FsmOutput {
-        FsmOutput::Vr(VrEnvelope::new(from, self.pid.clone(), self.new_state_msg(op), cid))
-    }
-
-    pub fn send_recovery_response(&self,
-                                  from: Pid,
-                                  nonce: Uuid,
-                                  cid: CorrelationId) -> FsmOutput
-    {
-        let response = self.recovery_response_msg(nonce);
-        FsmOutput::Vr(VrEnvelope::new(from, self.pid.clone(), response, cid))
-    }
-
-    pub fn broadcast_start_epoch(&self, output: &mut Vec<FsmOutput>) {
-        self.broadcast(self.start_epoch_msg(), CorrelationId::pid(self.pid.clone()), output)
-    }
-
     /// Wrap a VrMsg in an envelope and send to all old replicas
     pub fn broadcast_old(&self,
-                         msg: VrMsg,
+                         msg: rabble::Msg,
                          cid: CorrelationId,
-                         output: &mut Vec<FsmOutput>)
+                         output: &mut Vec<Envelope>)
     {
         output.extend(self.old_config.replicas.iter().cloned()
             .filter(|pid| *pid != self.pid)
-            .map(|pid| self.vr_new(pid, msg.clone(), cid.clone())));
+            .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone(), cid.clone())));
     }
 
     /// Wrap a VrMsg in an envelope and send to all new replicas
     pub fn broadcast(&self,
-                     msg: VrMsg,
+                     msg: rabble::Msg,
                      cid: CorrelationId,
-                     output: &mut Vec<FsmOutput>)
+                     output: &mut Vec<Envelope>)
     {
         output.extend(self.new_config.replicas.iter().cloned()
                       .filter(|pid| *pid != self.pid)
-                      .map(|pid| self.vr_new(pid, msg.clone(), cid.clone())));
+                      .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone() cid.clone())));
     }
 
-    pub fn announce_reconfiguration(&self) -> FsmOutput {
-        FsmOutput::Announcement(NamespaceMsg::Reconfiguration {
+    pub fn announce_reconfiguration(&self) -> Envelope {
+        self.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
             namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_string()),
             old_config: self.old_config.clone(),
             new_config: self.new_config.clone()
         }, self.pid.clone())
     }
 
-    pub fn send_epoch_started(&mut self, envelope: VrEnvelope, output: &mut Vec<FsmOutput>) {
-        let msg = self.epoch_started_msg();
-        let cid = envelope.cid;
-        output.push(FsmOutput::Vr(VrEnvelope::new(envelope.from, self.pid.clone(), msg, cid)));
-    }
-
-    pub fn broadcast_epoch_started(&mut self, cid: CorrelationId, output: &mut Vec<FsmOutput>) {
-        let msg = self.epoch_started_msg();
-        output.extend(self.replicas_to_replace().iter().cloned().map(|r| {
-            FsmOutput::Vr(VrEnvelope::new(r, self.pid.clone(), msg.clone(), cid.clone()))
-        }));
-    }
 
     pub fn replicas_to_replace(&self) -> Vec<Pid> {
         let new_set = HashSet::<Pid>::from_iter(self.new_config.replicas.clone());
         let old_set = HashSet::<Pid>::from_iter(self.old_config.replicas.clone());
         old_set.difference(&new_set).cloned().collect()
-    }
-
-    pub fn send_to_primary(&self, msg: VrMsg, cid: CorrelationId) -> FsmOutput {
-        FsmOutput::Vr(
-            VrEnvelope::new(self.primary.as_ref().unwrap().clone(), self.pid.clone(), msg, cid)
-        )
     }
 
     fn update_for_new_epoch(&mut self, op: u64, replicas: Vec<Pid>) {
@@ -183,20 +161,17 @@ impl VrCtx {
         self.replicas_to_replace().contains(&self.pid)
     }
 
-
-    fn clear_primary(&mut self) -> FsmOutput {
-        self.primary = None;
+    fn clear_primary(&mut self) -> Envelope {
         let namespace_id = NamespaceId(self.pid.group.clone().unwrap());
-        FsmOutput::Announcement(NamespaceMsg::ClearPrimary(namespace_id), self.pid.clone())
+        self.namespace_mgr_envelope(NamespaceMsg::ClearPrimary(namespace_id))
     }
 
-    fn set_primary(&mut self) -> FsmOutput {
+    fn set_primary(&mut self) -> Envelope {
         let primary = self.compute_primary();
-        self.primary = Some(primary.clone());
-        FsmOutput::Announcement(NamespaceMsg::NewPrimary(primary), self.pid.clone())
+        self.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary))
     }
 
-    pub fn reset_view_change_state(&mut self, view: u64, output: &mut Vec<FsmOutput>) {
+    pub fn reset_view_change_state(&mut self, view: u64, output: &mut Vec<Envelope>) {
         self.last_received_time = SteadyTime::now();
         self.view = view;
         self.view_change_state =
@@ -204,86 +179,9 @@ impl VrCtx {
         output.push(self.clear_primary());
     }
 
-    pub fn reset_and_start_view_change(&mut self, output: &mut Vec<FsmOutput>) {
+    pub fn reset_and_start_view_change(&mut self, output: &mut Vec<Envelope>) {
         let view = self.view;
         self.reset_view_change_state(view + 1, output);
         self.start_view_change(output);
     }
-
-    /// Create a new `FsmOut::Vr(..)` variant
-    fn vr_new(&self, to: Pid, msg: VrMsg, cid: CorrelationId) -> FsmOutput {
-        FsmOutput::Vr(VrEnvelope::new(to, self.pid.clone(), msg.clone(), cid))
-    }
-
-    /*************************************************************************/
-    /*******   CONSTRUCT VR MESSAGES   ****/
-    /************************************************************************/
-
-    pub fn prepare_msg(&self, msg: VrMsg) -> VrMsg {
-        Prepare {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            commit_num: self.commit_num,
-            msg: Box::new(msg)
-        }.into()
-    }
-
-    pub fn prepare_ok_msg(&self) -> VrMsg {
-        PrepareOk {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            from: self.pid.clone()
-        }.into()
-    }
-
-    pub fn new_state_msg(&self, op: u64) -> VrMsg {
-        NewState {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            primary: self.primary.clone(),
-            commit_num: self.commit_num,
-            log_tail: (&self.log[op as usize..self.op as usize]).to_vec()
-        }.into()
-    }
-
-    pub fn recovery_response_msg(&self, nonce: Uuid) -> VrMsg {
-        let (op, commit_num, log) =
-            if self.primary.is_some() && self.primary == Some(self.pid.clone()) {
-                (Some(self.op), Some(self.commit_num), Some(self.log.clone()))
-            } else {
-                (None, None, None)
-            };
-        RecoveryResponse {
-            epoch: self.epoch,
-            view: self.view,
-            nonce: nonce,
-            from: self.pid.clone(),
-            op: op,
-            commit_num: commit_num,
-            log: log
-        }.into()
-    }
-
-    pub fn start_epoch_msg(&self) -> VrMsg {
-        StartEpoch {
-            epoch: self.epoch,
-            op: self.op,
-            old_config: self.old_config.clone(),
-            new_config: self.new_config.clone()
-        }.into()
-    }
-
-    pub fn epoch_started_msg(&self) -> VrMsg {
-        EpochStarted {
-            epoch: self.epoch,
-            from: self.pid.clone()
-        }.into()
-    }
-
-    /*************************************************************************/
-    /* End of VrMsg constructors */
-    /*************************************************************************/
 }

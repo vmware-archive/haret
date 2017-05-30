@@ -1,3 +1,11 @@
+/// The part of the view change state in the VR protocol state machine where a replica is waiting
+/// for a `StartView` message from the new primary. It has already sent a `DoViewChange` to the
+/// proposed primary for this view.
+state!(StartView {
+    pub ctx: VrCtx,
+    pub primary: Pid
+});
+
 handle!(StartViewChange, StartView, {
     // Old messages we want to ignore. For New ones we want to wait until a primary is elected,
     // since we know we are out of date and need to perform state transfer, which will fail until

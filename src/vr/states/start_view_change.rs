@@ -1,8 +1,15 @@
 use std::convert::{From, Into};
-use vr_fsm::{Transition, VrStates, Primary, Backup};
+use vr_fsm::{Transition, VrState, Primary, Backup};
 use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
 use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+
+/// The part of the view change state in the VR protocol state machine where a replica is waiting
+/// for a quorum of `StartViewChange` messages.
+state!(StartViewChange {
+    pub ctx: VrCtx,
+    pub msgs: QuorumTracker<StartViewChange>
+});
 
 handle!(StartViewChange, StartViewChange, {
     // Old messages we want to ignore. For New ones we want to wait until a primary is elected,
@@ -88,7 +95,7 @@ impl<T: State> From<T> for StartViewChange {
 impl StartViewChange {
     fn handle_start_view_change(self,
                                 msg: StartViewChange,
-                                output: &mut Vec<FsmOutput>) -> VrStates
+                                output: &mut Vec<Envelope>) -> VrState
     {
         self.ctx.last_received_time = SteadyTime::now();
         self.msgs.insert(from, msg);
@@ -105,7 +112,7 @@ impl StartViewChange {
 
     pub fn start_view_change<S: State>(state: S,
                                        msg: StartViewChange,
-                                       output: &mut Vec<FsmOutput>) -> VrStates
+                                       output: &mut Vec<Envelope>) -> VrState
     {
         let mut new_state = StartViewChange::from(state);
         new_state.view = msg.view;
@@ -113,7 +120,7 @@ impl StartViewChange {
         new_state.handle_start_view_change(msg, output)
     }
 
-    pub fn broadcast_start_view_change(&mut self, output: &mut Vec<FsmOutput>) {
+    pub fn broadcast_start_view_change(&mut self, output: &mut Vec<Envelope>) {
         self.ctx.last_received_time = SteadyTime::new();
         let msg = self.start_view_change_msg();
         let cid = CorrelationId::pid(self.pid.clone());
@@ -129,14 +136,14 @@ impl StartViewChange {
         }.into()
     }
 
-    fn send_do_view_change(&self, new_primary: Pid) -> FsmOutput {
+    fn send_do_view_change(&self, new_primary: Pid) -> Envelope {
         let cid = CorrelationId::pid(self.pid.clone());
         let msg = self.do_view_change_msg();
-        FsmOutput::Vr(VrEnvelope::new(new_primary, self.pid.clone(), msg, cid))
+        Envelope::new(new_primary, self.pid.clone(), msg, cid)
     }
 
-    fn do_view_change_msg(&self) -> VrMsg {
-        DoViewChange {
+    fn do_view_change_msg(&self) -> rabble::Msg {
+        rabble::Msg::User(Msg::Vr(DoViewChange {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
             op: self.ctx.op,
@@ -144,10 +151,10 @@ impl StartViewChange {
             last_normal_view: self.ctx.last_normal_view,
             log: self.ctx.log.clone(),
             commit_num: self.ctx.commit_num
-        }.into()
+        }.into()))
     }
 
-    fn broadcast_start_view_msg(&self, new_commit_num: u64, output: &mut Vec<FsmOutput>) {
+    fn broadcast_start_view_msg(&self, new_commit_num: u64, output: &mut Vec<Envelope>) {
         let msg = self.start_view_msg(new_commit_num);
         let cid = CorrelationId::pid(self.pid.clone());
         self.ctx.broadcast(msg, cid, output);

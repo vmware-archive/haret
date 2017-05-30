@@ -1,9 +1,15 @@
 use std::convert::{From, Into};
 #[macro_use]
-use vr_fsm::{Transition, VrStates, Primary, Backup};
+use vr_fsm::{Transition, VrState, Primary, Backup};
 use vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
 use vr_msg::{GetSate, Recovery, StartEpoch, ClientReply};
 use vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS};
+
+/// The backup state of the VR protocol operating in normal mode
+state!(Backup {
+    pub ctx: VrCtx,
+    pub primary: Pid
+});
 
 handle!(Prepare, Backup, {
     up_to_date!(self, from, msg, cid, output);
@@ -89,17 +95,17 @@ handle!(GetState, Backup, {
     if epoch != self.ctx.epoch || view != self.ctx.view {
         return self.into()
     }
-    output.push(self.ctx.send_new_state(op, from, cid));
+    output.push(StateTransfer::send_new_state(&self.ctx, op, from, cid));
     self.into()
 }
 
 handle!(Recovery, Backup, {
-    output.push(self.ctx.send_recovery_response(from, msg.nonce, cid));
+    output.push(Recovery::send_response(&self.ctx, from, msg.nonce, cid));
     self.into()
 }
 
 handle!(StartEpoch, Backup, {
-    self.ctx.send_epoch_started(msg, from, cid, output);
+    Reconfiguration::send_epoch_started(&self.ctx, from, cid, output);
     self.into()
 }
 
@@ -115,7 +121,7 @@ impl Backup {
                            msg: ClientOp, // ClientRequest | Reconfiguration
                            commit_num: u64,
                            cid: CorrelationId,
-                           output: &mut Vec<FsmOutput>)
+                           output: &mut Vec<Envelope>)
     {
         self.last_received_time = SteadyTime::now();
         self.op += 1;
@@ -129,7 +135,7 @@ impl Backup {
                             op: u64,
                             log: Vec<VrMsg>,
                             commit_num: u64,
-                            output: &mut Vec<FsmOutput>) -> VrStates
+                            output: &mut Vec<Envelope>) -> VrState
     {
         state.ctx.last_received_time = SteadyTime::now();
         state.ctx.view = view;
@@ -142,7 +148,7 @@ impl Backup {
         backup.commit(commit_num, output)
     }
 
-    pub fn commit(&mut self, new_commit_num: u64, output: &mut Vec<FsmOutput>) -> VrStates {
+    pub fn commit(&mut self, new_commit_num: u64, output: &mut Vec<Envelope>) -> VrState {
         for i in self.commit_num..new_commit_num {
             let msg = self.log[i as usize].clone();
             match msg {
@@ -171,12 +177,12 @@ impl Backup {
     /// The backup has just committed the reconfiguration request. It must now determine whether it
     /// is the primary of view 0 in the new epoch, a backup in the new epoch, or it is being
     /// shutdown.
-    fn enter_transitioning(mut self, output: &mut Vec<FsmOutput>) -> VrStates {
+    fn enter_transitioning(mut self, output: &mut Vec<Envelope>) -> VrState {
         if self.ctx.is_leaving() {
             return Leaving::from(self).into();
         }
         // Tell replicas that are being replaced to shutdown
-        output.extend_from_slice(&ctx.broadcast_epoch_started(envelope.correlation_id));
+        Reconfiguration::broadcast_epoch_started(&self.ctx, output);
         if self.ctx.is_primary() {
             self.reconfiguration_in_progress = false;
             // Become the primary
@@ -186,10 +192,22 @@ impl Backup {
         self.into()
     }
 
-    fn set_primary(&mut self) -> FsmOutput {
+    fn set_primary(&mut self) -> Envelope {
         let primary = self.ctx.compute_primary();
         self.primary = primary.clone();
-        FsmOutput::Announcement(NamespaceMsg::NewPrimary(primary), self.pid.clone())
+        self.ctx.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary))
+    }
+
+    fn send_to_primary(&self, msg: rabble::Msg, cid: CorrelationId) -> Envelope {
+        Envelope::new(self.primary.clone(), self.pid.clone(), msg, cid)
+    }
+
+    pub fn prepare_ok_msg(&self) -> rabble::Msg {
+        rabble::Msg::User(Msg::Vr(PrepareOk {
+            epoch: self.ctx.epoch,
+            view: self.ctx.view,
+            op: self.ctx.op,
+            from: self.ctx.pid.clone()
+        }.into())
     }
 }
-

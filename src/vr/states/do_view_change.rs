@@ -1,3 +1,10 @@
+/// The part of the view change state in the VR protocol state machine the proposed primary is
+/// waiting for a quorum of `DoViewChange` messages.
+state!(DoViewChange {
+    pub ctx: VrCtx,
+    pub state: DoViewChangeState
+});
+
 handle!(StartViewChange, DoViewChange, {
     // Old messages we want to ignore. For New ones we want to wait until a primary is elected,
     // since we know we are out of date and need to perform state transfer, which will fail until
@@ -84,7 +91,7 @@ impl DoViewChange {
     pub fn start_do_view_change<S: State>(state: S,
                                     from: Pid,
                                     msg: DoViewChange,
-                                    output: &mut Vec<FsmOutput>) -> VrStates
+                                    output: &mut Vec<Envelope>) -> VrState
     {
         // This is a later view in the same epoch. Other nodes have decided that we
         // should be the primary in this view via StartViewChange quorum.
@@ -97,7 +104,7 @@ impl DoViewChange {
         new_state.into()
     }
 
-    fn become_primary(&mut self, output: &mut Vec<FsmOutput>) -> VrStates {
+    fn become_primary(&mut self, output: &mut Vec<Envelope>) -> VrState {
         let current = Latest {
             last_normal_view: self.last_normal_view,
             commit_num: self.commit_num,
