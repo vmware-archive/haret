@@ -6,7 +6,7 @@ use std::collections::hash_map::Drain;
 use time::{SteadyTime, Duration};
 use rabble::Pid;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct QuorumTracker<T> {
     quorum_size: usize,
     expiration: SteadyTime,

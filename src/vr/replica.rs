@@ -3,9 +3,8 @@
 
 use rabble::{self, Process, Pid, CorrelationId, Envelope};
 use msg::Msg;
-use vr_envelope::VrEnvelope;
-use vr_msg::VrMsg;
-use vr_fsm::VrState;
+use vr::vr_msg::VrMsg;
+use vr::vr_fsm::VrState;
 use super::super::admin::{AdminReq, AdminRpy};
 
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
@@ -18,7 +17,7 @@ impl Replica {
     pub fn new(pid: Pid, state: VrState) -> Replica {
         Replica {
             pid: pid,
-            state: VrState
+            state: state
         }
     }
 }
@@ -39,7 +38,7 @@ impl Process<Msg> for Replica {
                 output.push(envelope);
             },
             rabble::Msg::User(Msg::Vr(vrmsg)) => {
-               self.state.next(msg, from, cid, output);
+               self.state.next(vrmsg, from, cid, output);
             },
             _ => {
                 let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));

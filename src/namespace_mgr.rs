@@ -13,8 +13,9 @@ use config::Config;
 use vr::{VrMsg, Replica, VersionedReplicas};
 use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};
 use namespaces::Namespaces;
-use vr::vr_fsm::{self, VrTypes};
+use vr::vr_fsm::{self, VrState};
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+use vr::states::{Primary, Backup, Recovery, Reconfiguration};
 use admin::{AdminReq, AdminRpy};
 use api::ApiRpy;
 
@@ -371,7 +372,7 @@ impl NamespaceMgr {
            ctx.idle_timeout = self.idle_timeout.clone();
            ctx.primary_tick_ms = self.primary_tick_ms;
            let state = VrState::Recovery(Recovery::new(ctx));
-           self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
+           self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
            self.local_replicas.insert(pid);
        }
     }

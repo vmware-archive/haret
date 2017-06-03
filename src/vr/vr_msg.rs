@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use uuid::Uuid;
-use rabble::Pid;
+use rabble::{self, Pid};
+use msg::Msg;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::VersionedReplicas;
 use std::convert::From;
@@ -12,7 +13,7 @@ use std::convert::From;
 /// Generate `impl From<$struct_name> for VrMsg`
 macro_rules! msg {
     ($struct_name:ident {
-        $( $field:ident: $ty:ident ),+
+        $( $field:ident: $ty:ty),+
     }) => {
         #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
         pub struct $struct_name {
@@ -26,6 +27,13 @@ macro_rules! msg {
         }
     }
 }
+
+impl From<VrMsg> for rabble::Msg<Msg> {
+    fn from(msg: VrMsg) -> rabble::Msg<Msg> {
+        rabble::Msg::User(Msg::Vr(msg))
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ClientOp {
     Request(ClientRequest),
@@ -64,45 +72,7 @@ pub enum VrMsg {
     EpochStarted(EpochStarted),
 }
 
-impl VrMsg {
-    // This is only used for filtering messages in vr_fsm. However we don't ever want to filter
-    // client requests from the primary, so we exclude `VrMsg::Reconfiguration`
-    pub fn get_epoch(&self) -> Option<u64> {
-        match *self {
-            VrMsg::ClientReply {epoch, ..} => Some(epoch),
-            VrMsg::StartViewChange {epoch, ..} => Some(epoch),
-            VrMsg::DoViewChange {epoch, ..} => Some(epoch),
-            VrMsg::StartView {epoch, ..} => Some(epoch),
-            VrMsg::Prepare {epoch, ..} => Some(epoch),
-            VrMsg::PrepareOk {epoch, ..} => Some(epoch),
-            VrMsg::Commit {epoch, ..} => Some(epoch),
-            VrMsg::GetState {epoch, ..} => Some(epoch),
-            VrMsg::NewState {epoch, ..} => Some(epoch),
-            VrMsg::RecoveryResponse {epoch, ..} => Some(epoch),
-            VrMsg::StartEpoch {epoch, ..} => Some(epoch),
-            VrMsg::EpochStarted {epoch, ..} => Some(epoch),
-            _ => None
-        }
-    }
-
-    pub fn get_view(&self) -> Option<u64> {
-        match *self {
-            VrMsg::ClientReply {view, ..} => Some(view),
-            VrMsg::StartViewChange {view, ..} => Some(view),
-            VrMsg::DoViewChange {view, ..} => Some(view),
-            VrMsg::StartView {view, ..} => Some(view),
-            VrMsg::Prepare {view, ..} => Some(view),
-            VrMsg::PrepareOk {view, ..} => Some(view),
-            VrMsg::Commit {view, ..} => Some(view),
-            VrMsg::GetState {view, ..} => Some(view),
-            VrMsg::NewState {view, ..} => Some(view),
-            VrMsg::RecoveryResponse {view, ..} => Some(view),
-            _ => None
-        }
-    }
-}
-
-struct Tick;
+pub struct Tick;
 
 impl From<Tick> for VrMsg {
     fn from(_: Tick) -> VrMsg {
@@ -184,7 +154,7 @@ msg!(NewState {
     op: u64,
     primary: Option<Pid>,
     commit_num: u64,
-    log_tail: Vec<VrMsg>,
+    log_tail: Vec<VrMsg>
 });
 
 msg!(Recovery {

@@ -2,20 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use uuid::Uuid;
-use rabble::{Pid, CorrelationId}; use rand::{thread_rng, Rng};
+use rabble::{self, Pid, Envelope, CorrelationId};
 use slog::Logger;
 use std::collections::HashSet;
 use std::mem;
 use std::iter::FromIterator;
 use time::{Duration, SteadyTime};
-use super::vrmsg::{VrMsg, ClientOp};
-use super::replica::VersionedReplicas;
-use super::VrBackend;
-use super::prepare_requests::PrepareRequests;
-use super::quorum_tracker::QuorumTracker;
-use super::view_change_state::{ViewChangeState, Latest};
-use super::recovery_state::{RecoveryState, RecoveryPrimary};
-use super::vr_api_messages::{VrApiRsp, VrApiError};
+use vr::vr_msg::{VrMsg, ClientOp};
+use vr::VersionedReplicas;
+use vr::VrBackend;
+use vr::vr_api_messages::{VrApiRsp, VrApiError};
+use msg::Msg;
 use namespace_msg::{NamespaceMsg, NamespaceId};
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
@@ -39,7 +36,7 @@ pub struct VrCtx {
 
     pub log: Vec<ClientOp>,
 
-    #[serde(skip)]
+    #[serde(skip_serializing, skip_deserializing)]
     pub backend: VrBackend,
 
     pub old_config: VersionedReplicas,
@@ -71,24 +68,20 @@ impl VrCtx {
         }
     }
 
-    pub fn namespace_mgr_envelope(msg: NamespaceMsg) -> Envelope {
+    pub fn namespace_mgr_envelope(&self, msg: NamespaceMsg) -> Envelope<Msg> {
         let to = Pid {
             group: None,
             name: "namespace_mgr".to_owned(),
             node: self.ctx.pid.node.clone()
         };
         let from = self.pid.clone();
-        let cid = Some(CorrelationId::pid(self.ctx.pid.clone()));
+        let cid = Some(CorrelationId::pid(self.pid.clone()));
         let msg = rabble::Msg::User(Msg::Namespace(msg));
         Envelope::new(to, from, msg, cid)
     }
 
     pub fn is_primary(&self) -> bool {
         self.primary.as_ref().map_or(false, |p| *p == self.pid)
-    }
-
-    pub fn clear_epoch_started_msgs(&mut self) {
-        self.epoch_started_msgs = QuorumTracker::new(self.quorum as usize, &self.idle_timeout);
     }
 
     pub fn compute_primary(&self) -> Pid {
@@ -98,9 +91,9 @@ impl VrCtx {
 
     /// Wrap a VrMsg in an envelope and send to all old replicas
     pub fn broadcast_old(&self,
-                         msg: rabble::Msg,
+                         msg: rabble::Msg<Msg>,
                          cid: CorrelationId,
-                         output: &mut Vec<Envelope>)
+                         output: &mut Vec<Envelope<Msg>>)
     {
         output.extend(self.old_config.replicas.iter().cloned()
             .filter(|pid| *pid != self.pid)
@@ -109,21 +102,21 @@ impl VrCtx {
 
     /// Wrap a VrMsg in an envelope and send to all new replicas
     pub fn broadcast(&self,
-                     msg: rabble::Msg,
+                     msg: rabble::Msg<Msg>,
                      cid: CorrelationId,
-                     output: &mut Vec<Envelope>)
+                     output: &mut Vec<Envelope<Msg>>)
     {
         output.extend(self.new_config.replicas.iter().cloned()
                       .filter(|pid| *pid != self.pid)
-                      .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone() cid.clone())));
+                      .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone(), cid.clone())));
     }
 
-    pub fn announce_reconfiguration(&self) -> Envelope {
-        self.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
+    pub fn announce_reconfiguration(&self, output: &mut Vec<Envelope<Msg>>) {
+        output.push(self.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
             namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_string()),
             old_config: self.old_config.clone(),
             new_config: self.new_config.clone()
-        }, self.pid.clone())
+        }, self.pid.clone()));
     }
 
 
@@ -161,27 +154,13 @@ impl VrCtx {
         self.replicas_to_replace().contains(&self.pid)
     }
 
-    fn clear_primary(&mut self) -> Envelope {
+    fn clear_primary(&mut self) -> Envelope<Msg> {
         let namespace_id = NamespaceId(self.pid.group.clone().unwrap());
         self.namespace_mgr_envelope(NamespaceMsg::ClearPrimary(namespace_id))
     }
 
-    fn set_primary(&mut self) -> Envelope {
+    fn set_primary(&mut self) -> Envelope<Msg> {
         let primary = self.compute_primary();
         self.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary))
-    }
-
-    pub fn reset_view_change_state(&mut self, view: u64, output: &mut Vec<Envelope>) {
-        self.last_received_time = SteadyTime::now();
-        self.view = view;
-        self.view_change_state =
-            Some(ViewChangeState::new(self.quorum, self.idle_timeout.clone()));
-        output.push(self.clear_primary());
-    }
-
-    pub fn reset_and_start_view_change(&mut self, output: &mut Vec<Envelope>) {
-        let view = self.view;
-        self.reset_view_change_state(view + 1, output);
-        self.start_view_change(output);
     }
 }

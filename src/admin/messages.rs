@@ -7,13 +7,13 @@ use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
 use vr::VrState;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AdminMsg {
     Req(AdminReq),
     Rpy(AdminRpy)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AdminReq {
     GetConfig,
     Join(NodeId),
@@ -25,7 +25,7 @@ pub enum AdminReq {
     GetMetrics(Pid)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AdminRpy {
     Ok,
     Timeout,

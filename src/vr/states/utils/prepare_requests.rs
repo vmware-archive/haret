@@ -8,14 +8,14 @@ use rabble::{Pid, CorrelationId};
 /// Metadata for an individual prepare request
 ///
 /// Metdata is stored in a VecDeque where the index is the operation number.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub correlation_id: CorrelationId,
     replies: HashSet<Pid>,
     timeout: SteadyTime
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PrepareRequests {
     quorum_size: usize,
     timeout_ms: i64,
