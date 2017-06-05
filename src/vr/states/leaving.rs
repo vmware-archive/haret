@@ -1,9 +1,10 @@
 use std::convert::{From, Into};
+use time::Duration;
 use rabble::{self, Pid, CorrelationId, Envelope};
 use msg::Msg;
 use NamespaceMsg;
 use vr::vr_fsm::{Transition, VrState, State};
-use vr::VrCtx;
+use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS};
 use vr::vr_msg::{VrMsg, EpochStarted, StartEpoch};
 use vr::states::Shutdown;
 use vr::states::utils::QuorumTracker;
@@ -20,7 +21,7 @@ state!(Leaving {
 });
 
 impl Transition for Leaving {
-    fn handle(self,
+    fn handle(mut self,
               msg: VrMsg,
               from: Pid,
               cid: CorrelationId,
@@ -31,13 +32,13 @@ impl Transition for Leaving {
                 if msg.epoch > self.ctx.epoch {
                     // There has already been *another* reconfiguration,
                     // so just transition to shutdown state
-                    return Shutdown::from(self).into();
+                    return Shutdown::enter(self.ctx);
                 }
-                self.msgs.insert(msg.from.clone(), msg);
+                self.msgs.insert(from, msg);
                 if self.msgs.has_quorum() {
                     let ns_msg = NamespaceMsg::Stop(self.ctx.pid.clone());
                     output.push(self.ctx.namespace_mgr_envelope(ns_msg));
-                    return Shutdown::from(self).into();
+                    return Shutdown::enter(self.ctx);
                 }
                 self.into()
             },
@@ -53,6 +54,14 @@ impl Transition for Leaving {
 }
 
 impl Leaving {
+    pub fn leave(ctx: VrCtx) -> VrState {
+        let quorum = ctx.quorum;
+        Leaving {
+            msgs: QuorumTracker::new(quorum, ctx.idle_timeout_ms),
+            ctx: ctx
+        }.into()
+    }
+
     pub fn broadcast_start_epoch(&self, output: &mut Vec<Envelope<Msg>>) {
         let msg = self.start_epoch_msg();
         let cid = CorrelationId::pid(self.ctx.pid.clone());

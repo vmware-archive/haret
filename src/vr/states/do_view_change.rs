@@ -7,10 +7,10 @@ use time::{SteadyTime, Duration};
 use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
-use vr::vr_msg::{self, VrMsg, GetState, Recovery, StartEpoch, StartViewChange};
-use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+use vr::vr_msg::{self, VrMsg, GetState, Recovery, StartEpoch};
+use vr::VrCtx;
 use super::utils::QuorumTracker;
-use super::{Primary, Backup, StateTransfer, StartView};
+use super::{Primary, Backup, StateTransfer, StartView, StartViewChange};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Latest {
@@ -31,11 +31,22 @@ impl Latest {
     }
 }
 
+impl From<vr_msg::DoViewChange> for Latest {
+    fn from(msg: vr_msg::DoViewChange) -> Latest {
+        Latest {
+            last_normal_view: msg.last_normal_view,
+            commit_num: msg.commit_num,
+            op: msg.op,
+            log: msg.log
+        }
+    }
+}
+
 /// The part of the view change state in the VR protocol state machine the proposed primary is
 /// waiting for a quorum of `DoViewChange` messages.
 state!(DoViewChange {
     ctx: VrCtx,
-    responses: QuorumTracker<DoViewChange>,
+    responses: QuorumTracker<vr_msg::DoViewChange>,
     latest: Latest
 });
 
@@ -53,11 +64,11 @@ impl Transition for DoViewChange {
             VrMsg::Tick => self.handle_tick(output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
-                StateTransfer::start_same_view(self, cid, output)
+                StateTransfer::start_same_view(self.ctx, cid, output)
             },
             VrMsg::Commit(msg) => {
                 up_to_date!(self, from, msg, cid, output);
-                StateTransfer::start_same_view(self, cid, output)
+                StateTransfer::start_same_view(self.ctx, cid, output)
             },
             _ => self.into()
         }
@@ -65,26 +76,27 @@ impl Transition for DoViewChange {
 }
 
 impl DoViewChange {
-    /// Enter the DoViewChange state
-    pub fn enter(mut ctx: VrCtx) -> VrState {
+    fn new(mut ctx: VrCtx) -> DoViewChange {
         ctx.last_received_time = SteadyTime::now();
-        let quorum = ctx.quorum;
-        let idle_timeout = Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
         DoViewChange {
+            responses: QuorumTracker::new(ctx.quorum, ctx.idle_timeout_ms),
             ctx: ctx,
-            responses: QuorumTracker::new(quorum, &idle_timeout),
             latest: Latest::new()
-        }.into()
+        }
+    }
+    /// Enter the DoViewChange state
+    pub fn enter(ctx: VrCtx) -> VrState {
+        DoViewChange::new(ctx).into()
     }
 
     pub fn start_do_view_change<S: State>(state: S,
-                                    from: Pid,
-                                    msg: DoViewChange,
-                                    output: &mut Vec<Envelope<Msg>>) -> VrState
+                                          from: Pid,
+                                          msg: vr_msg::DoViewChange,
+                                          output: &mut Vec<Envelope<Msg>>) -> VrState
     {
         // This is a later view in the same epoch. Other nodes have decided that we
         // should be the primary in this view via StartViewChange quorum.
-        let new_state = DoViewChange::from(state);
+        let mut new_state = DoViewChange::new(state.ctx());
         new_state.ctx.view = msg.view;
         new_state.responses.insert(from, msg);
         if new_state.responses.has_quorum() {
@@ -93,26 +105,26 @@ impl DoViewChange {
         new_state.into()
     }
 
-    fn become_primary(&mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
+    fn become_primary(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         let current = Latest {
-            last_normal_view: self.last_normal_view,
-            commit_num: self.commit_num,
-            op: self.op,
+            last_normal_view: self.ctx.last_normal_view,
+            commit_num: self.ctx.commit_num,
+            op: self.ctx.op,
             // TODO: FIXME: Cloning the log is expensive
-            log: self.log.clone()
+            log: self.ctx.log.clone()
         };
         let latest = self.compute_latest_state(current);
         self.ctx.op = latest.op;
         self.ctx.log = latest.log;
-        self.ctx.last_normal_view = self.view;
+        self.ctx.last_normal_view = self.ctx.view;
         self.broadcast_start_view_msg(latest.commit_num, output);
-        let primary = Primary::from(self);
+        let mut primary = Primary::new(self.ctx);
         primary.set_primary(output);
         primary.commit(latest.commit_num, output)
     }
 
     fn handle_start_view_change(self,
-                                msg: StartViewChange,
+                                msg: vr_msg::StartViewChange,
                                 from: Pid,
                                 cid: CorrelationId,
                                 output: &mut Vec<Envelope<Msg>>) -> VrState
@@ -129,7 +141,7 @@ impl DoViewChange {
         StartViewChange::start_view_change(self.ctx, from, msg, output)
     }
 
-    fn handle_do_view_change(self,
+    fn handle_do_view_change(mut self,
                              msg: vr_msg::DoViewChange,
                              from: Pid,
                              cid: CorrelationId,
@@ -171,16 +183,16 @@ impl DoViewChange {
         }
         // A primary has been elected in a new view / epoch
         // Even if the epoch is larger here, we will learn it and the new config by playing the log
-        let StartView{view, op, log, commit_num, ..} = msg;
-        Backup::become_backup(view, op, log, commit_num, output)
+        let vr_msg::StartView{view, op, log, commit_num, ..} = msg;
+        Backup::become_backup(self.ctx, view, op, log, commit_num, output)
     }
 
-    fn handle_tick(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        if self.state.responses.is_expired() {
+    fn handle_tick(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
+        if self.responses.is_expired() {
             // We haven't changed views yet. Transition back to StartViewChange and try again.
             self.ctx.last_received_time = SteadyTime::now();
             self.ctx.view += 1;
-            let new_state = StartViewChange::from(self);
+            let mut new_state = StartViewChange::new(self.ctx);
             new_state.broadcast_start_view_change(output);
             return new_state.into();
         }
@@ -190,7 +202,7 @@ impl DoViewChange {
     pub fn compute_latest_state(&mut self, current: Latest) -> Latest {
         self.responses.drain()
             .map(|(_, msg)| msg.into())
-            .fold(current, |mut latest, other| {
+            .fold(current, |mut latest, other: Latest| {
                 if (other.last_normal_view > latest.last_normal_view) ||
                     (other.last_normal_view == latest.last_normal_view && other.op > latest.op)
                 {
@@ -203,6 +215,22 @@ impl DoViewChange {
                 }
                 latest
             })
+    }
+
+    fn broadcast_start_view_msg(&self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) {
+        let msg = self.start_view_msg(new_commit_num);
+        let cid = CorrelationId::pid(self.ctx.pid.clone());
+        self.ctx.broadcast(msg, cid, output);
+    }
+
+    fn start_view_msg(&self, new_commit_num: u64) -> rabble::Msg<Msg> {
+        vr_msg::StartView {
+            epoch: self.ctx.epoch,
+            view: self.ctx.view,
+            op: self.ctx.op,
+            log: self.ctx.log.clone(),
+            commit_num: new_commit_num
+        }.into()
     }
 
 }

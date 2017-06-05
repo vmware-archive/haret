@@ -21,8 +21,8 @@ impl Transition for Reconfiguration {
     {
         match msg {
             VrMsg::Tick => {
-                let cid = CorrelationId::Pid(self.ctx.pid.clone());
-                let state = StateTransfer::from(self);
+                let cid = CorrelationId::pid(self.ctx.pid.clone());
+                let state = StateTransfer::new(self.ctx);
                 state.start_reconfiguration(cid, output)
             }
             _ => self.into()
@@ -46,21 +46,20 @@ impl Reconfiguration {
                               output: &mut Vec<Envelope<Msg>>)
     {
         let msg = Reconfiguration::epoch_started_msg(ctx);
-        output.push(Envelope::new(to, ctx.pid.clone(), msg, cid));
+        output.push(Envelope::new(to, ctx.pid.clone(), msg, Some(cid)));
     }
 
     pub fn broadcast_epoch_started(ctx: &VrCtx, output: &mut Vec<Envelope<Msg>>) {
         let msg = Reconfiguration::epoch_started_msg(ctx);
         let cid = CorrelationId::pid(ctx.pid.clone());
         output.extend(ctx.replicas_to_replace().iter().cloned().map(|r| {
-            Envelope::new(r, ctx.pid.clone(), msg.clone(), cid.clone())
+            Envelope::new(r, ctx.pid.clone(), msg.clone(), Some(cid.clone()))
         }));
     }
 
     fn epoch_started_msg(ctx: &VrCtx) -> rabble::Msg<Msg> {
         EpochStarted {
-            epoch: ctx.epoch,
-            from: ctx.pid.clone()
+            epoch: ctx.epoch
         }.into()
     }
 }

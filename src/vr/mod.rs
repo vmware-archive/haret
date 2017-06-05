@@ -24,7 +24,11 @@ pub use self::replica::{
     VersionedReplicas
 };
 
-pub use self::vr_msg::VrMsg;
+pub use self::vr_msg::{
+    VrMsg,
+    ClientRequest,
+    ClientReply
+};
 
 pub use self::vr_api_messages::{
     VrApiReq,

@@ -7,7 +7,7 @@ use uuid::Uuid;
 use time::Duration;
 use msg::Msg;
 use super::utils::QuorumTracker;
-use vr::vr_msg::{VrMsg, RecoveryResponse};
+use vr::vr_msg::{self, VrMsg, RecoveryResponse, ClientOp};
 use vr::VrCtx;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::states::Backup;
@@ -18,7 +18,7 @@ pub struct RecoveryPrimary {
     pub view: u64,
     pub op: u64,
     pub commit_num: u64,
-    pub log: Vec<VrMsg>
+    pub log: Vec<ClientOp>
 }
 
 /// The recovery state of the VR Protocol where a replica is recovering data from a quorum of
@@ -32,7 +32,7 @@ state!(Recovery {
 });
 
 impl Transition for Recovery {
-    fn handle(self,
+    fn handle(mut self,
               msg: VrMsg,
               from: Pid,
               cid: CorrelationId,
@@ -41,9 +41,8 @@ impl Transition for Recovery {
         match msg {
             VrMsg::Tick => {
                 if self.responses.is_expired() {
-                    let cid = CorrelationId::Pid(self.ctx.pid.clone());
-                    self.responses =
-                        QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout.clone());
+                    let cid = CorrelationId::pid(self.ctx.pid.clone());
+                    self.responses = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout_ms);
                     self.primary = None;
                     self.nonce = Uuid::new_v4();
                     self.ctx.broadcast(self.recovery_msg(), cid, output);
@@ -51,7 +50,7 @@ impl Transition for Recovery {
                 self.into()
             },
             VrMsg::RecoveryResponse(msg) => {
-                self.update_recovery_state(msg);
+                self.update_recovery_state(from, msg);
                 self.commit_recovery(output)
             },
             _ => self.into()
@@ -67,17 +66,18 @@ impl Recovery {
             nonce: Uuid::new_v4(),
             primary: None,
             // Expire immediately so recovery is started on the next tick
-            responses: QuorumTracker::new(quorum, &Duration::milliseconds(0))
+            responses: QuorumTracker::new(quorum, 0)
         }
     }
 
     pub fn send_response(ctx: &VrCtx,
                          to: Pid,
                          nonce: Uuid,
-                         cid: CorrelationId) -> Envelope<Msg>
+                         cid: CorrelationId,
+                         output: &mut Vec<Envelope<Msg>>)
     {
         let response = Recovery::response_msg(ctx, nonce);
-        Envelope::new(to, ctx.pid.clone(), response, cid)
+        output.push(Envelope::new(to, ctx.pid.clone(), response, Some(cid)));
     }
 
 
@@ -87,25 +87,24 @@ impl Recovery {
             self.primary.as_ref().map_or(false, |p| p.view == current_view)
     }
 
-    fn commit_recovery(&mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
+    fn commit_recovery(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.has_quorum() {
             let commit_num = {
-                let mut primary = self.primary.as_ref().unwrap();
+                let mut primary = self.primary.as_mut().unwrap();
                 self.ctx.op = primary.op;
                 mem::swap(&mut self.ctx.log, &mut primary.log);
                 primary.commit_num
             };
-            let backup = Backup::from(self);
-            backup.set_primary(&mut output);
-            backup.commit(commit_num, output);
-            return backup.into();
+            let mut backup = Backup::new(self.ctx);
+            backup.set_primary(output);
+            return backup.commit(commit_num, output);
         }
         self.into()
     }
 
-    fn update_recovery_state(&mut self, msg: RecoveryResponse) {
-        let RecoveryResponse {epoch, view, nonce, from, op, commit_num, log} = msg;
-        if nonce != self.state.nonce {
+    fn update_recovery_state(&mut self, from: Pid, msg: RecoveryResponse) {
+        let RecoveryResponse {epoch, view, nonce, op, commit_num, log} = msg;
+        if nonce != self.nonce {
             return;
         }
         if epoch < self.ctx.epoch {
@@ -124,7 +123,7 @@ impl Recovery {
         if epoch > self.ctx.epoch {
             error!(self.ctx.logger,
                    "EPOCH RECONFIGURATION DURING RECOVERY: Replica {} in a bad state",
-                   self.pid);
+                   self.ctx.pid);
             return;
         }
 
@@ -145,17 +144,17 @@ impl Recovery {
         self.responses.insert(from, ())
     }
 
-    fn recovery_msg(&self) -> VrMsg {
-        Recovery {
-            from: self.ctx.pid.clone(),
+    fn recovery_msg(&self) -> rabble::Msg<Msg> {
+        vr_msg::Recovery {
             nonce: self.nonce.clone()
         }.into()
     }
 
 
     fn response_msg(ctx: &VrCtx, nonce: Uuid) -> rabble::Msg<Msg> {
+        let primary = ctx.compute_primary();
         let (op, commit_num, log) =
-            if ctx.primary.is_some() && ctx.primary == Some(ctx.pid.clone()) {
+            if primary == ctx.pid {
                 (Some(ctx.op), Some(ctx.commit_num), Some(ctx.log.clone()))
             } else {
                 (None, None, None)
@@ -164,7 +163,6 @@ impl Recovery {
             epoch: ctx.epoch,
             view: ctx.view,
             nonce: nonce,
-            from: ctx.pid.clone(),
             op: op,
             commit_num: commit_num,
             log: log

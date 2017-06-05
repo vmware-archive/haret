@@ -8,18 +8,25 @@ use rabble::Pid;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct QuorumTracker<T> {
-    quorum_size: usize,
+    quorum_size: u64,
+    // Note that deserialization will return the wrong time.
+    // This is only used in debuggin goutput though.
+    #[serde(skip_serializing, skip_deserializing, default = "now")]
     expiration: SteadyTime,
     replies: HashMap<Pid, T>
 }
 
+fn now() -> SteadyTime {
+    SteadyTime::now()
+}
+
 /// Do we have a quorum when including the replica making the request?
 impl<T> QuorumTracker<T> {
-   pub fn new(quorum_size: usize, timeout: &Duration) -> QuorumTracker<T> {
+   pub fn new(quorum_size: u64, timeout_ms: i64) -> QuorumTracker<T> {
         QuorumTracker {
             quorum_size: quorum_size,
-            expiration: SteadyTime::now() + *timeout,
-            replies: HashMap::with_capacity(quorum_size * 2)
+            expiration: SteadyTime::now() + Duration::milliseconds(timeout_ms),
+            replies: HashMap::with_capacity(quorum_size as usize * 2)
         }
     }
 
@@ -29,12 +36,12 @@ impl<T> QuorumTracker<T> {
 
     /// Quorum including this replica
     pub fn has_quorum(&self) -> bool {
-        self.replies.len() >= (self.quorum_size - 1)
+        self.replies.len() as u64 >= (self.quorum_size - 1)
     }
 
     /// Quorum not including this replica
     pub fn has_super_quorum(&self) -> bool {
-        self.replies.len() >= self.quorum_size
+        self.replies.len() as u64 >= self.quorum_size
     }
 
     pub fn is_expired(&self) -> bool {

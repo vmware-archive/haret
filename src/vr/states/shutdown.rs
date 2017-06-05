@@ -7,3 +7,11 @@ use vr::VrCtx;
 state!(Shutdown {
     ctx: VrCtx
 });
+
+impl Shutdown {
+    pub fn enter(ctx: VrCtx) -> VrState {
+        Shutdown {
+            ctx: ctx
+        }.into()
+    }
+}

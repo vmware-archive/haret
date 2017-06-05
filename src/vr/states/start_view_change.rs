@@ -13,7 +13,7 @@ use super::{Backup, StateTransfer, DoViewChange, StartView};
 /// for a quorum of `StartViewChange` messages.
 state!(StartViewChange {
     ctx: VrCtx,
-    msgs: QuorumTracker<StartViewChange>
+    msgs: QuorumTracker<vr_msg::StartViewChange>
 });
 
 impl Transition for StartViewChange {
@@ -28,10 +28,15 @@ impl Transition for StartViewChange {
             VrMsg::DoViewChange(msg) => self.handle_do_view_change(msg, from, cid, output),
             VrMsg::StartView(msg) => self.handle_start_view(msg, from, cid, output),
             VrMsg::Tick => self.handle_tick(output),
-            VrMsg::Prepare(_) | VrMsg::Commit(_) => {
+            VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
                 // Another replica was already elected primary for this view.
-                StateTransfer::start_same_view(self, cid, output)
+                StateTransfer::start_same_view(self.ctx, cid, output)
+            }
+            VrMsg::Commit(msg) => {
+                up_to_date!(self, from, msg, cid, output);
+                // Another replica was already elected primary for this view.
+                StateTransfer::start_same_view(self.ctx, cid, output)
             },
             _ => self.into()
         }
@@ -39,9 +44,38 @@ impl Transition for StartViewChange {
 }
 
 impl StartViewChange {
-    fn check_quorum(self,
+    pub fn new(ctx: VrCtx) -> StartViewChange {
+        let tracker = QuorumTracker::new(ctx.quorum, ctx.idle_timeout_ms);
+        StartViewChange {
+            ctx: ctx,
+            msgs: tracker
+        }
+    }
+
+    /// Enter StartViewChangeState
+    pub fn enter(mut ctx: VrCtx, output: &mut Vec<Envelope<Msg>>) -> VrState {
+        ctx.last_received_time = SteadyTime::now();
+        ctx.view += 1;
+        let mut state = StartViewChange::new(ctx);
+        state.broadcast_start_view_change(output);
+        state.into()
+    }
+
+    pub fn start_view_change(mut ctx: VrCtx,
+                             from: Pid,
+                             msg: vr_msg::StartViewChange,
+                             output: &mut Vec<Envelope<Msg>>) -> VrState
+    {
+        ctx.last_received_time = SteadyTime::now();
+        ctx.view = msg.view;
+        let mut state = StartViewChange::new(ctx);
+        state.broadcast_start_view_change(output);
+        state.check_quorum(from, msg, output)
+    }
+
+    fn check_quorum(mut self,
                     from: Pid,
-                    msg: StartViewChange,
+                    msg: vr_msg::StartViewChange,
                     output: &mut Vec<Envelope<Msg>>) -> VrState
     {
         self.ctx.last_received_time = SteadyTime::now();
@@ -57,35 +91,18 @@ impl StartViewChange {
         self.into()
     }
 
-    pub fn start_view_change(mut ctx: VrCtx,
-                             from: Pid,
-                             msg: StartViewChange,
-                             output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        ctx.last_received_time = SteadyTime::now();
-        let tracker = QuorumTracker::new(ctx.quorum, ctx.idle_timeout.clone());
-        let state = StartViewChange {
-            ctx: ctx,
-            msgs: tracker
-        };
-        state.view = msg.view;
-        state.broadcast_start_view_change(output);
-        state.check_quorum(from, msg, output)
-    }
-
     pub fn broadcast_start_view_change(&mut self, output: &mut Vec<Envelope<Msg>>) {
-        self.ctx.last_received_time = SteadyTime::new();
+        self.ctx.last_received_time = SteadyTime::now();
         let msg = self.start_view_change_msg();
-        let cid = CorrelationId::pid(self.pid.clone());
+        let cid = CorrelationId::pid(self.ctx.pid.clone());
         self.ctx.broadcast(msg, cid, output);
     }
 
-    pub fn start_view_change_msg(&self) -> rabble::Msg<Msg> {
-        StartViewChange {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            from: self.pid.clone()
+    fn start_view_change_msg(&self) -> rabble::Msg<Msg> {
+        vr_msg::StartViewChange {
+            epoch: self.ctx.epoch,
+            view: self.ctx.view,
+            op: self.ctx.op
         }.into()
     }
 
@@ -107,7 +124,7 @@ impl StartViewChange {
         if msg.view == self.ctx.view {
             return self.check_quorum(from, msg, output)
         }
-        self.start_view_change(self, msg, output)
+        StartViewChange::start_view_change(self.ctx, from, msg, output)
     }
 
     // Another replica got quorum of StartViewChange messages for this view and computed
@@ -146,51 +163,35 @@ impl StartViewChange {
         }
         // A primary has been elected in a new view / epoch
         // Even if the epoch is larger here, we will learn it and the new config by playing the log
-        let StartView{view, op, log, commit_num, ..} = msg;
-        Backup::become_backup(view, op, log, commit_num, output)
+        let vr_msg::StartView{view, op, log, commit_num, ..} = msg;
+        Backup::become_backup(self.ctx, view, op, log, commit_num, output)
     }
 
-    fn handle_tick(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
+    fn handle_tick(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.msgs.is_expired() {
             // We didn't receive quorum, increment the view and try again
             self.ctx.last_received_time = SteadyTime::now();
             self.ctx.view += 1;
-            self.msgs = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout.clone());
+            self.msgs = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout_ms);
             self.broadcast_start_view_change(output);
         }
         self.into()
     }
-        fn send_do_view_change(&self, new_primary: Pid) -> Envelope<Msg> {
-            let cid = CorrelationId::pid(self.pid.clone());
-            let msg = self.do_view_change_msg();
-            Envelope::new(new_primary, self.pid.clone(), msg, cid)
-        }
+
+    fn send_do_view_change(&self, new_primary: Pid) -> Envelope<Msg> {
+        let cid = CorrelationId::pid(self.ctx.pid.clone());
+        let msg = self.do_view_change_msg();
+        Envelope::new(new_primary, self.ctx.pid.clone(), msg, Some(cid))
+    }
 
     fn do_view_change_msg(&self) -> rabble::Msg<Msg> {
-        DoViewChange {
+        vr_msg::DoViewChange {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
             op: self.ctx.op,
-            from: self.ctx.pid.clone(),
             last_normal_view: self.ctx.last_normal_view,
             log: self.ctx.log.clone(),
             commit_num: self.ctx.commit_num
-        }.into()
-    }
-
-    fn broadcast_start_view_msg(&self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) {
-        let msg = self.start_view_msg(new_commit_num);
-        let cid = CorrelationId::pid(self.pid.clone());
-        self.ctx.broadcast(msg, cid, output);
-    }
-
-    fn start_view_msg(&self, new_commit_num: u64) -> rabble::Msg<Msg> {
-        StartView {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            log: self.log.clone(),
-            commit_num: new_commit_num
         }.into()
     }
 }

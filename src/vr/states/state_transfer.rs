@@ -1,5 +1,5 @@
 use std::convert::{From, Into};
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 use rabble::{self, Pid, CorrelationId, Envelope};
 use time::{SteadyTime, Duration};
 use msg::Msg;
@@ -18,7 +18,7 @@ state!(StateTransfer {
 });
 
 impl Transition for StateTransfer {
-    fn handle(self,
+    fn handle(mut self,
               msg: VrMsg,
               from: Pid,
               cid: CorrelationId,
@@ -28,44 +28,63 @@ impl Transition for StateTransfer {
             // Replicas only respond to state transfer requests in normal mode
             // in the same epoch and view
             VrMsg::NewState(msg) => self.become_backup(msg, output),
-            VrMsg::Prepare(msg)
-                | VrMsg::Commit(msg)
-                | VrMsg::StartViewChange(msg)
-                | VrMsg::DoViewChange(msg)
-                | VrMsg::StartView(msg)
-                | VrMsg::GetState(msg) =>
-            {
+            VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
-                self.into();
+                self.into()
+            }
+            VrMsg::Commit(msg) => {
+                up_to_date!(self, from, msg, cid, output);
+                self.into()
+            }
+            VrMsg::StartViewChange(msg) => {
+                up_to_date!(self, from, msg, cid, output);
+                self.into()
+            }
+            VrMsg::DoViewChange(msg) => {
+                up_to_date!(self, from, msg, cid, output);
+                self.into()
+            }
+            VrMsg::StartView(msg) => {
+                up_to_date!(self, from, msg, cid, output);
+                self.into()
+            }
+            VrMsg::GetState(msg) => {
+                up_to_date!(self, from, msg, cid, output);
+                self.into()
             },
             VrMsg::Tick => {
                 if self.ctx.idle_timeout() {
-                    self.ctx.send_get_state_to_random_replica(cid, output);
+                    self.send_get_state_to_random_replica(cid, output);
                 }
                 self.into()
-            }
+            },
+            _ => self.into()
         }
     }
 }
 
 impl StateTransfer {
-    /// Enter state transfer
-    pub fn enter(ctx: VrCtx) -> VrState {
+    pub fn new(ctx: VrCtx) -> StateTransfer {
         StateTransfer {
             ctx: ctx
         }
     }
 
-    pub fn become_backup(&mut self, msg: NewState, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        self.last_received_time = SteadyTime::now();
+    /// Enter state transfer
+    pub fn enter(ctx: VrCtx) -> VrState {
+        StateTransfer::new(ctx).into()
+    }
+
+    pub fn become_backup(mut self, msg: NewState, output: &mut Vec<Envelope<Msg>>) -> VrState {
+        self.ctx.last_received_time = SteadyTime::now();
         let NewState {view, op, commit_num, log_tail, ..} = msg;
-        self.view = view;
-        self.op = op;
+        self.ctx.view = view;
+        self.ctx.op = op;
         for m in log_tail {
-            self.log.push(m);
+            self.ctx.log.push(m);
         }
-        let backup = Backup::from(self);
-        output.push(backup.set_primary());
+        let mut backup = Backup::new(self.ctx);
+        backup.set_primary(output);
         backup.commit(commit_num, output)
     }
 
@@ -75,15 +94,20 @@ impl StateTransfer {
                                  cid: CorrelationId,
                                  output: &mut Vec<Envelope<Msg>>) -> VrState
     {
-        let msg = self.get_state_msg();
-        let from = self.pid;
-        output.extend(self.old_config
-                      .replicas
-                      .iter()
-                      .cloned()
-                      .chain(self.new_config.replicas.iter().cloned())
-                      .filter(|pid| *pid != self.pid)
-                      .map(|pid| Envelope::new(pid, from.clone(), msg.clone(), cid.clone())));
+        {
+            let msg = self.get_state_msg();
+            let ref from = self.ctx.pid;
+            output.extend(self.ctx.old_config
+                          .replicas
+                          .iter()
+                          .cloned()
+                          .chain(self.ctx.new_config.replicas.iter().cloned())
+                          .filter(|pid| *pid != self.ctx.pid)
+                          .map(|pid| Envelope::new(pid,
+                                                   from.clone(),
+                                                   msg.clone(),
+                                                   Some(cid.clone()))));
+        }
         self.into()
     }
 
@@ -101,11 +125,11 @@ impl StateTransfer {
         new_state.ctx.last_received_time = SteadyTime::now();
         new_state.ctx.epoch = new_epoch;
         new_state.ctx.view = new_view;
-        new_state.ctx.op = new_state.commit_num;
-        new_state.ctx.log.truncate(new_state.op as usize);
+        new_state.ctx.op = new_state.ctx.commit_num;
+        new_state.ctx.log.truncate(new_state.ctx.op as usize);
         let from = new_state.ctx.pid.clone();
         let msg = new_state.get_state_msg();
-        output.push(Envelope::new(primary, from, msg, cid));
+        output.push(Envelope::new(primary, from, msg, Some(cid)));
         new_state.into()
     }
 
@@ -118,26 +142,30 @@ impl StateTransfer {
         let mut new_state = StateTransfer { ctx: state.ctx() };
         new_state.ctx.last_received_time = SteadyTime::now();
         new_state.ctx.view = new_view;
-        new_state.ctx.op = new_state.commit_num;
-        new_state.ctx.log.truncate(new_state.op as usize);
+        new_state.ctx.op = new_state.ctx.commit_num;
+        new_state.ctx.log.truncate(new_state.ctx.op as usize);
         new_state.send_get_state_to_random_replica(cid, output);
         new_state.into()
     }
 
     // Send a state transfer message
-    pub fn start_same_view<S>(state: S,
-                              cid: CorrelationId,
-                              output: &mut Vec<Envelope<Msg>>) -> VrState
-        where S: State
+    pub fn start_same_view(ctx: VrCtx,
+                           cid: CorrelationId,
+                           output: &mut Vec<Envelope<Msg>>) -> VrState
     {
-        let new_state = StateTransfer { ctx: state.ctx() };
+        let mut new_state = StateTransfer { ctx: ctx };
         new_state.send_get_state_to_random_replica(cid, output);
         new_state.into()
     }
 
-    pub fn send_new_state(ctx: &VrCtx, op: u64, to: Pid, cid: CorrelationId) -> Envelope<Msg> {
+    pub fn send_new_state(ctx: &VrCtx,
+                          op: u64,
+                          to: Pid,
+                          cid: CorrelationId,
+                          output: &mut Vec<Envelope<Msg>>)
+    {
         let msg = StateTransfer::new_state_msg(ctx, op);
-        Envelope::new(to, ctx.pid.clone(), msg, cid)
+        output.push(Envelope::new(to, ctx.pid.clone(), msg, Some(cid)))
     }
 
     fn send_get_state_to_random_replica(&mut self,
@@ -145,20 +173,19 @@ impl StateTransfer {
                                         output: &mut Vec<Envelope<Msg>>) {
         let msg = self.get_state_msg();
         let mut rng = thread_rng();
-        let mut to = self.pid.clone();
-        while to == self.pid {
-            let index = rng.gen_range(0, self.new_config.replicas.len());
-            to = self.new_config.replicas[index].clone()
+        let mut to = self.ctx.pid.clone();
+        while to == self.ctx.pid {
+            let index = rng.gen_range(0, self.ctx.new_config.replicas.len());
+            to = self.ctx.new_config.replicas[index].clone()
         }
-        output.push(Envelope::new(to, self.pid.clone(), msg, cid));
+        output.push(Envelope::new(to, self.ctx.pid.clone(), msg, Some(cid)));
     }
 
     fn get_state_msg(&self) -> rabble::Msg<Msg> {
         GetState {
-            epoch: self.epoch,
-            view: self.view,
-            op: self.op,
-            from: self.pid.clone()
+            epoch: self.ctx.epoch,
+            view: self.ctx.view,
+            op: self.ctx.op
         }.into()
     }
 
@@ -167,7 +194,6 @@ impl StateTransfer {
             epoch: ctx.epoch,
             view: ctx.view,
             op: ctx.op,
-            primary: ctx.primary.clone(),
             commit_num: ctx.commit_num,
             log_tail: (&ctx.log[op as usize..ctx.op as usize]).to_vec()
         }.into()

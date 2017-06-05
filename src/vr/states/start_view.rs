@@ -7,10 +7,10 @@ use time::{SteadyTime, Duration};
 use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
-use vr::vr_msg::{self, VrMsg, GetState, Recovery, StartEpoch, StartViewChange};
+use vr::vr_msg::{self, VrMsg, GetState, Recovery, StartEpoch};
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 use super::utils::QuorumTracker;
-use super::{Primary, Backup, StateTransfer, DoViewChange};
+use super::{Primary, Backup, StateTransfer, DoViewChange, StartViewChange};
 
 /// The part of the view change state in the VR protocol state machine where a replica is waiting
 /// for a `StartView` message from the new primary. It has already sent a `DoViewChange` to the
@@ -34,11 +34,11 @@ impl Transition for StartView {
             VrMsg::Tick => self.handle_tick(output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
-                StateTransfer::start_same_view(self, cid, output)
+                StateTransfer::start_same_view(self.ctx, cid, output)
             },
             VrMsg::Commit(msg) => {
                 up_to_date!(self, from, msg, cid, output);
-                StateTransfer::start_same_view(self, cid, output)
+                StateTransfer::start_same_view(self.ctx, cid, output)
             },
             _ => self.into()
         }
@@ -57,7 +57,7 @@ impl From<StartViewChange> for StartView {
 
 impl StartView {
     fn handle_start_view_change(self,
-                                msg: StartViewChange,
+                                msg: vr_msg::StartViewChange,
                                 from: Pid,
                                 cid: CorrelationId,
                                 output: &mut Vec<Envelope<Msg>>) -> VrState
@@ -106,16 +106,16 @@ impl StartView {
             return self.into();
         }
         // Even if the epoch is larger here, we will learn it and the new config by playing the log
-        let StartView {view, op, log, commit_num, ..} = msg;
-        Backup::become_backup(view, op, log, commit_num, output)
+        let vr_msg::StartView {view, op, log, commit_num, ..} = msg;
+        Backup::become_backup(self.ctx, view, op, log, commit_num, output)
     }
 
-    fn handle_tick(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
+    fn handle_tick(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.ctx.idle_timeout() {
             // We haven't changed views yet. Transition back to StartViewChange and try again.
             self.ctx.last_received_time = SteadyTime::now();
             self.ctx.view += 1;
-            let new_state = StartViewChange::from(self);
+            let mut new_state = StartViewChange::new(self.ctx);
             new_state.broadcast_start_view_change(output);
             return new_state.into();
         }

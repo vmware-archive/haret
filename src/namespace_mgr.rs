@@ -330,8 +330,7 @@ impl NamespaceMgr {
                                 pid.clone(),
                                 old_config.clone(),
                                 new_config.clone());
-       ctx.idle_timeout = self.idle_timeout.clone();
-       ctx.primary_tick_ms = self.primary_tick_ms;
+       ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
        let state = VrState::Reconfiguration(Reconfiguration::new(ctx));
        self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
        self.local_replicas.insert(pid.clone());
@@ -344,12 +343,11 @@ impl NamespaceMgr {
                                 pid.clone(),
                                 VersionedReplicas::new(),
                                 new_config);
-       ctx.idle_timeout = self.idle_timeout.clone();
-       ctx.primary_tick_ms = self.primary_tick_ms;
+       ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
        let state = if pid == ctx.compute_primary() {
            VrState::Primary(Primary::new(ctx))
        } else {
-           VrState::Backup(Backup::new(ctx));
+           VrState::Backup(Backup::new(ctx))
        };
        self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
        self.local_replicas.insert(pid);
@@ -369,8 +367,7 @@ impl NamespaceMgr {
                                     pid.clone(),
                                     old_config.clone(),
                                     new_config.clone());
-           ctx.idle_timeout = self.idle_timeout.clone();
-           ctx.primary_tick_ms = self.primary_tick_ms;
+           ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
            let state = VrState::Recovery(Recovery::new(ctx));
            self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
            self.local_replicas.insert(pid);

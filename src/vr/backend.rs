@@ -11,6 +11,12 @@ pub struct VrBackend {
     pub tree: Tree
 }
 
+impl Default for VrBackend {
+    fn default() -> VrBackend {
+        VrBackend::new()
+    }
+}
+
 impl VrBackend {
     pub fn new() -> VrBackend {
         VrBackend {

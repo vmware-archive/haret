@@ -3,36 +3,44 @@
 
 use uuid::Uuid;
 use rabble::{self, Pid, Envelope, CorrelationId};
-use slog::Logger;
+use slog::{self, Logger};
 use std::collections::HashSet;
 use std::mem;
 use std::iter::FromIterator;
 use time::{Duration, SteadyTime};
-use vr::vr_msg::{VrMsg, ClientOp};
+use vr::vr_msg::{self, VrMsg, ClientOp};
 use vr::VersionedReplicas;
 use vr::VrBackend;
 use vr::vr_api_messages::{VrApiRsp, VrApiError};
 use msg::Msg;
 use namespace_msg::{NamespaceMsg, NamespaceId};
 
-pub const DEFAULT_IDLE_TIMEOUT_MS: u64 = 2000;
+pub const DEFAULT_IDLE_TIMEOUT_MS: i64 = 2000;
 pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
 
 
 /// The internal state of the VR FSM shared among all states
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VrCtx {
+    #[serde(skip_serializing, skip_deserializing, default = "empty_logger")]
     pub logger: Logger,
     pub pid: Pid,
     pub epoch: u64,
     pub view: u64,
     pub op: u64,
     pub commit_num: u64,
+
+    // Note that deserialization will return the wrong time.
+    // This is only used in debuggin goutput though.
+    #[serde(skip_serializing, skip_deserializing, default = "now")]
     pub last_received_time: SteadyTime,
+
     pub last_normal_view: u64,
 
     /// The number of replicas needed to provide quorum
     pub quorum: u64,
+
+    pub idle_timeout_ms: i64,
 
     pub log: Vec<ClientOp>,
 
@@ -43,6 +51,14 @@ pub struct VrCtx {
     pub new_config: VersionedReplicas,
 }
 
+fn now() -> SteadyTime {
+    SteadyTime::now()
+}
+
+fn empty_logger() -> Logger {
+    Logger::root(slog::Discard, o!())
+}
+
 impl VrCtx {
     pub fn new(logger: Logger,
                me: Pid,
@@ -50,7 +66,6 @@ impl VrCtx {
                new_config: VersionedReplicas) -> VrCtx
     {
         let quorum = new_config.replicas.len() / 2 + 1;
-        let idle_timeout = Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64);
         VrCtx {
             logger: logger.new(o!("component" => "vr_ctx", "node_id" => me.node.to_string())),
             pid: me,
@@ -61,6 +76,7 @@ impl VrCtx {
             last_received_time: SteadyTime::now(),
             last_normal_view: 0,
             quorum: quorum as u64,
+            idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
             log: Vec::new(),
             backend: VrBackend::new(),
             old_config: old_config,
@@ -72,7 +88,7 @@ impl VrCtx {
         let to = Pid {
             group: None,
             name: "namespace_mgr".to_owned(),
-            node: self.ctx.pid.node.clone()
+            node: self.pid.node.clone()
         };
         let from = self.pid.clone();
         let cid = Some(CorrelationId::pid(self.pid.clone()));
@@ -81,7 +97,7 @@ impl VrCtx {
     }
 
     pub fn is_primary(&self) -> bool {
-        self.primary.as_ref().map_or(false, |p| *p == self.pid)
+        self.compute_primary() == self.pid
     }
 
     pub fn compute_primary(&self) -> Pid {
@@ -97,7 +113,7 @@ impl VrCtx {
     {
         output.extend(self.old_config.replicas.iter().cloned()
             .filter(|pid| *pid != self.pid)
-            .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone(), cid.clone())));
+            .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone(), Some(cid.clone()))));
     }
 
     /// Wrap a VrMsg in an envelope and send to all new replicas
@@ -108,7 +124,10 @@ impl VrCtx {
     {
         output.extend(self.new_config.replicas.iter().cloned()
                       .filter(|pid| *pid != self.pid)
-                      .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone(), cid.clone())));
+                      .map(|pid| Envelope::new(pid,
+                                               self.pid.clone(),
+                                               msg.clone(),
+                                               Some(cid.clone()))));
     }
 
     pub fn announce_reconfiguration(&self, output: &mut Vec<Envelope<Msg>>) {
@@ -116,7 +135,7 @@ impl VrCtx {
             namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_string()),
             old_config: self.old_config.clone(),
             new_config: self.new_config.clone()
-        }, self.pid.clone()));
+        }));
     }
 
 
@@ -126,23 +145,26 @@ impl VrCtx {
         old_set.difference(&new_set).cloned().collect()
     }
 
-    fn update_for_new_epoch(&mut self, op: u64, replicas: Vec<Pid>) {
+    pub fn update_for_new_epoch(&mut self, op: u64, replicas: Vec<Pid>) {
         self.last_received_time = SteadyTime::now();
         self.view = 0;
         self.last_normal_view = 0;
         mem::swap(&mut self.old_config, &mut self.new_config);
         self.new_config = VersionedReplicas {epoch: self.epoch, op: op, replicas: replicas};
-        self.quorum = self.new_config.replicas.len() / 2 + 1;
+        self.quorum = self.new_config.replicas.len() as u64 / 2 + 1;
     }
 
     /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
     /// here since the values are so small.
     pub fn idle_timeout(&self) -> bool {
-        SteadyTime::now() - self.last_received_time > self.idle_timeout
+        SteadyTime::now() - self.last_received_time
+            > Duration::milliseconds(self.idle_timeout_ms)
     }
 
     pub fn last_log_entry_is_latest_reconfiguration(&self, epoch: u64, op: u64) -> bool {
-        if let VrMsg::Reconfiguration {epoch: log_epoch, ..} = self.log[(op-1) as usize] {
+        if let ClientOp::Reconfiguration(vr_msg::Reconfiguration {epoch: log_epoch, ..})
+            = self.log[(op-1) as usize]
+        {
             if log_epoch + 1 == epoch {
                 return true;
             }

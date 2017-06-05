@@ -12,7 +12,15 @@ use rabble::{Pid, CorrelationId};
 pub struct Request {
     pub correlation_id: CorrelationId,
     replies: HashSet<Pid>,
+
+    // Note that deserialization will return the wrong time.
+    // This is only used in debuggin goutput though.
+    #[serde(skip_serializing, skip_deserializing, default = "now")]
     timeout: SteadyTime
+}
+
+fn now() -> SteadyTime {
+    SteadyTime::now()
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -26,10 +34,10 @@ pub struct PrepareRequests {
 }
 
 impl PrepareRequests {
-    pub fn new(num_replicas: usize, timeout_ms: u64 ) -> PrepareRequests {
+    pub fn new(num_replicas: usize, timeout_ms: i64 ) -> PrepareRequests {
         PrepareRequests {
             quorum_size: num_replicas/2 + 1,
-            timeout_ms: timeout_ms as i64,
+            timeout_ms: timeout_ms,
             lowest_op: 1,
             requests: VecDeque::new(),
         }

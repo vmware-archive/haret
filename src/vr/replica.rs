@@ -10,14 +10,15 @@ use super::super::admin::{AdminReq, AdminRpy};
 /// A replica wraps a VR FSM as a process so that it can receive messsages from inside rabble
 pub struct Replica {
     pid: Pid,
-    state: VrState
+    // Only optional to allow updates duing handle calls
+    state: Option<VrState>
 }
 
 impl Replica {
     pub fn new(pid: Pid, state: VrState) -> Replica {
         Replica {
             pid: pid,
-            state: state
+            state: Some(state)
         }
     }
 }
@@ -32,13 +33,14 @@ impl Process<Msg> for Replica {
         let cid = cid.map_or(CorrelationId::pid(self.pid.clone()), |c_id| c_id);
         match msg {
             rabble::Msg::User(Msg::AdminReq(AdminReq::GetReplicaState(_))) => {
-                let rpy = AdminRpy::ReplicaState(self.state.clone());
+                let rpy = AdminRpy::ReplicaState(self.state.as_ref().unwrap().clone());
                 let msg = rabble::Msg::User(Msg::AdminRpy(rpy));
                 let envelope = Envelope::new(from, self.pid.clone(), msg, Some(cid));
                 output.push(envelope);
             },
             rabble::Msg::User(Msg::Vr(vrmsg)) => {
-               self.state.next(vrmsg, from, cid, output);
+                let state = self.state.take().unwrap();
+                self.state = Some(state.next(vrmsg, from, cid, output));
             },
             _ => {
                 let msg = rabble::Msg::User(Msg::Error("Invalid Msg Received".to_string()));

@@ -6,7 +6,7 @@ use std::iter::FromIterator;
 use protobuf::RepeatedField;
 use rabble::{self, Pid, NodeId, Envelope, ConnectionMsg, ConnectionHandler, CorrelationId};
 use admin::{AdminReq, AdminRpy};
-use vr::{self, VrMsg, VrApiReq, VrApiRsp, VrApiError};
+use vr::{self, VrMsg, VrApiReq, VrApiRsp, VrApiError, ClientRequest, ClientReply};
 use msg::Msg;
 use namespace_msg::{NamespaceMsg, NamespaceId, ClientId};
 use super::messages::*;
@@ -179,9 +179,9 @@ impl ApiConnectionHandler {
                            req: VrApiReq,
                            output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
-        let vrmsg = VrMsg::ClientRequest {op: req,
-                                          client_id: client_id,
-                                          request_num: client_req_num};
+        let vrmsg = ClientRequest {op: req,
+                                   client_id: client_id,
+                                   request_num: client_req_num}.into();
         let envelope = self.make_envelope(pid, Msg::Vr(vrmsg));
         output.push(ConnectionMsg::Envelope(envelope));
     }
@@ -358,7 +358,8 @@ impl ConnectionHandler for ApiConnectionHandler {
         }
         self.waiting_for += 1;
         match msg {
-            rabble::Msg::User(Msg::Vr(VrMsg::ClientReply {epoch, view, request_num, value})) => {
+            rabble::Msg::User(Msg::Vr(VrMsg::ClientReply(client_reply))) => {
+                let ClientReply {epoch, view, request_num, value} = client_reply;
                 let mut reply = ConsensusReply::new();
                 reply.set_epoch(epoch);
                 reply.set_view(view);

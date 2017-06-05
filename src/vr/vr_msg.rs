@@ -25,6 +25,12 @@ macro_rules! msg {
                 VrMsg::$struct_name(msg)
             }
         }
+
+        impl From<$struct_name> for rabble::Msg<Msg> {
+            fn from(msg: $struct_name) -> rabble::Msg<Msg> {
+                rabble::Msg::User(Msg::Vr(msg.into()))
+            }
+        }
     }
 }
 
@@ -87,8 +93,8 @@ msg!(ClientRequest {
 });
 
 msg!(Reconfiguration {
-    client_req_num: u64,
     epoch: u64,
+    client_req_num: u64,
     replicas: Vec<Pid>
 });
 
@@ -110,7 +116,7 @@ msg!(DoViewChange {
     view: u64,
     op: u64,
     last_normal_view: u64,
-    log: Vec<VrMsg>,
+    log: Vec<ClientOp>,
     commit_num: u64
 });
 
@@ -118,7 +124,7 @@ msg!(StartView {
     epoch: u64,
     view: u64,
     op: u64,
-    log: Vec<VrMsg>,
+    log: Vec<ClientOp>,
     commit_num: u64
 });
 
@@ -152,9 +158,8 @@ msg!(NewState {
     epoch: u64,
     view: u64,
     op: u64,
-    primary: Option<Pid>,
     commit_num: u64,
-    log_tail: Vec<VrMsg>
+    log_tail: Vec<ClientOp>
 });
 
 msg!(Recovery {
@@ -168,7 +173,7 @@ msg!(RecoveryResponse {
     // The following fields are only valid when sent by the Primary
     op: Option<u64>,
     commit_num: Option<u64>,
-    log: Option<Vec<VrMsg>>
+    log: Option<Vec<ClientOp>>
 });
 
 msg!(StartEpoch {

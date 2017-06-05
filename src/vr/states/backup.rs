@@ -4,10 +4,12 @@ use time::{SteadyTime, Duration};
 use msg::Msg;
 use NamespaceMsg;
 use vr::vr_fsm::{Transition, VrState, State};
-use vr::vr_msg::{ClientOp, ClientRequest, Prepare, PrepareOk, Tick, Commit, StartViewChange};
-use vr::vr_msg::{self, VrMsg, GetState, StartEpoch, DoViewChange, StartView};
+use vr::vr_msg::{ClientOp, ClientRequest, Prepare, PrepareOk, Tick, Commit};
+use vr::vr_msg::{self, VrMsg, GetState, StartEpoch, StartView};
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS};
 use super::{Primary, StateTransfer, Recovery, Reconfiguration, Leaving};
+use super::{StartViewChange, DoViewChange};
+
 
 /// The backup state of the VR protocol operating in normal mode
 state!(Backup {
@@ -46,64 +48,71 @@ impl Backup {
         }
     }
 
+    // Enter the backup state
+    pub fn enter(ctx: VrCtx) -> VrState {
+        Backup::new(ctx).into()
+    }
+
     fn send_prepare_ok(&mut self,
                            msg: ClientOp, // ClientRequest | Reconfiguration
                            commit_num: u64,
                            cid: CorrelationId,
                            output: &mut Vec<Envelope<Msg>>)
     {
-        self.last_received_time = SteadyTime::now();
-        self.op += 1;
-        self.log.push(msg);
+        self.ctx.last_received_time = SteadyTime::now();
+        self.ctx.op += 1;
+        self.ctx.log.push(msg);
         output.push(self.send_to_primary(self.prepare_ok_msg(), cid));
     }
 
     /// Transition to a backup after receiving a `StartView` message
-    pub fn become_backup<S: State>(state: S,
-                            view: u64,
-                            op: u64,
-                            log: Vec<VrMsg>,
-                            commit_num: u64,
-                            output: &mut Vec<Envelope<Msg>>) -> VrState
+    pub fn become_backup(mut ctx: VrCtx,
+                         view: u64,
+                         op: u64,
+                         log: Vec<ClientOp>,
+                         commit_num: u64,
+                         output: &mut Vec<Envelope<Msg>>) -> VrState
     {
-        state.ctx.last_received_time = SteadyTime::now();
-        state.ctx.view = view;
-        state.ctx.op = op;
-        state.ctx.log = log;
+        ctx.last_received_time = SteadyTime::now();
+        ctx.op = op;
+        ctx.log = log;
         // TODO: This isn't correct if we transition to a new epoch
-        state.ctx.last_normal_view = state.view;
-        let backup = Backup::from(state);
+        ctx.last_normal_view = ctx.view;
+        ctx.view = view;
+        let mut backup = Backup::new(ctx);
         backup.set_primary(output);
         backup.commit(commit_num, output)
     }
 
-    pub fn commit(&mut self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        for i in self.commit_num..new_commit_num {
-            let msg = self.log[i as usize].clone();
+    pub fn commit(mut self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
+        for i in self.ctx.commit_num..new_commit_num {
+            let msg = self.ctx.log[i as usize].clone();
             match msg {
                 ClientOp::Request(ClientRequest {op, ..}) => {
                     self.ctx.backend.call(op);
                 },
-                ClientOp::Reconfiguration(Reconfiguration {epoch, replicas, ..}) => {
+                ClientOp::Reconfiguration(vr_msg::Reconfiguration {epoch,
+                                                                   replicas, ..}) =>
+                {
                     self.ctx.epoch = epoch;
                     self.ctx.update_for_new_epoch(i+1, replicas);
-                    self.ctx.announce_reconfiguration();
-                    self.set_primary(&mut output);
+                    self.ctx.announce_reconfiguration(output);
+                    self.set_primary(output);
 
                     // If the reconfiguration is not the last in the log, we don't want to
                     // transition, as the reconfiguration has already happened.
-                    if new_commit_num  == self.ctx.log.len() {
-                        self.commit_num = new_commit_num;
+                    if new_commit_num == self.ctx.log.len() as u64 {
+                        self.ctx.commit_num = new_commit_num;
                         return self.enter_transitioning(output);
                     }
                 },
             }
         }
-        self.commit_num = new_commit_num;
+        self.ctx.commit_num = new_commit_num;
         self.into()
     }
 
-    fn handle_prepare(self,
+    fn handle_prepare(mut self,
                       msg: Prepare,
                       from: Pid,
                       cid: CorrelationId,
@@ -117,12 +126,12 @@ impl Backup {
             self.send_prepare_ok(msg, commit_num, cid, output);
             return self.commit(commit_num, output)
         } else if op > self.ctx.op + 1 {
-            return StateTransfer::start_same_view(self, output);
+            return StateTransfer::start_same_view(self.ctx, cid, output);
         }
         self.into()
     }
 
-    fn handle_commit(self,
+    fn handle_commit(mut self,
                      msg: Commit,
                      from: Pid,
                      cid: CorrelationId,
@@ -136,11 +145,11 @@ impl Backup {
         } else if msg.commit_num == self.ctx.op {
             return self.commit(msg.commit_num, output);
         }
-        StateTransfer::start_same_view(self, output)
+        StateTransfer::start_same_view(self.ctx, cid, output)
     }
 
     fn handle_start_view_change(self,
-                                msg: StartViewChange,
+                                msg: vr_msg::StartViewChange,
                                 from: Pid,
                                 cid: CorrelationId,
                                 output: &mut Vec<Envelope<Msg>>) -> VrState
@@ -159,7 +168,7 @@ impl Backup {
     }
 
     fn handle_do_view_change(self,
-                             msg: DoViewChange,
+                             msg: vr_msg::DoViewChange,
                              from: Pid,
                              cid: CorrelationId,
                              output: &mut Vec<Envelope<Msg>>) -> VrState
@@ -192,16 +201,12 @@ impl Backup {
         // A primary has been elected in a new view / epoch
         // Even if the epoch is larger here, we will learn it and the new config by playing the log
         let StartView {view, op, log, commit_num, ..} = msg;
-        Backup::become_backup(view, op, log, commit_num, output)
+        Backup::become_backup(self.ctx, view, op, log, commit_num, output)
     }
 
     fn handle_tick(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.ctx.idle_timeout() {
-            self.ctx.last_received_time = SteadyTime::now();
-            self.ctx.view += 1;
-            let new_state = StartViewChange::from(self);
-            new_state.broadcast_start_view_change(output);
-            return new_state.into();
+            return StartViewChange::enter(self.ctx, output);
         }
         self.into()
     }
@@ -217,7 +222,7 @@ impl Backup {
         if epoch != self.ctx.epoch || view != self.ctx.view {
             return self.into()
         }
-        output.push(StateTransfer::send_new_state(&self.ctx, op, from, cid));
+        StateTransfer::send_new_state(&self.ctx, op, from, cid, output);
         self.into()
     }
 
@@ -227,7 +232,7 @@ impl Backup {
                        cid: CorrelationId,
                        output: &mut Vec<Envelope<Msg>>) -> VrState
     {
-        output.push(Recovery::send_response(&self.ctx, from, msg.nonce, cid));
+        Recovery::send_response(&self.ctx, from, msg.nonce, cid, output);
         self.into()
     }
 
@@ -246,35 +251,33 @@ impl Backup {
     /// shutdown.
     fn enter_transitioning(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.ctx.is_leaving() {
-            return Leaving::from(self).into();
+            return Leaving::leave(self.ctx)
         }
         // Tell replicas that are being replaced to shutdown
         Reconfiguration::broadcast_epoch_started(&self.ctx, output);
         if self.ctx.is_primary() {
-            self.reconfiguration_in_progress = false;
             // Become the primary
-            Primary::from(self).into()
+            return Primary::enter(self.ctx);
         }
         // Become a backup
         self.into()
     }
 
-    fn set_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {
+    pub fn set_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {
         let primary = self.ctx.compute_primary();
         self.primary = primary.clone();
         output.push(self.ctx.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary)));
     }
 
     fn send_to_primary(&self, msg: rabble::Msg<Msg>, cid: CorrelationId) -> Envelope<Msg> {
-        Envelope::new(self.primary.clone(), self.pid.clone(), msg, cid)
+        Envelope::new(self.primary.clone(), self.ctx.pid.clone(), msg, Some(cid))
     }
 
     pub fn prepare_ok_msg(&self) -> rabble::Msg<Msg> {
         PrepareOk {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
-            op: self.ctx.op,
-            from: self.ctx.pid.clone()
+            op: self.ctx.op
         }.into()
     }
 }

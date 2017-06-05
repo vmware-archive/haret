@@ -60,13 +60,14 @@ impl Transition for Primary {
                 up_to_date!(self, from, msg, cid, output);
                 // Ignore old messages for same epoch/view as this replica is already Primary
                 self.into()
-            }
+            },
+            _ => self.into()
         }
     }
 }
 
 impl Primary {
-    fn new(ctx: VrCtx) -> Primary {
+    pub fn new(ctx: VrCtx) -> Primary {
         let size = ctx.new_config.replicas.len();
         Primary {
             ctx: ctx,
@@ -77,7 +78,12 @@ impl Primary {
         }
     }
 
-    fn handle_client_request(self,
+    /// Enter Primary state
+    pub fn enter(ctx: VrCtx) -> VrState {
+        Primary::new(ctx).into()
+    }
+
+    fn handle_client_request(mut self,
                              msg: ClientRequest,
                              from: Pid,
                              cid: CorrelationId,
@@ -87,7 +93,7 @@ impl Primary {
         self.into()
     }
 
-    fn handle_reconfig(self,
+    fn handle_reconfig(mut self,
                        msg: vr_msg::Reconfiguration,
                        from: Pid,
                        cid: CorrelationId,
@@ -99,23 +105,23 @@ impl Primary {
             // This code will cause a Timeout
             return self.into();
         }
-        if let Some(err_envelope) = self.validate_reconfig(&msg, &from, &cid) {
+        if let Some(err_envelope) = self.validate_reconfig(&from, &msg, &cid) {
             output.push(err_envelope);
             return self.into();
         }
         self.reconfiguration_in_progress = true;
-        self.send_prepare(msg, from, cid, output);
+        self.send_prepare(msg.into(), from, cid, output);
         self.into()
     }
 
-    fn handle_prepare_ok(self,
+    fn handle_prepare_ok(mut self,
                          msg: PrepareOk,
                          from: Pid,
                          cid: CorrelationId,
                          output: &mut Vec<Envelope<Msg>>) -> VrState
     {
         up_to_date!(self, from, msg, cid, output);
-        let PrepareOk {op, from, ..} = msg;
+        let PrepareOk {op, ..} = msg;
         if op <= self.ctx.commit_num {
             return self.into();
         }
@@ -126,7 +132,7 @@ impl Primary {
         self.into()
     }
 
-    fn handle_tick(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
+    fn handle_tick(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.idle_timeout() {
             self.ctx.last_received_time = SteadyTime::now();
             self.broadcast_commit_msg(output);
@@ -192,13 +198,13 @@ impl Primary {
         self.prepare_requests.has_quorum(op)
     }
 
-    fn commit(self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
+    pub fn commit(mut self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
         let lowest_prepared_op = self.prepare_requests.lowest_op;
         let mut iter = self.prepare_requests.remove(new_commit_num).into_iter();
         let commit_num = self.ctx.commit_num;
         for i in commit_num..new_commit_num {
             let msg = self.ctx.log[i as usize].clone();
-            self.commit_num = i + 1;
+            self.ctx.commit_num = i + 1;
             match msg {
                 ClientOp::Request(ClientRequest {op, request_num, ..}) => {
                     let rsp = self.ctx.backend.call(op);
@@ -210,7 +216,9 @@ impl Primary {
                         output.push(self.client_reply(rsp, request_num, &from, &cid));
                     }
                 },
-                ClientOp::Reconfiguration(Reconfiguration {client_req_num, epoch, replicas, ..})=>
+                ClientOp::Reconfiguration(vr_msg::Reconfiguration {client_req_num,
+                                                                   epoch,
+                                                                   replicas, ..}) =>
                 {
                     let cid =
                         if i >= lowest_prepared_op - 1 {
@@ -225,7 +233,7 @@ impl Primary {
                                 request_num: client_req_num,
                                 value: VrApiRsp::Ok
                             }.into();
-                            let cid2 = cid.clone();
+                            let cid2 = Some(cid.clone());
                             output.push(Envelope::new(to, from, reply, cid2));
                             cid
                         } else {
@@ -235,8 +243,8 @@ impl Primary {
 
                     self.ctx.epoch = epoch;
                     self.ctx.update_for_new_epoch(i+1, replicas);
-                    output.push(self.ctx.announce_reconfiguration());
-                    output.push(self.set_primary());
+                    self.ctx.announce_reconfiguration(output);
+                    self.set_primary(output);
 
                     // If the Reconfiguration is the last entry in the log, then this is either the
                     // primary that received the client request, or a view change occurred and this
@@ -245,8 +253,8 @@ impl Primary {
                     //
                     // If the reconfiguration is not the last in the log, we don't want to
                     // transition, as the reconfiguration has already happened.
-                    if new_commit_num == self.ctx.log.len() {
-                        output.extend(self.broadcast_commit_msg_old());
+                    if new_commit_num == self.ctx.log.len() as u64 {
+                        self.broadcast_commit_msg_old(output);
                         // We don't bother sending 'StartEpoch` requests to the new replicas here,
                         // since they aren't yet online.
                         return self.enter_transitioning(output);
@@ -260,9 +268,9 @@ impl Primary {
     /// The primary has just committed the reconfiguration request. It must now determine whether it
     /// is the primary of view 0 in the new epoch, a backup in the new epoch, or it is being
     /// shutdown.
-    fn enter_transitioning(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
+    fn enter_transitioning(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.ctx.is_leaving() {
-            return Leaving::from(self).into();
+            return Leaving::leave(self.ctx);
         }
         // Tell replicas that are being replaced to shutdown
         Reconfiguration::broadcast_epoch_started(&self.ctx, output);
@@ -272,28 +280,28 @@ impl Primary {
             return self.into();
         }
         // Become a backup
-        Backup::from(self).into()
+        Backup::enter(self.ctx)
     }
 
     /// Return Some(error msg) if the reconfiguration request is invalid. Return None on success.
     fn validate_reconfig(&self,
                          from: &Pid,
-                         msg: &Reconfiguration,
+                         msg: &vr_msg::Reconfiguration,
                          cid: &CorrelationId) -> Option<Envelope<Msg>>
     {
-        let Reconfiguration {client_req_num, epoch, ref replicas} = msg;
+        let &vr_msg::Reconfiguration {client_req_num, epoch, ref replicas} = msg;
         let err = if self.reconfiguration_in_progress {
             Some(VrApiError::Msg("Reconfiguration in progress".to_owned()))
         } else if replicas.len() < 3 {
             Some(VrApiError::NotEnoughReplicas)
-        } else if epoch != self.epoch {
+        } else if epoch != self.ctx.epoch {
             Some(VrApiError::BadEpoch)
-        } else if *replicas == self.new_config.replicas {
+        } else if *replicas == self.ctx.new_config.replicas {
             Some(VrApiError::Msg("No change to existing configuration".to_owned()))
         } else {
             None
         };
-        err.map(|e| self.client_reply(VrApiRsp::Error(err), client_req_num, from, cid))
+        err.map(|e| self.client_reply(VrApiRsp::Error(e), client_req_num, from, cid))
     }
 
     fn client_reply(&self,
@@ -302,8 +310,8 @@ impl Primary {
                     to: &Pid,
                     cid: &CorrelationId) -> Envelope<Msg>
     {
-        let reply = self.ctx.client_reply_msg(client_req_num, rsp);
-        Envelope::new(to.clone(), self.ctx.pid.clone(), reply, cid.clone())
+        let reply = self.client_reply_msg(client_req_num, rsp);
+        Envelope::new(to.clone(), self.ctx.pid.clone(), reply, Some(cid.clone()))
     }
 
     fn client_reply_msg(&self, client_req_num: u64, value: VrApiRsp) -> rabble::Msg<Msg> {
@@ -315,7 +323,7 @@ impl Primary {
         }.into()
     }
 
-    fn commit_msg(&self) -> VrMsg {
+    fn commit_msg(&self) -> rabble::Msg<Msg> {
         Commit {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
@@ -324,19 +332,24 @@ impl Primary {
     }
 
     fn broadcast_commit_msg(&self, output: &mut Vec<Envelope<Msg>>) {
-        self.ctx.broadcast(self.commit_msg(), CorrelationId::pid(self.ctx.pid.clone()), output);
+        self.ctx.broadcast(self.commit_msg(),
+                           CorrelationId::pid(self.ctx.pid.clone()),
+                           output);
     }
 
     fn broadcast_commit_msg_old(&self, output: &mut Vec<Envelope<Msg>>) {
-        self.ctx.broadcast_old(self.commit_msg(), CorrelationId::pid(self.ctx.pid.clone()))
+        self.ctx.broadcast_old(self.commit_msg(),
+                               CorrelationId::pid(self.ctx.pid.clone()),
+                               output)
     }
 
-    fn set_primary(&mut self) -> Envelope<Msg> {
+    pub fn set_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {
         let primary = self.ctx.compute_primary();
-        info!(self.logger, "Elected primary";
-              "primary" => format!("{:?}", self.primary),
-              "view" => self.view);
-        self.ctx.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary))
+        info!(self.ctx.logger, "Elected primary";
+              "primary" => format!("{:?}", primary),
+              "view" => self.ctx.view);
+        let msg = NamespaceMsg::NewPrimary(primary);
+        output.push(self.ctx.namespace_mgr_envelope(msg));
     }
 
     fn idle_timeout(&self) -> bool {
