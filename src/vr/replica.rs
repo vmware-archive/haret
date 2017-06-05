@@ -3,7 +3,6 @@
 
 use rabble::{self, Process, Pid, CorrelationId, Envelope};
 use msg::Msg;
-use vr::vr_msg::VrMsg;
 use vr::vr_fsm::VrState;
 use super::super::admin::{AdminReq, AdminRpy};
 

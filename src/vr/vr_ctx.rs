@@ -1,17 +1,15 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use uuid::Uuid;
 use rabble::{self, Pid, Envelope, CorrelationId};
 use slog::{self, Logger};
 use std::collections::HashSet;
 use std::mem;
 use std::iter::FromIterator;
 use time::{Duration, SteadyTime};
-use vr::vr_msg::{self, VrMsg, ClientOp};
+use vr::vr_msg::{self, ClientOp};
 use vr::VersionedReplicas;
 use vr::VrBackend;
-use vr::vr_api_messages::{VrApiRsp, VrApiError};
 use msg::Msg;
 use namespace_msg::{NamespaceMsg, NamespaceId};
 
@@ -174,15 +172,5 @@ impl VrCtx {
 
     pub fn is_leaving(&self) -> bool {
         self.replicas_to_replace().contains(&self.pid)
-    }
-
-    fn clear_primary(&mut self) -> Envelope<Msg> {
-        let namespace_id = NamespaceId(self.pid.group.clone().unwrap());
-        self.namespace_mgr_envelope(NamespaceMsg::ClearPrimary(namespace_id))
-    }
-
-    fn set_primary(&mut self) -> Envelope<Msg> {
-        let primary = self.compute_primary();
-        self.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary))
     }
 }

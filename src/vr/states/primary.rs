@@ -3,8 +3,8 @@ use rabble::{self, Pid, CorrelationId, Envelope};
 use time::{SteadyTime, Duration};
 use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
-use vr::vr_msg::{self, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Tick, Commit};
-use vr::vr_msg::{VrMsg, GetState, StartEpoch, StartView, StartViewChange, DoViewChange};
+use vr::vr_msg::{self, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Commit};
+use vr::vr_msg::{VrMsg, GetState};
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 use vr::vr_api_messages::{VrApiRsp, VrApiError};
 use NamespaceMsg;
@@ -29,13 +29,13 @@ impl Transition for Primary {
               output: &mut Vec<Envelope<Msg>>) -> VrState
     {
         match msg {
-            VrMsg::ClientRequest(msg) => self.handle_client_request(msg, from, cid, output),
+            VrMsg::ClientRequest(msg) => self.handle_client_request(msg, cid, output),
             VrMsg::Reconfiguration(msg) => self.handle_reconfig(msg, from, cid, output),
             VrMsg::PrepareOk(msg) => self.handle_prepare_ok(msg, from, cid, output),
             VrMsg::Tick => self.handle_tick(output),
             VrMsg::GetState(msg) => self.handle_get_state(msg, from, cid, output),
             VrMsg::Recovery(msg) => self.handle_recovery(msg, from, cid, output),
-            VrMsg::StartEpoch(msg) => self.handle_start_epoch(msg, from, cid, output),
+            VrMsg::StartEpoch(_) => self.handle_start_epoch(from, cid, output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
                 // The primary should never receive these messages in the same epoch/view
@@ -85,11 +85,10 @@ impl Primary {
 
     fn handle_client_request(mut self,
                              msg: ClientRequest,
-                             from: Pid,
                              cid: CorrelationId,
                              output: &mut Vec<Envelope<Msg>>) -> VrState
     {
-        self.send_prepare(msg.into(), from, cid, output);
+        self.send_prepare(msg.into(), cid, output);
         self.into()
     }
 
@@ -110,7 +109,7 @@ impl Primary {
             return self.into();
         }
         self.reconfiguration_in_progress = true;
-        self.send_prepare(msg.into(), from, cid, output);
+        self.send_prepare(msg.into(), cid, output);
         self.into()
     }
 
@@ -163,7 +162,6 @@ impl Primary {
     }
 
     fn handle_start_epoch(self,
-                          msg: StartEpoch,
                           from: Pid,
                           cid: CorrelationId,
                           output: &mut Vec<Envelope<Msg>>) -> VrState
@@ -175,7 +173,6 @@ impl Primary {
 
     fn send_prepare(&mut self,
                     msg: ClientOp,
-                    from: Pid,
                     cid: CorrelationId,
                     output: &mut Vec<Envelope<Msg>>)
     {
@@ -220,26 +217,20 @@ impl Primary {
                                                                    epoch,
                                                                    replicas, ..}) =>
                 {
-                    let cid =
-                        if i >= lowest_prepared_op - 1 {
-                            // This replica prepared this request as primary, and wasn't elected
-                            // after it was prepared but before this replica committed it.
-                            let cid = iter.next().unwrap().correlation_id;
-                            let to = cid.pid.clone();
-                            let from = self.ctx.pid.clone();
-                            let reply = ClientReply {
-                                epoch: epoch,
-                                view: 0,
-                                request_num: client_req_num,
-                                value: VrApiRsp::Ok
-                            }.into();
-                            let cid2 = Some(cid.clone());
-                            output.push(Envelope::new(to, from, reply, cid2));
-                            cid
-                        } else {
-                            CorrelationId::pid(self.ctx.pid.clone())
-                        };
-
+                    if i >= lowest_prepared_op - 1 {
+                        // This replica prepared this request as primary, and wasn't elected
+                        // after it was prepared but before this replica committed it.
+                        let cid = iter.next().unwrap().correlation_id;
+                        let to = cid.pid.clone();
+                        let from = self.ctx.pid.clone();
+                        let reply = ClientReply {
+                            epoch: epoch,
+                            view: 0,
+                            request_num: client_req_num,
+                            value: VrApiRsp::Ok
+                        }.into();
+                        output.push(Envelope::new(to, from, reply, Some(cid)));
+                    }
 
                     self.ctx.epoch = epoch;
                     self.ctx.update_for_new_epoch(i+1, replicas);

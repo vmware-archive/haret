@@ -1,10 +1,9 @@
 use std::convert::{From, Into};
-use time::Duration;
 use rabble::{self, Pid, CorrelationId, Envelope};
 use msg::Msg;
 use NamespaceMsg;
 use vr::vr_fsm::{Transition, VrState, State};
-use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS};
+use vr::vr_ctx::VrCtx;
 use vr::vr_msg::{VrMsg, EpochStarted, StartEpoch};
 use vr::states::Shutdown;
 use vr::states::utils::QuorumTracker;
@@ -24,7 +23,7 @@ impl Transition for Leaving {
     fn handle(mut self,
               msg: VrMsg,
               from: Pid,
-              cid: CorrelationId,
+              _: CorrelationId,
               output: &mut Vec<Envelope<Msg>>) -> VrState
     {
         match msg {

@@ -1,14 +1,11 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use time::SteadyTime;
 use rabble::{Pid, CorrelationId, Envelope};
-use namespace_msg::NamespaceMsg;
 use msg::Msg;
 use vr::states::*;
-use super::vr_msg::{self, VrMsg};
+use super::vr_msg::VrMsg;
 use super::vr_ctx::VrCtx;
-use std::convert::From;
 
 /// Generate a state struct: `$struct_name` from a set of fields
 ///

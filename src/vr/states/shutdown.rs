@@ -1,4 +1,4 @@
-use vr::vr_fsm::{Transition, VrState, State};
+use vr::vr_fsm::{VrState, State};
 use vr::VrCtx;
 
 /// The replica has left and has told the namespace manager to shut it down.

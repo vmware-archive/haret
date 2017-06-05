@@ -1,13 +1,11 @@
 use std::convert::{From, Into};
 use rand::{thread_rng, Rng};
 use rabble::{self, Pid, CorrelationId, Envelope};
-use time::{SteadyTime, Duration};
+use time::SteadyTime;
 use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
-use vr::vr_msg::{ClientOp, ClientRequest, Reconfiguration, ClientReply, Prepare, PrepareOk, Tick};
-use vr::vr_msg::{self, VrMsg, GetState, Recovery, StartEpoch, StartViewChange, NewState};
-use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
-use super::utils::QuorumTracker;
+use vr::vr_msg::{VrMsg, GetState, NewState};
+use vr::vr_ctx::VrCtx;
 use super::Backup;
 
 /// When a backup realizes it's behind it enters state transfer

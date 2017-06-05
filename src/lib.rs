@@ -18,9 +18,6 @@ extern crate serde_derive;
 extern crate toml;
 
 
-// Crates we manage
-#[macro_use]
-extern crate funfsm;
 extern crate orset;
 extern crate rabble;
 extern crate amy;

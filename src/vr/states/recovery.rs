@@ -4,7 +4,6 @@
 use std::mem;
 use rabble::{self, Pid, CorrelationId, Envelope};
 use uuid::Uuid;
-use time::Duration;
 use msg::Msg;
 use super::utils::QuorumTracker;
 use vr::vr_msg::{self, VrMsg, RecoveryResponse, ClientOp};
@@ -35,7 +34,7 @@ impl Transition for Recovery {
     fn handle(mut self,
               msg: VrMsg,
               from: Pid,
-              cid: CorrelationId,
+              _: CorrelationId,
               output: &mut Vec<Envelope<Msg>>) -> VrState
     {
         match msg {

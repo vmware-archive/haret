@@ -7,13 +7,12 @@ use slog::Logger;
 use amy::{Registrar, Notification};
 use rabble::{self, Pid, NodeId, Node, Envelope, CorrelationId, ServiceHandler};
 use rabble::errors::ChainErr;
-use funfsm::{Fsm, StateFn};
 use msg::Msg;
 use config::Config;
 use vr::{VrMsg, Replica, VersionedReplicas};
 use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};
 use namespaces::Namespaces;
-use vr::vr_fsm::{self, VrState};
+use vr::vr_fsm::VrState;
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 use vr::states::{Primary, Backup, Recovery, Reconfiguration};
 use admin::{AdminReq, AdminRpy};
@@ -41,7 +40,6 @@ pub struct NamespaceMgr {
 
     /// Timeout configuration for VR Fsms
     idle_timeout: Duration,
-    primary_tick_ms: u64,
 
     /// The amount of time between VrMsg::Tick messages being sent to replicas. By default this
     /// value is set at 1/3 * primary_tick_ms for the following reasons:
@@ -78,7 +76,6 @@ impl NamespaceMgr {
             api_addrs: HashMap::new(),
             local_replicas: HashSet::new(),
             idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
-            primary_tick_ms: DEFAULT_PRIMARY_TICK_MS,
             tick_period: DEFAULT_PRIMARY_TICK_MS / 3,
             fsm_timer_id: 0, // Dummy timer for now. Will be set in init()
             management_timer_id: 0, // Dummy timer for now. Will be set in init()

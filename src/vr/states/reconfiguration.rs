@@ -15,8 +15,8 @@ state!(Reconfiguration {
 impl Transition for Reconfiguration {
     fn handle(self,
               msg: VrMsg,
-              from: Pid,
-              cid: CorrelationId,
+              _: Pid,
+              _: CorrelationId,
               output: &mut Vec<Envelope<Msg>>) -> VrState
     {
         match msg {
