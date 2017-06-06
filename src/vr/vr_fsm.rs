@@ -99,4 +99,19 @@ impl VrState {
             VrState::Shutdown(s) => s.into()
         }
     }
+
+    pub fn ctx(&self) -> &VrCtx {
+        match *self {
+            VrState::Primary(ref s) => &s.ctx,
+            VrState::Backup(ref s) => &s.ctx,
+            VrState::StateTransfer(ref s) => &s.ctx,
+            VrState::StartViewChange(ref s) => &s.ctx,
+            VrState::DoViewChange(ref s) => &s.ctx,
+            VrState::StartView(ref s) => &s.ctx,
+            VrState::Recovery(ref s) => &s.ctx,
+            VrState::Reconfiguration(ref s) => &s.ctx,
+            VrState::Leaving(ref s) => &s.ctx,
+            VrState::Shutdown(ref s) => &s.ctx
+        }
+    }
 }

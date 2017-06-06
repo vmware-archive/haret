@@ -3,11 +3,11 @@
 
 mod replica;
 mod backend;
-mod vr_msg;
 mod vr_api_messages;
 
 #[macro_use]
 pub mod vr_fsm;
+pub mod vr_msg;
 pub mod states;
 pub mod vr_ctx;
 
@@ -26,6 +26,7 @@ pub use self::replica::{
 
 pub use self::vr_msg::{
     VrMsg,
+    ClientOp,
     ClientRequest,
     ClientReply
 };

@@ -7,7 +7,7 @@ use time::SteadyTime;
 use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, VrMsg, ClientOp};
-use vr::VrCtx;
+use vr::vr_ctx::{VrCtx, DEFAULT_PRIMARY_TICK_MS};
 use super::utils::QuorumTracker;
 use super::{Primary, Backup, StateTransfer, StartViewChange};
 
@@ -117,7 +117,7 @@ impl DoViewChange {
         self.ctx.log = latest.log;
         self.ctx.last_normal_view = self.ctx.view;
         self.broadcast_start_view_msg(latest.commit_num, output);
-        let mut primary = Primary::new(self.ctx);
+        let mut primary = Primary::new(self.ctx, DEFAULT_PRIMARY_TICK_MS);
         primary.set_primary(output);
         primary.commit(latest.commit_num, output)
     }

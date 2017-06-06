@@ -51,7 +51,7 @@ pub struct NamespaceMgr {
     /// always ensure that `idle_timeout` is at least double `primary_tick_ms` we can minimize
     /// unnecessary view changes. Note that for backups, the ticks are higher frequency than
     /// necessary, but this is the tradeoff made for having a single Tick message.
-    tick_period: u64,
+    tick_period: usize,
     /*************************************************************************/
     fsm_timer_id: usize,
     management_timer_id: usize
@@ -76,7 +76,7 @@ impl NamespaceMgr {
             api_addrs: HashMap::new(),
             local_replicas: HashSet::new(),
             idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
-            tick_period: DEFAULT_PRIMARY_TICK_MS / 3,
+            tick_period: DEFAULT_PRIMARY_TICK_MS as usize / 3 ,
             fsm_timer_id: 0, // Dummy timer for now. Will be set in init()
             management_timer_id: 0, // Dummy timer for now. Will be set in init()
         }
@@ -170,7 +170,14 @@ impl NamespaceMgr {
                     }
                 }
             },
-            None => ApiRpy::UnknownNamespace
+            None => {
+                if self.namespaces.exists(&namespace_id) {
+                    // A primary hasn't been elected yet
+                    ApiRpy::Retry(10000)
+                } else {
+                    ApiRpy::UnknownNamespace
+                }
+            }
         };
         let envelope = Envelope {
             to: c_id.pid.clone(),
@@ -341,8 +348,11 @@ impl NamespaceMgr {
                                 VersionedReplicas::new(),
                                 new_config);
        ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
-       let state = if pid == ctx.compute_primary() {
-           VrState::Primary(Primary::new(ctx))
+       let primary = ctx.compute_primary();
+       let namespace_id = NamespaceId(primary.group.clone().unwrap());
+       self.namespaces.primaries.insert(namespace_id, primary.clone());
+       let state = if pid == primary {
+           VrState::Primary(Primary::new(ctx, DEFAULT_PRIMARY_TICK_MS))
        } else {
            VrState::Backup(Backup::new(ctx))
        };
@@ -374,7 +384,7 @@ impl NamespaceMgr {
 
 impl ServiceHandler<Msg> for NamespaceMgr {
     fn init(&mut self, registrar: &Registrar, _: &Node<Msg>) -> rabble::Result<()> {
-        self.fsm_timer_id = registrar.set_interval(self.tick_period as usize)
+        self.fsm_timer_id = registrar.set_interval(self.tick_period)
                               .chain_err(|| "Failed to register request timer")?;
         self.management_timer_id = registrar.set_interval(MANAGEMENT_TICK_MS as usize)
                                      .chain_err(|| "Failed to register request timer")?;

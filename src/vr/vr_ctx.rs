@@ -14,7 +14,7 @@ use msg::Msg;
 use namespace_msg::{NamespaceMsg, NamespaceId};
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: i64 = 2000;
-pub const DEFAULT_PRIMARY_TICK_MS: u64 = 500;
+pub const DEFAULT_PRIMARY_TICK_MS: i64 = 500;
 
 
 /// The internal state of the VR FSM shared among all states
@@ -135,7 +135,6 @@ impl VrCtx {
             new_config: self.new_config.clone()
         }));
     }
-
 
     pub fn replicas_to_replace(&self) -> Vec<Pid> {
         let new_set = HashSet::<Pid>::from_iter(self.new_config.replicas.clone());

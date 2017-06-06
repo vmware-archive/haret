@@ -5,7 +5,7 @@ use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Commit};
 use vr::vr_msg::{VrMsg, GetState};
-use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+use vr::vr_ctx::{VrCtx, DEFAULT_PRIMARY_TICK_MS};
 use vr::vr_api_messages::{VrApiRsp, VrApiError};
 use NamespaceMsg;
 use super::utils::PrepareRequests;
@@ -17,7 +17,7 @@ state!(Primary {
     prepare_requests: PrepareRequests,
     // If the primary doesn't receive a new client request in `primary_tick_ms` it sends a commit
     // message to the backups. `idle_timeout` should be at least twice as large as this value.
-    tick_ms: u64,
+    tick_ms: i64,
     reconfiguration_in_progress: bool
 });
 
@@ -67,20 +67,19 @@ impl Transition for Primary {
 }
 
 impl Primary {
-    pub fn new(ctx: VrCtx) -> Primary {
+    pub fn new(ctx: VrCtx, tick_ms: i64) -> Primary {
         let size = ctx.new_config.replicas.len();
         Primary {
+            prepare_requests: PrepareRequests::new(size, ctx.idle_timeout_ms),
             ctx: ctx,
-            prepare_requests: PrepareRequests::new(size,
-                                                   DEFAULT_IDLE_TIMEOUT_MS),
-            tick_ms: DEFAULT_PRIMARY_TICK_MS,
+            tick_ms: tick_ms,
             reconfiguration_in_progress: false
         }
     }
 
     /// Enter Primary state
     pub fn enter(ctx: VrCtx) -> VrState {
-        Primary::new(ctx).into()
+        Primary::new(ctx, DEFAULT_PRIMARY_TICK_MS).into()
     }
 
     fn handle_client_request(mut self,

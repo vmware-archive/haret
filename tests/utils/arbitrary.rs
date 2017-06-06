@@ -7,7 +7,7 @@ use rand::thread_rng;
 use rand::distributions::range::Range;
 use rand::distributions::IndependentSample;
 use quickcheck::{Arbitrary, Gen};
-use haret::vr::{VrMsg, VrApiReq, TreeOp, NodeType};
+use haret::vr::{vr_msg, VrApiReq, TreeOp, NodeType};
 
 #[derive(Debug, Clone)]
 struct Path(pub String);
@@ -52,11 +52,11 @@ impl Arbitrary for Op {
 }
 
 #[derive(Debug, Clone)]
-pub struct ClientRequest(pub VrMsg);
+pub struct ClientRequest(pub vr_msg::ClientRequest);
 
 impl Arbitrary for ClientRequest {
     fn arbitrary<G: Gen>(g: &mut G) -> ClientRequest {
-        ClientRequest(VrMsg::ClientRequest {
+        ClientRequest(vr_msg::ClientRequest {
             client_id: "test-client".to_string(),
             request_num: 0, // This will get mutated
             op: ApiReq::arbitrary(g).0

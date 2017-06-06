@@ -34,7 +34,7 @@ dev/%: build
 	 $(PWD)/target/debug/devconfig $(notdir $@)
 
 # Start a single node (e.g. `make start-dev1`)
-start-dev%: devrel
+start-dev%:
 	cd $(patsubst start-dev%,dev/dev%,$@); \
 	  ./haret & \
 	  echo $$! > haret.pid
