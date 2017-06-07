@@ -184,7 +184,7 @@ impl Primary {
             commit_num: self.ctx.commit_num,
             msg: msg.clone().into()
         };
-        self.ctx.log.push(msg.into());
+        self.ctx.log.push(msg);
         self.prepare_requests.new_prepare(self.ctx.op, cid.clone());
         self.ctx.broadcast(prepare.into(), cid, output);
     }
@@ -345,5 +345,121 @@ impl Primary {
     fn idle_timeout(&self) -> bool {
         SteadyTime::now() - self.ctx.last_received_time >
             Duration::milliseconds(self.tick_ms as i64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    extern crate slog;
+    extern crate slog_stdlog;
+    extern crate slog_term;
+    extern crate slog_envlogger;
+
+    use super::*;
+    use rabble::{Pid, NodeId, CorrelationId};
+    use vr::{VersionedReplicas, VrApiReq, TreeOp, NodeType};
+    use msg::Msg;
+    use slog::{DrainExt, Logger};
+
+    /// Set up logging to go to the terminal and be configured via `RUST_LOG`
+    fn logger() -> Logger {
+        let drain = slog_term::streamer().async().full().build();
+        Logger::root(slog_envlogger::EnvLogger::new(drain.fuse()), o!())
+    }
+
+    fn node_id() -> NodeId {
+        NodeId {
+            name: "node1".to_owned(),
+            addr: "127.0.0.1:9999".to_owned()
+        }
+    }
+
+    fn test_pid() -> Pid {
+        Pid {
+            group: None,
+            name: "test-pid".to_owned(),
+            node: node_id()
+        }
+    }
+
+    fn pids() -> Vec<Pid> {
+        (1..4).into_iter().map(|i| Pid {
+            group: None,
+            name: format!("r{}", i),
+            node: node_id()
+        }).collect()
+    }
+
+    fn new_config() -> VersionedReplicas {
+        VersionedReplicas {
+            epoch: 1,
+            op: 0,
+            replicas: pids()
+        }
+    }
+
+    fn take_primary(state: VrState) -> Primary {
+        if let VrState::Primary(primary) = state {
+            return primary;
+        }
+        panic!("Not in primary state: {:?}", state);
+    }
+
+    // Encapsulate a VrMsg in a rabble Msg
+    macro_rules! m {
+        ($msg:pat) => {
+            rabble::Msg::User(Msg::Vr($msg))
+        }
+    }
+
+    /// Have the primary handle a client request
+    /// Mock the prepare ok from a backup and handle it
+    /// Ensure that the client request commits and a reply is sent
+    #[test]
+    fn prepare_client_request_succeeds() {
+        let pids = pids();
+        let mut ctx = VrCtx::new(logger(),
+                                 pids[0].clone(),
+                                 VersionedReplicas::new(),
+                                 new_config());
+        ctx.idle_timeout_ms = 0;
+        let primary = Primary::new(ctx, 0);
+        let client_req = ClientRequest {
+            op: VrApiReq::TreeOp(TreeOp::CreateNode {path: "/a".to_owned(), ty: NodeType::Blob}),
+            client_id: "client1".to_owned(),
+            request_num: 1
+
+        };
+        let cid = CorrelationId::pid(test_pid());
+        let mut output = Vec::new();
+
+        // Assure that handling the client request does the right thing
+        let state = primary.handle_client_request(client_req, cid.clone(), &mut output);
+        let primary = take_primary(state);
+        assert_eq!(primary.ctx.log.len(), 1);
+        assert_eq!(primary.ctx.op, 1);
+        // broadcast of prepare to the 2 backups
+        assert_eq!(output.len(), 2);
+        for envelope in output.drain(..) {
+            assert_matches!(envelope.msg, m!(VrMsg::Prepare(_)));
+        }
+
+        // Create a mock PrepareOk and handle it
+        let msg = PrepareOk {
+            epoch: 1,
+            view: 0,
+            op: 1
+        };
+        assert_eq!(primary.ctx.commit_num, 0);
+        let state = primary.handle_prepare_ok(msg, pids[1].clone(), cid.clone(), &mut output);
+        let primary = take_primary(state);
+        assert_eq!(primary.ctx.commit_num, 1);
+        // The client reply
+        assert_eq!(output.len(), 1);
+        let envelope = output.pop().unwrap();
+        assert_eq!(envelope.to, test_pid());
+        assert_eq!(envelope.correlation_id, Some(cid));
+        assert_matches!(envelope.msg, m!(VrMsg::ClientReply(_)));
     }
 }

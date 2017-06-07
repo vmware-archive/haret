@@ -48,7 +48,6 @@ impl Process<Msg> for Replica {
             }
         }
     }
-
 }
 
 

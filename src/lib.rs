@@ -12,6 +12,10 @@ extern crate uuid;
 extern crate slog;
 extern crate protobuf;
 
+#[cfg(test)]
+#[macro_use]
+extern crate assert_matches;
+
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
