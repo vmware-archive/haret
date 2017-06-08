@@ -46,11 +46,6 @@ path = "src/bin/haret-admin.rs"
 test = false
 
 [[bin]]
-name = "haret-cli-client"
-path = "src/bin/haret-cli-client.rs"
-test = false
-
-[[bin]]
 name = "devconfig"
 path = "src/bin/devconfig.rs"
 test = false
