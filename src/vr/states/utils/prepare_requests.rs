@@ -81,6 +81,9 @@ impl PrepareRequests {
     }
 
     pub fn remove(&mut self, op: u64) -> Vec<Request> {
+        if self.requests.is_empty() {
+            return Vec::new();
+        }
         let lowest_op = self.lowest_op;
         self.lowest_op = op + 1;
         self.requests.drain(0..(op - lowest_op + 1) as usize).collect()

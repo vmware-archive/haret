@@ -3,13 +3,14 @@ use rabble::{self, Pid, CorrelationId, Envelope};
 use time::{SteadyTime, Duration};
 use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
-use vr::vr_msg::{self, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Commit};
+use vr::vr_msg::{self, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Commit, StartView};
 use vr::vr_msg::{VrMsg, GetState};
 use vr::vr_ctx::{VrCtx, DEFAULT_PRIMARY_TICK_MS};
 use vr::vr_api_messages::{VrApiRsp, VrApiError};
 use NamespaceMsg;
 use super::utils::PrepareRequests;
 use super::{StateTransfer, Recovery, Reconfiguration, Backup, Leaving};
+use super::{StartViewChange, DoViewChange};
 
 /// The primary state of the VR protocol operating in normal mode
 state!(Primary {
@@ -36,6 +37,9 @@ impl Transition for Primary {
             VrMsg::GetState(msg) => self.handle_get_state(msg, from, cid, output),
             VrMsg::Recovery(msg) => self.handle_recovery(msg, from, cid, output),
             VrMsg::StartEpoch(_) => self.handle_start_epoch(from, cid, output),
+            VrMsg::StartViewChange(msg) => self.handle_start_view_change(msg, from, output),
+            VrMsg::DoViewChange(msg) => self.handle_do_view_change(msg, from, output),
+            VrMsg::StartView(msg) => self.handle_start_view(msg, output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
                 // The primary should never receive these messages in the same epoch/view
@@ -46,21 +50,6 @@ impl Transition for Primary {
                 // The primary should never receive these messages in the same epoch/view
                 unreachable!()
             }
-            VrMsg::StartView(msg) => {
-                up_to_date!(self, from, msg, cid, output);
-                // The primary should never receive these messages in the same epoch/view
-                unreachable!()
-            }
-            VrMsg::StartViewChange(msg) => {
-                up_to_date!(self, from, msg, cid, output);
-                // Ignore old messages for same epoch/view as this replica is already Primary
-                self.into()
-            }
-            VrMsg::DoViewChange(msg) => {
-                up_to_date!(self, from, msg, cid, output);
-                // Ignore old messages for same epoch/view as this replica is already Primary
-                self.into()
-            },
             _ => self.into()
         }
     }
@@ -169,6 +158,58 @@ impl Primary {
         self.into()
     }
 
+    fn handle_start_view_change(self,
+                                msg: vr_msg::StartViewChange,
+                                from: Pid,
+                                output: &mut Vec<Envelope<Msg>>) -> VrState
+    {
+        // Old messages we want to ignore. For New ones we want to wait until a primary is elected,
+        // since we know we are out of date and need to perform state transfer, which will fail until
+        // a replica is in normal mode.
+        if msg.epoch != self.ctx.epoch {
+            return self.into();
+        }
+        if msg.view <= self.ctx.view {
+            return self.into();
+        }
+
+        StartViewChange::start_view_change(self.ctx, from, msg, output)
+    }
+
+    fn handle_do_view_change(self,
+                             msg: vr_msg::DoViewChange,
+                             from: Pid,
+                             output: &mut Vec<Envelope<Msg>>) -> VrState
+    {
+        // Old messages we want to ignore. We don't want to become the primary here either, since we
+        // didn't participate in reconfiguration, and therefore haven't yet learned about how many
+        // replicas we need to get quorum. We just want to wait until another replica is elected
+        // primary and then transfer state from it.
+        if msg.epoch != self.ctx.epoch {
+            return self.into();
+        }
+        if msg.view <= self.ctx.view {
+            return self.into();
+        }
+        DoViewChange::start_do_view_change(self, from, msg, output)
+    }
+
+    fn handle_start_view(self,
+                         msg: StartView,
+                         output: &mut Vec<Envelope<Msg>>) -> VrState
+    {
+        if msg.epoch < self.ctx.epoch {
+            return self.into();
+        }
+        if msg.epoch == self.ctx.epoch && msg.view <= self.ctx.view {
+            return self.into();
+        }
+        // A primary has been elected in a new view / epoch
+        // Even if the epoch is larger here, we will learn it and the new config by playing the log
+        let StartView {view, op, log, commit_num, ..} = msg;
+        Backup::become_backup(self.ctx, view, op, log, commit_num, output)
+    }
+
 
     fn send_prepare(&mut self,
                     msg: ClientOp,
@@ -205,11 +246,13 @@ impl Primary {
                 ClientOp::Request(ClientRequest {op, request_num, ..}) => {
                     let rsp = self.ctx.backend.call(op);
                     if i >= lowest_prepared_op - 1 {
-                        // This primary prepared this request, and wasn't elected after it was
-                        // prepared but before it was committed.
-                        let cid = iter.next().unwrap().correlation_id;
-                        let from = cid.pid.clone();
-                        output.push(self.client_reply(rsp, request_num, &from, &cid));
+                        if let Some(req) = iter.next() {
+                            // This primary prepared this request, and wasn't elected after it was
+                            // prepared but before it was committed.
+                            let cid = req.correlation_id;
+                            let from = cid.pid.clone();
+                            output.push(self.client_reply(rsp, request_num, &from, &cid));
+                        }
                     }
                 },
                 ClientOp::Reconfiguration(vr_msg::Reconfiguration {client_req_num,
@@ -217,21 +260,23 @@ impl Primary {
                                                                    replicas, ..}) =>
                 {
                     if i >= lowest_prepared_op - 1 {
-                        // This replica prepared this request as primary, and wasn't elected
-                        // after it was prepared but before this replica committed it.
-                        let cid = iter.next().unwrap().correlation_id;
-                        let to = cid.pid.clone();
-                        let from = self.ctx.pid.clone();
-                        let reply = ClientReply {
-                            epoch: epoch,
-                            view: 0,
-                            request_num: client_req_num,
-                            value: VrApiRsp::Ok
-                        }.into();
-                        output.push(Envelope::new(to, from, reply, Some(cid)));
+                        if let Some(req) = iter.next() {
+                            // This replica prepared this request as primary, and wasn't elected
+                            // after it was prepared but before this replica committed it.
+                            let cid = req.correlation_id;
+                            let to = cid.pid.clone();
+                            let from = self.ctx.pid.clone();
+                            let reply = ClientReply {
+                                epoch: epoch,
+                                view: 0,
+                                request_num: client_req_num,
+                                value: VrApiRsp::Ok
+                            }.into();
+                            output.push(Envelope::new(to, from, reply, Some(cid)));
+                        }
                     }
 
-                    self.ctx.epoch = epoch;
+                    self.ctx.epoch = epoch + 1;
                     self.ctx.update_for_new_epoch(i+1, replicas);
                     self.ctx.announce_reconfiguration(output);
                     self.set_primary(output);
@@ -328,9 +373,22 @@ impl Primary {
     }
 
     fn broadcast_commit_msg_old(&self, output: &mut Vec<Envelope<Msg>>) {
-        self.ctx.broadcast_old(self.commit_msg(),
-                               CorrelationId::pid(self.ctx.pid.clone()),
-                               output)
+        // We need to commit the message in the old epoch. If we commit in the new epoch, which view
+        // would we commit in? The backups would not know if the commit was from the last view they
+        // were in in the old epoch and therefore would not know if the entry being committed had
+        // been reordered. This would require the backup to unsafely truncate it's log to the last
+        // known commit point and participate in state transfer. In addition to potential unsafety
+        // this means that reconfiguration would take longer than necessary. Therefore we always
+        // commit in the old epoch. Even if the commit fails or a partition occurs, this is safe
+        // because a quorum has already acknowledged the reconfiguration. In this case a new
+        // primary would be elected in the old epoch and commit the reconfiguration to complete the
+        // transition.
+        let msg = Commit {
+            epoch: self.ctx.epoch - 1,
+            view: self.ctx.view,
+            commit_num: self.ctx.commit_num
+        }.into();
+        self.ctx.broadcast_old(msg, CorrelationId::pid(self.ctx.pid.clone()), output)
     }
 
     pub fn set_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {

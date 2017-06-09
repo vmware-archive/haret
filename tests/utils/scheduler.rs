@@ -61,13 +61,14 @@ impl Scheduler {
             node: node_id.clone()
         };
         let logger = logger();
+        let primary = pids[0].clone();
         let fsms = create_fsms(pids, new_config.clone(), &logger);
         let pid = Pid {name: "scheduler".to_string(), group: None, node: node_id};
         Scheduler {
             logger: logger,
             pid: pid,
             namespace_mgr: namespace_mgr,
-            primary: None,
+            primary: Some(primary),
             fsm_output: Vec::new(),
             crashed_nodes: Vec::new(),
             namespace_id: NamespaceId(Uuid::nil().to_string()),
@@ -132,6 +133,7 @@ impl Scheduler {
     }
 
     pub fn send_to_backup(&mut self, msg: VrMsg) -> Vec<Envelope<Msg>> {
+        debug!(self.logger, "Send to backup:"; "msg" => format!("{:?}", msg));
         let to = if let Some(primary) = self.primary.clone() {
             self.fsms.iter().find(|&(& ref pid, _)| *pid != primary).unwrap().0.clone()
         } else {

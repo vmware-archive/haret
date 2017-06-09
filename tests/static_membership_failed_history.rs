@@ -1,7 +1,6 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#[macro_use]
 extern crate quickcheck;
 extern crate uuid;
 extern crate rand;
@@ -29,22 +28,29 @@ use haret::vr::{vr_msg, VrMsg, VrApiReq, TreeOp};
 use haret::Msg;
 
 /// Test that a fixed replica set (no reconfigurations) properly runs VR operations
-quickcheck! {
-    fn prop_static_membership(ops: Vec<Op>) -> bool {
-        let mut scheduler = Scheduler::new(3);
-        let mut client_req_num = 0;
-        for op in ops {
-            if let Err(s) = assert_op(op.clone(), &mut scheduler, &mut client_req_num) {
-                let errmsg = format!("{:?} Error: {}", op, s);
-                error!(scheduler.logger, errmsg);
-                return false;
-            }
+#[test]
+fn run_failed_history() {
+    use Op::*;
+    let history = vec![ViewChange, ViewChange, CrashBackup, Restart, CrashPrimary, Restart];
+    assert!(prop_static_membership(history));
+}
+
+fn prop_static_membership(ops: Vec<Op>) -> bool {
+    let mut scheduler = Scheduler::new(3);
+    let mut client_req_num = 0;
+    for op in ops {
+        if let Err(s) = assert_op(op.clone(), &mut scheduler, &mut client_req_num) {
+            let errmsg = format!("{:?} Error: {}", op, s);
+            error!(scheduler.logger, errmsg);
+            return false;
         }
-        true
     }
+    true
 }
 
 fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Result<(), String> {
+
+    debug!(scheduler.logger, "TEST OP:"; "op" => format!("{:?}", op));
     match op {
         Op::ClientRequest(ClientRequest(vr_msg::ClientRequest {op, client_id, ..})) => {
             // Client requests are generated with invalid client request nums

@@ -52,7 +52,7 @@ fn basic_ops() {
     let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(),
                                                   ty: NodeType::Blob});
     let msg = ClientRequest {client_id: "test_client".to_string(), op: op, request_num: 1};
-    let primary = &replicas[1];
+    let primary = &replicas[0];
 
     // See if we get a response to our first operation.
     scheduler.send_msg(primary, msg.into());
@@ -93,17 +93,17 @@ fn state_transfer() {
 
     let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
     let msg = ClientRequest {client_id: "test_client".to_string(), op: op, request_num: 1};
-    let primary = &replicas[1];
+    let primary = &replicas[0];
     scheduler.send_msg(primary, msg.into());
-    // dispatch all commands, dropping messages to r1
-    let replies = scheduler.send_until_empty_with_drop(&replicas[0]);
+    // dispatch all commands, dropping messages to r2
+    let replies = scheduler.send_until_empty_with_drop(&replicas[1]);
 
     // Ensure we still commit the create op
     assert_create_response(replies);
 
-    // Ensure we have no ops at r1
+    // Ensure we have no ops at r2
     {
-        let state = scheduler.get_state(&replicas[0]).unwrap();
+        let state = scheduler.get_state(&replicas[1]).unwrap();
         assert_eq!(state.ctx().log.len(), 0);
         assert_eq!(state.ctx().op, 0);
         assert_eq!(state.ctx().commit_num, 0);
@@ -112,8 +112,8 @@ fn state_transfer() {
     // Send a commit to all nodes and ensure the state transfer
     assert_commit_gets_sent(primary, &mut scheduler, 1);
 
-    // Ensure r1 has received and committed the op
-    let state = scheduler.get_state(&replicas[0]).unwrap();
+    // Ensure r2 has received and committed the op
+    let state = scheduler.get_state(&replicas[1]).unwrap();
     let ctx = state.ctx();
     assert_eq!(ctx.log.len(), 1);
     assert_eq!(ctx.op, 1);
@@ -126,47 +126,47 @@ fn recovery() {
 
     let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
     let msg = ClientRequest {client_id: "test_client".to_string(), op: op, request_num: 1};
-    let view1_primary = &replicas[1];
+    let view0_primary = &replicas[0];
 
     // See if we get a response to our first operation.
-    scheduler.send_msg(view1_primary, msg.into());
+    scheduler.send_msg(view0_primary, msg.into());
     let replies = scheduler.send_until_empty();
     assert_create_response(replies);
-    assert_commit_gets_sent(view1_primary, &mut scheduler, 1);
+    assert_commit_gets_sent(view0_primary, &mut scheduler, 1);
 
-    // Stop the view1_primary and trigger an election
-    scheduler.stop(view1_primary);
-    scheduler.send_msg(&replicas[0], VrMsg::Tick);
+    // Stop the view0_primary and trigger an election
+    scheduler.stop(view0_primary);
+    scheduler.send_msg(&replicas[1], VrMsg::Tick);
     scheduler.send_until_empty();
 
-    // Restart the view1_primary and check the status of the replicas
-    scheduler.restart(view1_primary);
+    // Restart the view0_primary and check the status of the replicas
+    scheduler.restart(view0_primary);
 
     {
-        let state = scheduler.get_state(view1_primary).unwrap();
+        let state = scheduler.get_state(view0_primary).unwrap();
         assert_matches!(state, VrState::Backup(_));
-        assert_eq!(state.ctx().view, 2);
+        assert_eq!(state.ctx().view, 1);
         assert_eq!(state.ctx().op, 1);
 
-        let state  = scheduler.get_state(&replicas[0]).unwrap();
-        assert_matches!(state, VrState::Backup(_));
-        assert_eq!(state.ctx().view, 2);
+        let state  = scheduler.get_state(&replicas[1]).unwrap();
+        assert_matches!(state, VrState::Primary(_));
+        assert_eq!(state.ctx().view, 1);
         assert_eq!(state.ctx().op, 1);
 
         let state = scheduler.get_state(&replicas[2]).unwrap();
-        assert_matches!(state, VrState::Primary(_));
-        assert_eq!(state.ctx().view, 2);
+        assert_matches!(state, VrState::Backup(_));
+        assert_eq!(state.ctx().view, 1);
         assert_eq!(state.ctx().op, 1);
     }
 
-    // Send a tick to the old view1_primary so that it starts recovery
-    scheduler.send_msg(view1_primary, VrMsg::Tick);
+    // Send a tick to the old view0_primary so that it starts recovery
+    scheduler.send_msg(view0_primary, VrMsg::Tick);
     scheduler.send_until_empty();
 
-    // Ensure that the old view1_primary is now a backup with the proper state
-    let state = scheduler.get_state(view1_primary).unwrap();
+    // Ensure that the old view0_primary is now a backup with the proper state
+    let state = scheduler.get_state(view0_primary).unwrap();
     assert_matches!(state, VrState::Backup(_));
-    assert_eq!(state.ctx().view, 3);
+    assert_eq!(state.ctx().view, 2);
     assert_eq!(state.ctx().op, 1);
 }
 
@@ -181,7 +181,7 @@ fn reconfiguration() {
                            node: replicas[0].node.clone() };
     replicas.push(new_replica);
     let msg = Reconfiguration {client_req_num: 1, epoch: 1, replicas: replicas.clone()};
-    let primary = &replicas[1];
+    let primary = &replicas[0];
     // Send reconfiguration to the primary and commit it
     scheduler.send_msg(primary, msg.into());
     let mut replies = scheduler.send_until_empty();
@@ -243,25 +243,25 @@ fn assert_new_epoch(replicas: &Vec<Pid>, scheduler: &mut Scheduler) {
 }
 
 fn assert_second_view_change(replicas: &Vec<Pid>, scheduler: &mut Scheduler) {
-    scheduler.send_msg(&replicas[0], VrMsg::Tick);
+    scheduler.send_msg(&replicas[1], VrMsg::Tick);
     scheduler.send_until_empty();
     if let Some(state) = scheduler.get_state(&replicas[0]) {
         assert_matches!(state, VrState::Backup(_));
-        assert_eq!(state.ctx().view, 2);
+        assert_eq!(state.ctx().view, 1);
         assert_eq!(state.ctx().op, 3);
     } else {
         assert!(false)
     }
     if let Some(state) = scheduler.get_state(&replicas[1]) {
-        assert_matches!(state, VrState::Backup(_));
-        assert_eq!(state.ctx().view, 2);
+        assert_matches!(state, VrState::Primary(_));
+        assert_eq!(state.ctx().view, 1);
         assert_eq!(state.ctx().op, 3);
     } else {
         assert!(false)
     }
     if let Some(state) = scheduler.get_state(&replicas[2]) {
-        assert_matches!(state, VrState::Primary(_));
-        assert_eq!(state.ctx().view, 2);
+        assert_matches!(state, VrState::Backup(_));
+        assert_eq!(state.ctx().view, 1);
         assert_eq!(state.ctx().op, 3);
     } else {
         assert!(false)
@@ -277,7 +277,7 @@ fn assert_commit_gets_sent(primary: &Pid,
     for _ in 0..2 {
         if let Some(Envelope {to, msg, ..}) = scheduler.next() {
             if let rabble::Msg::User(Msg::Vr(VrMsg::Commit(commit))) = msg {
-                assert_eq!(commit.view, 1);
+                assert_eq!(commit.view, 0);
                 assert_eq!(commit.commit_num, expected_commit);
                 scheduler.send_msg(&to, commit.into());
             } else {
@@ -310,7 +310,7 @@ fn assert_put_and_get(primary: &Pid, scheduler: &mut Scheduler) {
     if let rabble::Msg::User(Msg::Vr(VrMsg::ClientReply(reply)))= msg {
         let ClientReply {epoch, view, request_num, value} = reply;
         assert_eq!(epoch, 1);
-        assert_eq!(view, 1);
+        assert_eq!(view, 0);
         assert_eq!(request_num, 3);
         if let VrApiRsp::TreeOpResult(TreeOpResult::Blob(data, _)) = value {
             assert_eq!(data, b"hello".to_vec());

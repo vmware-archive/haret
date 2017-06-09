@@ -93,7 +93,7 @@ impl Backup {
                 ClientOp::Reconfiguration(vr_msg::Reconfiguration {epoch,
                                                                    replicas, ..}) =>
                 {
-                    self.ctx.epoch = epoch;
+                    self.ctx.epoch = epoch + 1;
                     self.ctx.update_for_new_epoch(i+1, replicas);
                     self.ctx.announce_reconfiguration(output);
                     self.set_primary(output);
