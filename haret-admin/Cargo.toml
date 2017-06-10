@@ -1,0 +1,15 @@
+[package]
+name = "haret-admin"
+version = "0.1.0"
+authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
+description = "A strongly consistent distributed coordination service"
+repository = "https://github.com/vmware/haret"
+keywords = ["distributed", "coordination", "strong consistency"]
+license = "Apache-2.0"
+
+[dependencies]
+haret = { path = ".." }
+rabble = "0.4"
+rmp-serde = "0.13"
+serde = "1.0"
+uuid = { version = "0.5", features = ["serde", "v4"] }

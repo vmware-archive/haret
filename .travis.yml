@@ -7,7 +7,18 @@ rust:
 script:
   - cargo build --verbose
   - cargo test --verbose
+
+  - (cd haret-admin && cargo build --verbose)
+  - (cd haret-admin && cargo test --verbose)
+
   - (cd haret-client && cargo build --verbose)
   - (cd haret-client && cargo test --verbose)
+
   - (cd haret-cli-client && cargo build --verbose)
   - (cd haret-cli-client && cargo test --verbose)
+
+  - (cd haret-devconfig && cargo build --verbose)
+  - (cd haret-devconfig && cargo test --verbose)
+
+  - (cd haret-server && cargo build --verbose)
+  - (cd haret-server && cargo test --verbose)
