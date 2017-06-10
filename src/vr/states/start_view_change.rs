@@ -5,6 +5,7 @@ use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, VrMsg};
 use vr::vr_ctx::VrCtx;
+use namespace_msg::{NamespaceId, NamespaceMsg};
 use super::utils::QuorumTracker;
 use super::{Backup, StateTransfer, DoViewChange, StartView};
 
@@ -68,8 +69,15 @@ impl StartViewChange {
         ctx.last_received_time = SteadyTime::now();
         ctx.view = msg.view;
         let mut state = StartViewChange::new(ctx);
+        state.clear_primary(output);
         state.broadcast_start_view_change(output);
         state.check_quorum(from, msg, output)
+    }
+
+    pub fn clear_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {
+        let namespace_id = NamespaceId(self.ctx.pid.group.as_ref().unwrap().to_owned());
+        let msg = NamespaceMsg::ClearPrimary(namespace_id);
+        output.push(self.ctx.namespace_mgr_envelope(msg));
     }
 
     fn check_quorum(mut self,

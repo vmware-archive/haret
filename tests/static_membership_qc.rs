@@ -65,7 +65,7 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
             assert_basic_correctness(scheduler)
         },
         Op::ViewChange => {
-            scheduler.send_to_backup(VrMsg::Tick);
+            wait_for_view_change(scheduler);
             assert_basic_correctness(scheduler)
         },
         Op::CrashBackup => {
@@ -74,11 +74,26 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
         },
         Op::CrashPrimary => {
             scheduler.stop_primary();
+            wait_for_view_change(scheduler);
             assert_basic_correctness(scheduler)
         },
         Op::Restart => {
             scheduler.restart_crashed_node();
             assert_basic_correctness(scheduler)
+        }
+    }
+}
+
+// Keep trying until view change completes
+// It can fail if the primary of the next view is down or recovering
+// This is a normal part of the VRR protocol
+//
+// TODO: Add a timeout so the test doesn't run forever
+fn wait_for_view_change(scheduler: &mut Scheduler) {
+    loop {
+        scheduler.send_to_backup(VrMsg::Tick);
+        if scheduler.primary.is_some() {
+            break;
         }
     }
 }

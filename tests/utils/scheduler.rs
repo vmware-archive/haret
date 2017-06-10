@@ -21,7 +21,7 @@ pub struct Scheduler {
     pub namespace_mgr: Pid,
     pub primary: Option<Pid>,
     pub fsm_output: Vec<Envelope<Msg>>,
-    pub crashed_nodes: Vec<Pid>,
+    pub crashed: Vec<Pid>,
     pub namespace_id: NamespaceId,
     pub fsms: HashMap<Pid, Option<VrState>>,
     pub old_config: VersionedReplicas,
@@ -38,8 +38,7 @@ impl Iterator for Scheduler {
         if self.fsm_output.is_empty() {
             return None;
         }
-        let index = self.fsm_output.len() - 1;
-        Some(self.fsm_output.remove(index))
+        Some(self.fsm_output.remove(0))
     }
 }
 
@@ -70,7 +69,7 @@ impl Scheduler {
             namespace_mgr: namespace_mgr,
             primary: Some(primary),
             fsm_output: Vec::new(),
-            crashed_nodes: Vec::new(),
+            crashed: Vec::new(),
             namespace_id: NamespaceId(Uuid::nil().to_string()),
             fsms: fsms,
             old_config: VersionedReplicas::new(),
@@ -84,27 +83,19 @@ impl Scheduler {
 
     pub fn send_to_primary(&mut self, msg: VrMsg) -> Vec<Envelope<Msg>> {
         if let Some(ref pid) = self.primary.clone() {
-            debug!(self.logger, "Send to primary:"; "msg" => format!("{:?}", msg));
+            debug!(self.logger, "Send to primary:"; "pid" => pid.to_string(), "msg" => format!("{:?}", msg));
             return self.send(pid, msg);
         }
         Vec::new()
     }
 
-    pub fn restart_crashed_node(&mut self) {
-        if self.primary.is_none() {
-            // Trigger a view change so the restarting node can recover
-            debug!(self.logger, format!("View change: self.fsms.len() = {}", self.fsms.len()));
-            let pid = self.fsms.iter().next().unwrap().0.clone();
-            {
-                let state = self.get_state(&pid).unwrap();
-                debug!(self.logger, format!("first fsm state = {:?}", state));
-            }
-            self.send(&pid, VrMsg::Tick);
-        }
+    pub fn restart_crashed_node(&mut self) -> Option<Pid> {
         // Always start the most recently crashed node - TODO: randomize this?
-        if let Some(pid) = self.crashed_nodes.pop() {
+        if let Some(pid) = self.crashed.pop() {
             self.restart(&pid);
+            return Some(pid);
         }
+        None
     }
 
     pub fn stop_primary(&mut self) {
@@ -114,7 +105,7 @@ impl Scheduler {
         }
         if let Some(primary) = self.primary.take() {
             self.fsms.remove(&primary);
-            self.crashed_nodes.push(primary);
+            self.crashed.push(primary);
         }
     }
 
@@ -128,17 +119,21 @@ impl Scheduler {
         } else {
             self.fsms.iter().next().unwrap().0.clone()
         };
+        debug!(self.logger, "Crash backup:"; "pid" => backup.to_string());
         self.fsms.remove(&backup);
-        self.crashed_nodes.push(backup);
+        self.crashed.push(backup);
     }
 
     pub fn send_to_backup(&mut self, msg: VrMsg) -> Vec<Envelope<Msg>> {
-        debug!(self.logger, "Send to backup:"; "msg" => format!("{:?}", msg));
-        let to = if let Some(primary) = self.primary.clone() {
-            self.fsms.iter().find(|&(& ref pid, _)| *pid != primary).unwrap().0.clone()
+        let to = if self.primary.is_some() {
+            self.fsms.iter().find(|&(& ref pid, _)| {
+                *pid != *self.primary.as_ref().unwrap()
+            }).unwrap().0.clone()
         } else {
             self.fsms.iter().next().unwrap().0.clone()
         };
+        debug!(self.logger, "Send to backup:"; "pid" => to.to_string(),
+                                               "msg" => format!("{:?}", msg));
         self.send(&to, msg)
     }
 
@@ -160,7 +155,7 @@ impl Scheduler {
 
     pub fn stop(&mut self, replica: &Pid) {
         self.fsms.remove(&replica);
-        self.crashed_nodes.push(replica.clone());
+        self.crashed.push(replica.clone());
     }
 
     pub fn restart(&mut self, replica: &Pid) -> Vec<Envelope<Msg>> {

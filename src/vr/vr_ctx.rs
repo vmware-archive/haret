@@ -130,7 +130,7 @@ impl VrCtx {
 
     pub fn announce_reconfiguration(&self, output: &mut Vec<Envelope<Msg>>) {
         output.push(self.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
-            namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_string()),
+            namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_owned()),
             old_config: self.old_config.clone(),
             new_config: self.new_config.clone()
         }));
