@@ -12,6 +12,7 @@ mod reconfiguration;
 mod leaving;
 mod shutdown;
 mod utils;
+mod common;
 
 pub use self::primary::Primary;
 pub use self::backup::Backup;

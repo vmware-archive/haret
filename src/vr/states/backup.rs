@@ -4,12 +4,10 @@ use time::{SteadyTime};
 use msg::Msg;
 use NamespaceMsg;
 use vr::vr_fsm::{Transition, VrState, State};
-use vr::vr_msg::{ClientOp, ClientRequest, Prepare, PrepareOk, Commit};
-use vr::vr_msg::{self, VrMsg, GetState, StartView};
+use vr::vr_msg::{self, ClientOp, ClientRequest, Prepare, PrepareOk, Commit, VrMsg};
 use vr::vr_ctx::VrCtx;
-use super::{Primary, StateTransfer, Recovery, Reconfiguration, Leaving};
-use super::{StartViewChange, DoViewChange};
-
+use super::common::normal;
+use super::{StateTransfer, StartViewChange};
 
 /// The backup state of the VR protocol operating in normal mode
 state!(Backup {
@@ -27,13 +25,14 @@ impl Transition for Backup {
         match msg {
             VrMsg::Prepare(msg) => self.handle_prepare(msg, from, cid, output),
             VrMsg::Commit(msg) => self.handle_commit(msg, from, cid, output),
-            VrMsg::StartViewChange(msg) => self.handle_start_view_change(msg, from, output),
-            VrMsg::DoViewChange(msg) => self.handle_do_view_change(msg, from, output),
-            VrMsg::StartView(msg) => self.handle_start_view(msg, output),
+            VrMsg::StartViewChange(msg) =>
+                normal::handle_start_view_change(self, msg, from, output),
+            VrMsg::DoViewChange(msg) => normal::handle_do_view_change(self, msg, from, output),
+            VrMsg::StartView(msg) => normal::handle_start_view(self, msg, output),
             VrMsg::Tick => self.handle_tick(output),
-            VrMsg::GetState(msg) => self.handle_get_state(msg, from, cid, output),
-            VrMsg::Recovery(msg) => self.handle_recovery(msg, from, cid, output),
-            VrMsg::StartEpoch(_) => self.handle_start_epoch(from, cid, output),
+            VrMsg::GetState(msg) => normal::handle_get_state(self, msg, from, cid, output),
+            VrMsg::Recovery(msg) => normal::handle_recovery(self, msg, from, cid, output),
+            VrMsg::StartEpoch(_) => normal::handle_start_epoch(self, from, cid, output),
             _ => self.into()
         }
     }
@@ -102,7 +101,7 @@ impl Backup {
                     // transition, as the reconfiguration has already happened.
                     if new_commit_num == self.ctx.log.len() as u64 {
                         self.ctx.commit_num = new_commit_num;
-                        return self.enter_transitioning(output);
+                        return normal::enter_transitioning(self, output);
                     }
                 },
             }
@@ -147,58 +146,6 @@ impl Backup {
         StateTransfer::start_same_view(self.ctx, cid, output)
     }
 
-    fn handle_start_view_change(self,
-                                msg: vr_msg::StartViewChange,
-                                from: Pid,
-                                output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        // Old messages we want to ignore. For New ones we want to wait until a primary is elected,
-        // since we know we are out of date and need to perform state transfer, which will fail until
-        // a replica is in normal mode.
-        if msg.epoch != self.ctx.epoch {
-            return self.into();
-        }
-        if msg.view <= self.ctx.view {
-            return self.into();
-        }
-
-        StartViewChange::start_view_change(self.ctx, from, msg, output)
-    }
-
-    fn handle_do_view_change(self,
-                             msg: vr_msg::DoViewChange,
-                             from: Pid,
-                             output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        // Old messages we want to ignore. We don't want to become the primary here either, since we
-        // didn't participate in reconfiguration, and therefore haven't yet learned about how many
-        // replicas we need to get quorum. We just want to wait until another replica is elected
-        // primary and then transfer state from it.
-        if msg.epoch != self.ctx.epoch {
-            return self.into();
-        }
-        if msg.view <= self.ctx.view {
-            return self.into();
-        }
-        DoViewChange::start_do_view_change(self, from, msg, output)
-    }
-
-    fn handle_start_view(self,
-                         msg: StartView,
-                         output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        if msg.epoch < self.ctx.epoch {
-            return self.into();
-        }
-        if msg.epoch == self.ctx.epoch && msg.view <= self.ctx.view {
-            return self.into();
-        }
-        // A primary has been elected in a new view / epoch
-        // Even if the epoch is larger here, we will learn it and the new config by playing the log
-        let StartView {view, op, log, commit_num, ..} = msg;
-        Backup::become_backup(self.ctx, view, op, log, commit_num, output)
-    }
-
     fn handle_tick(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.ctx.idle_timeout() {
             return StartViewChange::enter(self.ctx, output);
@@ -206,59 +153,10 @@ impl Backup {
         self.into()
     }
 
-    fn handle_get_state(self,
-                        msg: GetState,
-                        from: Pid,
-                        cid: CorrelationId,
-                        output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        up_to_date!(self, from, msg, cid, output);
-        let GetState {epoch, view, op} = msg;
-        if epoch != self.ctx.epoch || view != self.ctx.view {
-            return self.into()
-        }
-        StateTransfer::send_new_state(&self.ctx, op, from, cid, output);
-        self.into()
-    }
-
-    fn handle_recovery(self,
-                       msg: vr_msg::Recovery,
-                       from: Pid,
-                       cid: CorrelationId,
-                       output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        Recovery::send_response(&self.ctx, from, msg.nonce, cid, output);
-        self.into()
-    }
-
-    fn handle_start_epoch(self,
-                          from: Pid,
-                          cid: CorrelationId,
-                          output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        Reconfiguration::send_epoch_started(&self.ctx, from, cid, output);
-        self.into()
-    }
-
-    /// The backup has just committed the reconfiguration request. It must now determine whether it
-    /// is the primary of view 0 in the new epoch, a backup in the new epoch, or it is being
-    /// shutdown.
-    fn enter_transitioning(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        if self.ctx.is_leaving() {
-            return Leaving::leave(self.ctx)
-        }
-        // Tell replicas that are being replaced to shutdown
-        Reconfiguration::broadcast_epoch_started(&self.ctx, output);
-        if self.ctx.is_primary() {
-            // Become the primary
-            return Primary::enter(self.ctx);
-        }
-        // Become a backup
-        self.into()
-    }
-
     pub fn set_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {
         let primary = self.ctx.compute_primary();
+        info!(self.ctx.logger, "Elected primary"; "primary" => format!("{:?}", primary),
+                                                  "view" => self.ctx.view);
         self.primary = primary.clone();
         output.push(self.ctx.namespace_mgr_envelope(NamespaceMsg::NewPrimary(primary)));
     }

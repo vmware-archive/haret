@@ -29,6 +29,10 @@ macro_rules! state {
             fn ctx(self) -> VrCtx {
                 self.ctx
             }
+
+            fn borrow_ctx(&self) -> &VrCtx {
+                &self.ctx
+            }
         }
     }
 }
@@ -61,8 +65,9 @@ pub trait Transition {
             output: &mut Vec<Envelope<Msg>>) -> VrState;
 }
 
-pub trait State {
+pub trait State: Into<VrState> {
     fn ctx(self) -> VrCtx;
+    fn borrow_ctx(&self) -> &VrCtx;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
