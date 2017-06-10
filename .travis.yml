@@ -5,8 +5,8 @@ rust:
   - beta
   - nightly
 script:
-  - cargo build --verbose
-  - cargo test --verbose
+  - (cd haret && cargo build --verbose)
+  - (cd haret && cargo test --verbose)
 
   - (cd haret-admin && cargo build --verbose)
   - (cd haret-admin && cargo test --verbose)
