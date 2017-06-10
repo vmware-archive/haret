@@ -8,8 +8,9 @@ use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, VrMsg, ClientOp};
 use vr::vr_ctx::{VrCtx, DEFAULT_PRIMARY_TICK_MS};
+use vr::states::common::view_change;
 use super::utils::QuorumTracker;
-use super::{Primary, Backup, StateTransfer, StartViewChange};
+use super::{Primary, StateTransfer, StartViewChange};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Latest {
@@ -59,8 +60,8 @@ impl Transition for DoViewChange {
         match msg {
             VrMsg::StartViewChange(msg) => self.handle_start_view_change(msg, from, output),
             VrMsg::DoViewChange(msg) => self.handle_do_view_change(msg, from, output),
-            VrMsg::StartView(msg) => self.handle_start_view(msg, output),
-            VrMsg::Tick => self.handle_tick(output),
+            VrMsg::StartView(msg) => view_change::handle_start_view(self, msg, output),
+            VrMsg::Tick => view_change::handle_tick(self, output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
                 StateTransfer::start_same_view(self.ctx, cid, output)
@@ -163,35 +164,6 @@ impl DoViewChange {
             return self.into();
         }
         DoViewChange::start_do_view_change(self, from, msg, output)
-    }
-
-    // Another replica was already elected primary for this view.
-    fn handle_start_view(self,
-                         msg: vr_msg::StartView,
-                         output: &mut Vec<Envelope<Msg>>) -> VrState
-    {
-        if msg.epoch < self.ctx.epoch {
-            return self.into();
-        }
-        if msg.epoch == self.ctx.epoch && msg.view < self.ctx.view {
-            return self.into();
-        }
-        // A primary has been elected in a new view / epoch
-        // Even if the epoch is larger here, we will learn it and the new config by playing the log
-        let vr_msg::StartView{view, op, log, commit_num, ..} = msg;
-        Backup::become_backup(self.ctx, view, op, log, commit_num, output)
-    }
-
-    fn handle_tick(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        if self.responses.is_expired() {
-            // We haven't changed views yet. Transition back to StartViewChange and try again.
-            self.ctx.last_received_time = SteadyTime::now();
-            self.ctx.view += 1;
-            let mut new_state = StartViewChange::new(self.ctx);
-            new_state.broadcast_start_view_change(output);
-            return new_state.into();
-        }
-        self.into()
     }
 
     pub fn compute_latest_state(&mut self, current: Latest) -> Latest {
