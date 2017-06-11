@@ -8,5 +8,5 @@ keywords = ["distributed", "coordination", "strong consistency"]
 license = "Apache-2.0"
 
 [dependencies]
-haret = { path = ".." }
+haret = { path = "../haret" }
 protobuf = "1.0.24"

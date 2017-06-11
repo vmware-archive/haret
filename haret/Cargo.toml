@@ -1,5 +1,5 @@
 [package]
-name = "haret-server"
+name = "haret"
 version = "0.1.0"
 authors = ["Andrew J. Stone <andrewstone@vmware.com>"]
 description = "A strongly consistent distributed coordination service"
@@ -7,15 +7,30 @@ repository = "https://github.com/vmware/haret"
 keywords = ["distributed", "coordination", "strong consistency"]
 license = "Apache-2.0"
 
+[features]
+no_timerfd = ["rabble/no_timerfd", "amy/no_timerfd"]
+
 [dependencies]
-haret = { path = "../haret" }
-rabble = "0.4"
+libc = "0.1"
+time = "*"
+uuid = { version = "0.5", features = ["serde", "v4"] }
+rand = "0.3"
 slog = {version = "1", features = ["max_level_trace"]}
+amy = "^0.7.2"
+funfsm = "0.2"
+orset = "0.2"
+rabble = "0.4"
+protobuf = "1.0.24"
+vertree = "0.1"
+lazy_static = "0.1"
+serde = "1.0"
+serde_derive = "1.0"
+rmp-serde = "0.13"
+toml = "0.4"
+
+[dev-dependencies]
+assert_matches = "1.0"
+quickcheck = "0.4"
 slog-envlogger = "0.5"
 slog-stdlog = "1"
 slog-term = "1.1"
-
-[[bin]]
-name = "haret"
-path = "src/main.rs"
-test = false
