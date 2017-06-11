@@ -1,7 +1,6 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use uuid::Uuid;
 use rabble::{self, Pid};
 use msg::Msg;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
@@ -163,17 +162,27 @@ msg!(NewState {
 });
 
 msg!(Recovery {
-    nonce: Uuid
+    epoch: u64,
+    nonce: u64
 });
 
 msg!(RecoveryResponse {
     epoch: u64,
     view: u64,
-    nonce: Uuid,
+    nonce: u64,
     // The following fields are only valid when sent by the Primary
     op: Option<u64>,
     commit_num: Option<u64>,
-    log: Option<Vec<ClientOp>>
+    log: Option<Vec<ClientOp>>,
+
+    // The following fields aren't in the paper, but they allow recovery in a later epoch
+    // This is required because a replica may be started from an old config via gossip.
+    // When a recovery response with a greater epoch than the epoch from when the replica was started
+    // is received, it will use these configurations and restart recovery so that it can properly
+    // recover from a quorum. This also allows the replica to shutdown if it isn't in the new
+    // config.
+    old_config: Option<VersionedReplicas>,
+    new_config: Option<VersionedReplicas>
 });
 
 msg!(StartEpoch {

@@ -24,7 +24,7 @@ pub struct RecoveryPrimary {
 /// replicas
 state!(Recovery {
     ctx: VrCtx,
-    nonce: Uuid,
+    nonce: u64,
     // Primary from the latest view we've heard from
     primary: Option<RecoveryPrimary>,
     responses: QuorumTracker<()>
@@ -43,13 +43,13 @@ impl Transition for Recovery {
                     let cid = CorrelationId::pid(self.ctx.pid.clone());
                     self.responses = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout_ms);
                     self.primary = None;
-                    self.nonce = Uuid::new_v4();
+                    self.nonce += 1;
                     self.ctx.broadcast(self.recovery_msg(), cid, output);
                 }
                 self.into()
             },
             VrMsg::RecoveryResponse(msg) => {
-                self.update_recovery_state(from, msg);
+                self.update_recovery_state(from, msg, output);
                 self.commit_recovery(output)
             },
             _ => self.into()
@@ -62,7 +62,7 @@ impl Recovery {
         let quorum = ctx.quorum;
         Recovery {
             ctx: ctx,
-            nonce: Uuid::new_v4(),
+            nonce: 0,
             primary: None,
             // Expire immediately so recovery is started on the next tick
             responses: QuorumTracker::new(quorum, 0)
@@ -71,11 +71,12 @@ impl Recovery {
 
     pub fn send_response(ctx: &VrCtx,
                          to: Pid,
-                         nonce: Uuid,
+                         msg: vr_msg::Recovery,
                          cid: CorrelationId,
                          output: &mut Vec<Envelope<Msg>>)
     {
-        let response = Recovery::response_msg(ctx, nonce);
+        let vr_msg::Recovery {epoch, nonce} = msg;
+        let response = Recovery::response_msg(ctx, epoch, nonce);
         output.push(Envelope::new(to, ctx.pid.clone(), response, Some(cid)));
     }
 
@@ -101,8 +102,20 @@ impl Recovery {
         self.into()
     }
 
-    fn update_recovery_state(&mut self, from: Pid, msg: RecoveryResponse) {
-        let RecoveryResponse {epoch, view, nonce, op, commit_num, log} = msg;
+    fn update_recovery_state(&mut self,
+                             from: Pid,
+                             msg: RecoveryResponse,
+                             output: &mut Vec<Envelope<Msg>>)
+    {
+        let RecoveryResponse {epoch,
+                              view,
+                              nonce,
+                              op,
+                              commit_num,
+                              log,
+                              old_config,
+                              new_config} = msg;
+
         if nonce != self.nonce {
             return;
         }
@@ -110,19 +123,20 @@ impl Recovery {
             return;
         }
 
-        // TODO: If we get a response from a replica in a later epoch, we are in a weird state
-        // We missed a reconfiguration and the namespace manager hasn't learned of the epoch
-        // change yet. It started us only with knowledge of the old config. If we search the log in
-        // the response backwards for the last reconfguration request, we can learn the new config.
-        // We can then announce the reconfiguration to the namespace manager, and restart the
-        // recovery process with that config.
-        //
-        // For now we're ignoring that this situation can even occur. We just return without
-        // processing the message. This is clearly wrong.
+        // If we get a response from a replica in a later epoch, we learn the config from the
+        // message and try again with the new group. If this replica isn't a member of the new group
+        // it shuts down.
         if epoch > self.ctx.epoch {
-            error!(self.ctx.logger,
-                   "EPOCH RECONFIGURATION DURING RECOVERY: Replica {} in a bad state",
-                   self.ctx.pid);
+            let cid = CorrelationId::pid(self.ctx.pid.clone());
+            self.ctx.epoch = epoch;
+            self.ctx.view = view;
+            self.ctx.old_config = old_config.unwrap();
+            self.ctx.new_config = new_config.unwrap();
+            self.ctx.quorum = self.ctx.new_config.replicas.len() as u64 / 2 + 1;
+            self.primary = None;
+            self.responses = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout_ms);
+            self.nonce += 1;
+            self.ctx.broadcast(self.recovery_msg(), cid, output);
             return;
         }
 
@@ -145,26 +159,36 @@ impl Recovery {
 
     fn recovery_msg(&self) -> rabble::Msg<Msg> {
         vr_msg::Recovery {
+            epoch: self.ctx.epoch,
             nonce: self.nonce.clone()
         }.into()
     }
 
 
-    fn response_msg(ctx: &VrCtx, nonce: Uuid) -> rabble::Msg<Msg> {
+    fn response_msg(ctx: &VrCtx, epoch: u64, nonce: u64) -> rabble::Msg<Msg> {
         let primary = ctx.compute_primary();
-        let (op, commit_num, log) =
-            if primary == ctx.pid {
-                (Some(ctx.op), Some(ctx.commit_num), Some(ctx.log.clone()))
-            } else {
-                (None, None, None)
-            };
+
+        let (op, commit_num, log) = if primary == ctx.pid {
+            (Some(ctx.op), Some(ctx.commit_num), Some(ctx.log.clone()))
+        } else {
+            (None, None, None)
+        };
+
+        let (old_config, new_config) = if ctx.epoch > epoch {
+            (Some(ctx.old_config.clone()), Some(ctx.new_config.clone()))
+        } else {
+            (None, None)
+        };
+
         RecoveryResponse {
             epoch: ctx.epoch,
             view: ctx.view,
             nonce: nonce,
             op: op,
             commit_num: commit_num,
-            log: log
+            log: log,
+            old_config: old_config,
+            new_config: new_config
         }.into()
     }
 }

@@ -78,7 +78,7 @@ pub fn handle_recovery<T: State>(state: T,
                                  output: &mut Vec<Envelope<Msg>>) -> VrState
 {
 
-    Recovery::send_response(state.borrow_ctx(), from, msg.nonce, cid, output);
+    Recovery::send_response(state.borrow_ctx(), from, msg, cid, output);
     state.into()
 }
 
