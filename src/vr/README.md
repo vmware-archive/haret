@@ -52,7 +52,7 @@ processed by the [Rabble
 executor](https://github.com/andrewjstone/rabble/blob/master/src/executor/executor.rs#L64-L69) or
 a [test scheduler](https://github.com/vmware/haret/blob/master/haret/tests/utils/scheduler.rs).
 
-Functions shared among implementation states live in the `states/common` subdirectory and are named
+Functions shared among implementation states live in the `states/common` subdirectory in files named
 after the VR protocol states in the paper. `Primary` and `Backup` states share functionality in
 `normal.rs`, while `StartViewChange`, `DoViewChange`, and `StartView` share functionality in
 `view_change.rs`.
