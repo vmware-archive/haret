@@ -78,6 +78,18 @@ too far behind, in addition to raising alerts, the primary can stop accepting ne
 they catch up, as a form of back pressure. Furthermore, this global commit knowledge also provides a
 frontier from which to enable garbage collection of the log.
 
+# Concrete changes to the state machine
+
+1. PROTOCOL: The global minimum commit `m` is added to the prepare and commit messages sent by the primary.
+2. PRIMARY: The primary will maintain a mapping of the lowest seen commits for each replica in the quorum.
+3. REPLICAS: All of the replicas will maintain a state variable containing the global minimum commit detailed in the last prepare or commit message.
+4. PRIMARY: When the primary prepares a commit or a prepare message to be sent it must first update its own entry in the mapping, then take the minimum number in the mapping to add it to message to be sent.
+5. PRIMARY: When the primary receives a `PrepareOK` message from a replica, it can assume that the operation `o` less one is the minimum number that the replica has committed, as the protocol requires that all `Prepare` messages be processed in order.  It then updates its commit mapping for the sending replica to `o - 1`.
+6. REPLICAS: When a set of replicas starts a view change, their `DoViewChange` message should contain the tail of the log from the global minimum commit `m`, instead of the entire log.  The new primary then select the log tail as per the protocol.
+7. REPLICAS: When the new primary sends the `StartView` message, it only sends the log tail from `m` instead of reshipping the entire log.
+6. REPLICAS: When a set of replicas completes a view change, the new primary will initialize its mapping with its last known global minimium.
+7. REPLICAS: When a set of replicas completes a epoch change, the new primary will initialize its mapping with the operation number of the reconfiguration request.
+
 # Advantages
 
 This scheme drastically reduces the amount of data transferred during view changes. It is also
