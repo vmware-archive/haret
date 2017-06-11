@@ -16,9 +16,6 @@ time = "*"
 uuid = { version = "0.5", features = ["serde", "v4"] }
 rand = "0.3"
 slog = {version = "1", features = ["max_level_trace"]}
-slog-stdlog = "1"
-slog-term = "1.1"
-slog-envlogger = "0.5"
 amy = "^0.7.2"
 funfsm = "0.2"
 orset = "0.2"
@@ -34,18 +31,6 @@ toml = "0.4"
 [dev-dependencies]
 assert_matches = "1.0"
 quickcheck = "0.4"
-
-[[bin]]
-name = "haret"
-path = "src/bin/haret.rs"
-test = false
-
-[[bin]]
-name = "haret-admin"
-path = "src/bin/haret-admin.rs"
-test = false
-
-[[bin]]
-name = "devconfig"
-path = "src/bin/devconfig.rs"
-test = false
+slog-envlogger = "0.5"
+slog-stdlog = "1"
+slog-term = "1.1"
