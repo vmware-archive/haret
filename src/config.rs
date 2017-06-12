@@ -3,6 +3,7 @@
 
 use std::fs::File;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use toml;
 use error::VrError;
 
@@ -11,7 +12,8 @@ pub struct Config {
     pub node_name: String,
     pub cluster_host: String, // ip:port or dns name used on cluster network
     pub admin_host: String, // ip:port or dns name used for admin interface
-    pub api_host: String // ip:port used for serving vr clients
+    pub api_host: String, // ip:port used for serving vr clients
+    pub data_dir: PathBuf
 }
 
 impl Config {
@@ -51,7 +53,8 @@ mod tests {
             node_name: "node1".to_string(),
             cluster_host: "192.168.1.1:5000".to_string(),
             admin_host: "127.0.0.1:5001".to_string(),
-            api_host: "127.0.0.1:5002".to_string()
+            api_host: "127.0.0.1:5002".to_string(),
+            data_dir: PathBuf::from(".")
         };
 
         config.write_path(path).unwrap();

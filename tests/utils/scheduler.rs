@@ -18,6 +18,7 @@ use rabble::{self, Pid, NodeId, CorrelationId, Envelope};
 pub struct Scheduler {
     pub logger: Logger,
     pub pid: Pid,
+    pub nonce: u64,
     pub namespace_mgr: Pid,
     pub primary: Option<Pid>,
     pub fsm_output: Vec<Envelope<Msg>>,
@@ -66,6 +67,7 @@ impl Scheduler {
         Scheduler {
             logger: logger,
             pid: pid,
+            nonce: 1,
             namespace_mgr: namespace_mgr,
             primary: Some(primary),
             fsm_output: Vec::new(),
@@ -164,7 +166,8 @@ impl Scheduler {
                                  self.old_config.clone(),
                                  self.new_config.clone());
         ctx.idle_timeout_ms = 0;
-        let state = VrState::Recovery(Recovery::new(ctx));
+        let state = VrState::Recovery(Recovery::new(ctx, self.nonce));
+        self.nonce += 1;
         let from = self.pid.clone();
         let cid = CorrelationId::pid(self.pid.clone());
         let state = state.next(VrMsg::Tick, from, cid, &mut self.fsm_output);

@@ -57,11 +57,11 @@ impl Transition for Recovery {
 }
 
 impl Recovery {
-    pub fn new(ctx: VrCtx) -> Recovery {
+    pub fn new(ctx: VrCtx, nonce: u64) -> Recovery {
         let quorum = ctx.quorum;
         Recovery {
             ctx: ctx,
-            nonce: 0,
+            nonce: nonce,
             primary: None,
             // Expire immediately so recovery is started on the next tick
             responses: QuorumTracker::new(quorum, 0)
@@ -134,7 +134,6 @@ impl Recovery {
             self.ctx.quorum = self.ctx.new_config.replicas.len() as u64 / 2 + 1;
             self.primary = None;
             self.responses = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout_ms);
-            self.nonce += 1;
             self.ctx.broadcast(self.recovery_msg(), cid, output);
             return;
         }

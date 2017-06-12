@@ -4,13 +4,11 @@ use std::convert::From;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DiskReq {
-   WriteNonce(u64),
    ReadNonce
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DiskRpy {
-    Ok,
     Nonce(u64),
     NotFound
 }

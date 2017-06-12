@@ -25,12 +25,13 @@ pub struct DiskMgr {
 }
 
 impl DiskMgr {
-    pub fn new(node: Node<Msg>, dir: PathBuf, logger: Logger) -> DiskMgr {
+    pub fn new(node: Node<Msg>, mut dir: PathBuf, logger: Logger) -> DiskMgr {
         let pid = Pid {
             group: None,
             name: "disk_mgr".to_owned(),
             node: node.id.clone()
         };
+        dir.push("nonce");
         DiskMgr {
             path: dir,
             pid: pid,
@@ -47,12 +48,6 @@ impl DiskMgr {
         file.write_all(nonce.to_string().as_bytes()).unwrap();
         file.sync_all().unwrap();
         let _ = self.path.pop();
-    }
-
-    fn send_nonce_ok(&self, to: Pid, cid: Option<CorrelationId>) -> Result<()> {
-        let msg = DiskRpy::Ok.into();
-        let envelope = Envelope::new(to, self.pid.clone(), msg, cid);
-        self.node.send(envelope).map_err(|e| e.into())
     }
 
     fn read_nonce(&mut self, filename: String) -> io::Result<u64> {
@@ -72,9 +67,13 @@ impl DiskMgr {
                         cid: Option<CorrelationId>) -> Result<()>
     {
         match nonce {
-            Ok(nonce) => self.send_nonce(nonce, to, cid),
+            Ok(nonce) => {
+                self.write_nonce(to.to_string(), nonce + 1);
+                self.send_nonce(nonce, to, cid)
+            }
             Err(e) => {
                 if e.kind() == ErrorKind::NotFound {
+                    self.write_nonce(to.to_string(), 1);
                     return self.send_not_found(to, cid);
                 }
                 panic!("Failed to read nonce: {}", e);
@@ -103,10 +102,6 @@ impl ServiceHandler<Msg> for DiskMgr {
     {
         let Envelope {from, msg, correlation_id, ..} = envelope;
         match msg {
-            rabble::Msg::User(Msg::DiskReq(DiskReq::WriteNonce(nonce))) => {
-                self.write_nonce(from.to_string(), nonce);
-                self.send_nonce_ok(from, correlation_id)
-            }
             rabble::Msg::User(Msg::DiskReq(DiskReq::ReadNonce)) => {
                 let nonce = self.read_nonce(from.to_string());
                 self.send_read_result(nonce, from, correlation_id)

@@ -12,9 +12,7 @@ use config::Config;
 use vr::{VrMsg, Replica, VersionedReplicas};
 use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};
 use namespaces::Namespaces;
-use vr::vr_fsm::VrState;
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
-use vr::states::{Primary, Backup, Recovery, Reconfiguration};
 use admin::{AdminReq, AdminRpy};
 use api::ApiRpy;
 
@@ -269,11 +267,7 @@ impl NamespaceMgr {
                 }
                 for r in new_config.replicas.iter().cloned() {
                     if self.node.id == r.node{
-                        if old_config.epoch == 0 {
-                            self.start_replica_initial_config(r, new_config.clone());
-                        } else {
-                            self.start_replica_reconfig(&r, old_config, new_config);
-                        }
+                        self.start_replica(&r, old_config, new_config);
                     }
                 }
             }
@@ -293,7 +287,7 @@ impl NamespaceMgr {
                 node: r.node.clone()
             });
             if self.node.id == r.node {
-                self.start_replica_initial_config(r, new_config.clone());
+                self.start_replica(&r, &old_config, &new_config);
             }
         }
         Ok(namespace_id)
@@ -319,66 +313,35 @@ impl NamespaceMgr {
 
         for replica in to_start {
             if self.node.id == replica.node {
-                self.start_replica_reconfig(&replica, &old_config, &new_config);
+                self.start_replica(&replica, &old_config, &new_config);
             }
         }
     }
 
-   fn start_replica_reconfig(&mut self,
-                             pid: &Pid,
-                             old_config: &VersionedReplicas,
-                             new_config: &VersionedReplicas) {
+   fn start_replica(&mut self,
+                    pid: &Pid,
+                    old_config: &VersionedReplicas,
+                    new_config: &VersionedReplicas)
+   {
        // The same reconfigure announcement can occur from multiple replicas on the same node
        if self.local_replicas.contains(pid) { return; }
+       debug!(self.logger, "Start replica:"; "pid" => pid.to_string());
        let mut ctx = VrCtx::new(self.logger.clone(),
                                 pid.clone(),
                                 old_config.clone(),
                                 new_config.clone());
-       ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
-       let state = VrState::Reconfiguration(Reconfiguration::new(ctx));
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
-       self.local_replicas.insert(pid.clone());
-   }
-
-
-    fn start_replica_initial_config(&mut self, pid: Pid, new_config: VersionedReplicas) {
-       println!("start pid {:?}", pid);
-       let mut ctx = VrCtx::new(self.logger.clone(),
-                                pid.clone(),
-                                VersionedReplicas::new(),
-                                new_config);
-       ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
        let primary = ctx.compute_primary();
        let namespace_id = NamespaceId(primary.group.clone().unwrap());
+       ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
        self.namespaces.primaries.insert(namespace_id, primary.clone());
-       let state = if pid == primary {
-           VrState::Primary(Primary::new(ctx, DEFAULT_PRIMARY_TICK_MS))
-       } else {
-           VrState::Backup(Backup::new(ctx))
-       };
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
-       self.local_replicas.insert(pid);
-    }
+       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), ctx))).unwrap();
+       self.local_replicas.insert(pid.clone());
+   }
 
     /// Should only be called outside this module during tests
     pub fn stop(&mut self, pid: &Pid) {
         self.local_replicas.remove(pid);
         self.node.stop(pid).unwrap();
-    }
-
-    /// Should only be called outside this module during tests
-    pub fn restart(&mut self, pid: Pid) {
-       let namespace_id = NamespaceId(pid.group.clone().unwrap());
-       if let Some((old_config, new_config)) = self.namespaces.get_config(&namespace_id) {
-           let mut ctx = VrCtx::new(self.logger.clone(),
-                                    pid.clone(),
-                                    old_config.clone(),
-                                    new_config.clone());
-           ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
-           let state = VrState::Recovery(Recovery::new(ctx));
-           self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), state))).unwrap();
-           self.local_replicas.insert(pid);
-       }
     }
 }
 

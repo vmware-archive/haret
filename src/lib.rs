@@ -21,7 +21,6 @@ extern crate serde;
 extern crate serde_derive;
 extern crate toml;
 
-
 extern crate orset;
 extern crate rabble;
 extern crate amy;
