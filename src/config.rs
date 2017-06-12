@@ -54,7 +54,7 @@ mod tests {
             cluster_host: "192.168.1.1:5000".to_string(),
             admin_host: "127.0.0.1:5001".to_string(),
             api_host: "127.0.0.1:5002".to_string(),
-            data_dir: PathBuf::from(".")
+            data_dir: PathBuf::from("")
         };
 
         config.write_path(path).unwrap();

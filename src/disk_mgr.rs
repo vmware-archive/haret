@@ -3,7 +3,7 @@
 
 use std::io::{self, ErrorKind, Read, Write};
 use std::path::PathBuf;
-use std::fs::File;
+use std::fs::{File, create_dir_all};
 use std::str::FromStr;
 use slog::Logger;
 use rabble::{self, Node, Pid, Envelope, CorrelationId, Result, ServiceHandler};
@@ -31,7 +31,8 @@ impl DiskMgr {
             name: "disk_mgr".to_owned(),
             node: node.id.clone()
         };
-        dir.push("nonce");
+        dir.push("nonces");
+        create_dir_all(&dir).unwrap();
         DiskMgr {
             path: dir,
             pid: pid,
@@ -52,13 +53,15 @@ impl DiskMgr {
 
     fn read_nonce(&mut self, filename: String) -> io::Result<u64> {
         self.path.push(&filename);
-        File::open(&self.path).map(|mut file| {
+        let res = File::open(&self.path).map(|mut file| {
             let mut numstr = String::new();
             // Treat failure to read as fatal
             file.read_to_string(&mut numstr).unwrap();
             // Treat file corruption as fatal
             u64::from_str(&numstr).unwrap()
-        })
+        });
+        let _ = self.path.pop();
+        res
     }
 
     fn send_read_result(&mut self,
