@@ -3,7 +3,6 @@
 
 use std::mem;
 use rabble::{self, Pid, CorrelationId, Envelope};
-use uuid::Uuid;
 use msg::Msg;
 use super::utils::QuorumTracker;
 use vr::vr_msg::{self, VrMsg, RecoveryResponse, ClientOp};

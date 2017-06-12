@@ -5,6 +5,7 @@ use namespace_msg::NamespaceMsg;
 use vr::VrMsg;
 use admin::{AdminReq, AdminRpy};
 use api::ApiRpy;
+use disk_msgs::{DiskReq, DiskRpy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Msg {
@@ -13,5 +14,7 @@ pub enum Msg {
     AdminReq(AdminReq),
     AdminRpy(AdminRpy),
     ApiRpy(ApiRpy),
+    DiskReq(DiskReq),
+    DiskRpy(DiskRpy),
     Error(String)
 }

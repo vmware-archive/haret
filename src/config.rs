@@ -34,7 +34,8 @@ impl Config {
     pub fn write_path(&self, path: &str) -> Result<(), VrError> {
         let mut file = File::create(path).unwrap();
         let string = toml::to_string(&self).unwrap();
-        file.write_all(&string.as_bytes()).map_err(|e| e.into())
+        file.write_all(&string.as_bytes())?;
+        file.sync_all().map_err(|e| e.into())
     }
 
 }

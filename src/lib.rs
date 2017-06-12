@@ -37,6 +37,8 @@ mod namespace_mgr;
 mod namespace_msg;
 mod namespaces;
 mod msg;
+mod disk_mgr;
+mod disk_msgs;
 
 pub use msg::Msg;
 pub use namespace_mgr::NamespaceMgr;
@@ -45,3 +47,4 @@ pub use namespace_msg::{
     ClientId,
     NamespaceId
 };
+pub use disk_mgr::DiskMgr;
