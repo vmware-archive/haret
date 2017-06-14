@@ -275,6 +275,9 @@ impl NamespaceMgr {
     }
 
     fn create_namespace(&mut self, mut new_replicas: Vec<Pid>) -> rabble::Result<NamespaceId> {
+        if new_replicas.len() < 3 {
+            return Err("Namespaces require at least 3 replicas".into());
+        }
         let namespace_id = validate_group_pids(&new_replicas)?;
         new_replicas.sort();
         let old_config = VersionedReplicas::new();
