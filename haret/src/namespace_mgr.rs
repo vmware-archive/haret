@@ -7,13 +7,11 @@ use slog::Logger;
 use amy::{Registrar, Notification};
 use rabble::{self, Pid, NodeId, Node, Envelope, CorrelationId, ServiceHandler};
 use rabble::errors::ChainErr;
-use funfsm::{Fsm, StateFn};
 use msg::Msg;
 use config::Config;
 use vr::{VrMsg, Replica, VersionedReplicas};
 use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};
 use namespaces::Namespaces;
-use vr::vr_fsm::{self, VrTypes};
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
 use admin::{AdminReq, AdminRpy};
 use api::ApiRpy;
@@ -40,7 +38,6 @@ pub struct NamespaceMgr {
 
     /// Timeout configuration for VR Fsms
     idle_timeout: Duration,
-    primary_tick_ms: u64,
 
     /// The amount of time between VrMsg::Tick messages being sent to replicas. By default this
     /// value is set at 1/3 * primary_tick_ms for the following reasons:
@@ -52,7 +49,7 @@ pub struct NamespaceMgr {
     /// always ensure that `idle_timeout` is at least double `primary_tick_ms` we can minimize
     /// unnecessary view changes. Note that for backups, the ticks are higher frequency than
     /// necessary, but this is the tradeoff made for having a single Tick message.
-    tick_period: u64,
+    tick_period: usize,
     /*************************************************************************/
     fsm_timer_id: usize,
     management_timer_id: usize
@@ -77,8 +74,7 @@ impl NamespaceMgr {
             api_addrs: HashMap::new(),
             local_replicas: HashSet::new(),
             idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
-            primary_tick_ms: DEFAULT_PRIMARY_TICK_MS,
-            tick_period: DEFAULT_PRIMARY_TICK_MS / 3,
+            tick_period: DEFAULT_PRIMARY_TICK_MS as usize / 3 ,
             fsm_timer_id: 0, // Dummy timer for now. Will be set in init()
             management_timer_id: 0, // Dummy timer for now. Will be set in init()
         }
@@ -172,7 +168,14 @@ impl NamespaceMgr {
                     }
                 }
             },
-            None => ApiRpy::UnknownNamespace
+            None => {
+                if self.namespaces.exists(&namespace_id) {
+                    // A primary hasn't been elected yet
+                    ApiRpy::Retry(10000)
+                } else {
+                    ApiRpy::UnknownNamespace
+                }
+            }
         };
         let envelope = Envelope {
             to: c_id.pid.clone(),
@@ -264,11 +267,7 @@ impl NamespaceMgr {
                 }
                 for r in new_config.replicas.iter().cloned() {
                     if self.node.id == r.node{
-                        if old_config.epoch == 0 {
-                            self.start_replica_initial_config(r, new_config.clone());
-                        } else {
-                            self.start_replica_reconfig(&r, old_config, new_config);
-                        }
+                        self.start_replica(&r, old_config, new_config);
                     }
                 }
             }
@@ -288,7 +287,7 @@ impl NamespaceMgr {
                 node: r.node.clone()
             });
             if self.node.id == r.node {
-                self.start_replica_initial_config(r, new_config.clone());
+                self.start_replica(&r, &old_config, &new_config);
             }
         }
         Ok(namespace_id)
@@ -314,68 +313,41 @@ impl NamespaceMgr {
 
         for replica in to_start {
             if self.node.id == replica.node {
-                self.start_replica_reconfig(&replica, &old_config, &new_config);
+                self.start_replica(&replica, &old_config, &new_config);
             }
         }
     }
 
-   fn start_replica_reconfig(&mut self,
-                             pid: &Pid,
-                             old_config: &VersionedReplicas,
-                             new_config: &VersionedReplicas) {
+   fn start_replica(&mut self,
+                    pid: &Pid,
+                    old_config: &VersionedReplicas,
+                    new_config: &VersionedReplicas)
+   {
        // The same reconfigure announcement can occur from multiple replicas on the same node
        if self.local_replicas.contains(pid) { return; }
+       debug!(self.logger, "Start replica:"; "pid" => pid.to_string());
        let mut ctx = VrCtx::new(self.logger.clone(),
                                 pid.clone(),
                                 old_config.clone(),
                                 new_config.clone());
-       ctx.idle_timeout = self.idle_timeout.clone();
-       ctx.primary_tick_ms = self.primary_tick_ms;
-       let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(vr_fsm::startup_reconfiguration));
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
+       let primary = ctx.compute_primary();
+       let namespace_id = NamespaceId(primary.group.clone().unwrap());
+       ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
+       self.namespaces.primaries.insert(namespace_id, primary.clone());
+       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), ctx))).unwrap();
        self.local_replicas.insert(pid.clone());
    }
-
-
-    fn start_replica_initial_config(&mut self, pid: Pid, new_config: VersionedReplicas) {
-       println!("start pid {:?}", pid);
-       let mut ctx = VrCtx::new(self.logger.clone(),
-                                pid.clone(),
-                                VersionedReplicas::new(),
-                                new_config);
-       ctx.idle_timeout = self.idle_timeout.clone();
-       ctx.primary_tick_ms = self.primary_tick_ms;
-       let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(vr_fsm::startup_new_namespace));
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
-       self.local_replicas.insert(pid);
-    }
 
     /// Should only be called outside this module during tests
     pub fn stop(&mut self, pid: &Pid) {
         self.local_replicas.remove(pid);
         self.node.stop(pid).unwrap();
     }
-
-    /// Should only be called outside this module during tests
-    pub fn restart(&mut self, pid: Pid) {
-       let namespace_id = NamespaceId(pid.group.clone().unwrap());
-       if let Some((old_config, new_config)) = self.namespaces.get_config(&namespace_id) {
-           let mut ctx = VrCtx::new(self.logger.clone(),
-                                    pid.clone(),
-                                    old_config.clone(),
-                                    new_config.clone());
-           ctx.idle_timeout = self.idle_timeout.clone();
-           ctx.primary_tick_ms = self.primary_tick_ms;
-           let fsm = Fsm::<VrTypes>::new(ctx, state_fn!(vr_fsm::startup_recovery));
-           self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), fsm))).unwrap();
-           self.local_replicas.insert(pid);
-       }
-    }
 }
 
 impl ServiceHandler<Msg> for NamespaceMgr {
     fn init(&mut self, registrar: &Registrar, _: &Node<Msg>) -> rabble::Result<()> {
-        self.fsm_timer_id = registrar.set_interval(self.tick_period as usize)
+        self.fsm_timer_id = registrar.set_interval(self.tick_period)
                               .chain_err(|| "Failed to register request timer")?;
         self.management_timer_id = registrar.set_interval(MANAGEMENT_TICK_MS as usize)
                                      .chain_err(|| "Failed to register request timer")?;

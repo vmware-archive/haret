@@ -5,15 +5,15 @@ use rabble::{Pid, NodeId, ClusterStatus, Metric};
 use config::Config;
 use namespaces::Namespaces;
 use namespace_msg::NamespaceId;
-use vr::VrCtxSummary;
+use vr::VrState;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AdminMsg {
     Req(AdminReq),
     Rpy(AdminRpy)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AdminReq {
     GetConfig,
     Join(NodeId),
@@ -25,7 +25,7 @@ pub enum AdminReq {
     GetMetrics(Pid)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AdminRpy {
     Ok,
     Timeout,
@@ -33,7 +33,7 @@ pub enum AdminRpy {
     Config(Config),
     NamespaceId(NamespaceId),
     Namespaces(Namespaces),
-    ReplicaState(VrCtxSummary),
+    ReplicaState(VrState),
     ReplicaNotFound(Pid),
     Primary(Option<Pid>),
     ClusterStatus(ClusterStatus),

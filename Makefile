@@ -1,5 +1,5 @@
 build:
-	cargo build
+	cargo build --all
 
 run:
 	cargo run --bin haret
@@ -31,10 +31,11 @@ dev/%: build
 	cp target/debug/haret $@
 	cp config.toml $@
 	cd $@; \
+	 rm -rf nonces; \
 	 $(PWD)/target/debug/devconfig $(notdir $@)
 
 # Start a single node (e.g. `make start-dev1`)
-start-dev%: devrel
+start-dev%:
 	cd $(patsubst start-dev%,dev/dev%,$@); \
 	  ./haret & \
 	  echo $$! > haret.pid
