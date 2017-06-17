@@ -30,7 +30,7 @@ impl Transition for StartViewChange {
         match msg {
             VrMsg::StartViewChange(msg) => self.handle_start_view_change(msg, from, output),
             VrMsg::DoViewChange(msg) => self.handle_do_view_change(msg, from, output),
-            VrMsg::StartView(msg) => view_change::handle_start_view(self, msg, output),
+            VrMsg::StartView(msg) => view_change::handle_start_view(self, msg, cid, output),
             VrMsg::Tick => view_change::handle_tick(self, output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
@@ -169,7 +169,8 @@ impl StartViewChange {
             view: self.ctx.view,
             op: self.ctx.op,
             last_normal_view: self.ctx.last_normal_view,
-            log: self.ctx.log.clone(),
+            log_start: self.ctx.global_min_accept,
+            log_tail: self.ctx.get_log_tail(),
             commit_num: self.ctx.commit_num
         }.into()
     }

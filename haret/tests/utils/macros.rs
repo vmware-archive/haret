@@ -49,3 +49,16 @@ macro_rules! fail {
         safe_assert!()
     }
 }
+
+#[macro_export]
+macro_rules! assert_contains {
+    ($container:expr, $key:expr) => {
+        if $container.contains($key) {
+            let res: Result<(), String> = Ok(());
+            res
+        } else {
+             return Err(format!("Assert failure: container = {:?}, key = {:?} File: {}, Line: {}",
+                     $container, $key, file!(), line!()))
+        }
+    }
+}

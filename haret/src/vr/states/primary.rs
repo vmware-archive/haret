@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::convert::{From, Into};
+use std::collections::HashMap;
 use rabble::{self, Pid, CorrelationId, Envelope};
 use time::{SteadyTime, Duration};
 use msg::Msg;
 use namespace_msg::NamespaceMsg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, VrMsg, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Commit};
-use vr::vr_ctx::{VrCtx, DEFAULT_PRIMARY_TICK_MS};
+use vr::vr_ctx::VrCtx;
 use vr::vr_api_messages::{VrApiRsp, VrApiError};
 use super::utils::PrepareRequests;
 use super::common::normal;
@@ -18,8 +19,10 @@ use super::StateTransfer;
 state!(Primary {
     ctx: VrCtx,
     prepare_requests: PrepareRequests,
-    tick_ms: i64,
-    reconfiguration_in_progress: bool
+    reconfiguration_in_progress: bool,
+
+    // A mapping of each replica in the new_config to it's min commit
+    min_accepts: HashMap<Pid, u64>
 });
 
 impl Transition for Primary {
@@ -40,7 +43,7 @@ impl Transition for Primary {
             VrMsg::StartViewChange(msg) =>
                 normal::handle_start_view_change(self, msg, from, output),
             VrMsg::DoViewChange(msg) => normal::handle_do_view_change(self, msg, from, output),
-            VrMsg::StartView(msg) => normal::handle_start_view(self, msg, output),
+            VrMsg::StartView(msg) => normal::handle_start_view(self, msg, cid, output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
                 // The primary should never receive these messages in the same epoch/view
@@ -57,19 +60,112 @@ impl Transition for Primary {
 }
 
 impl Primary {
-    pub fn new(ctx: VrCtx, tick_ms: i64) -> Primary {
+    pub fn new(ctx: VrCtx) -> Primary {
         let size = ctx.new_config.replicas.len();
+        let min_accepts = ctx.new_config.replicas
+                                        .iter()
+                                        .filter(|&pid| *pid != ctx.pid)
+                                        .map(|pid| (pid.clone(), ctx.global_min_accept))
+                                        .collect();
         Primary {
             prepare_requests: PrepareRequests::new(size, ctx.idle_timeout_ms),
             ctx: ctx,
-            tick_ms: tick_ms,
-            reconfiguration_in_progress: false
+            reconfiguration_in_progress: false,
+            min_accepts: min_accepts
         }
     }
 
     /// Enter Primary state
     pub fn enter(ctx: VrCtx) -> VrState {
-        Primary::new(ctx, DEFAULT_PRIMARY_TICK_MS).into()
+        Primary::new(ctx).into()
+    }
+
+    pub fn set_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {
+        let primary = self.ctx.compute_primary();
+        info!(self.ctx.logger, "Elected primary"; "primary" => format!("{:?}", primary),
+                                                  "view" => self.ctx.view);
+        let msg = NamespaceMsg::NewPrimary(primary);
+        output.push(self.ctx.namespace_mgr_envelope(msg));
+    }
+
+    pub fn commit(mut self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
+        let lowest_prepared_op = self.prepare_requests.lowest_op;
+        let mut iter = self.prepare_requests.remove(new_commit_num).into_iter();
+        let commit_num = self.ctx.commit_num;
+        for i in commit_num..new_commit_num {
+            let msg = self.ctx.log[i as usize].clone();
+            self.ctx.commit_num = i + 1;
+            match msg {
+                ClientOp::Request(ClientRequest {op, request_num, ..}) => {
+                    let rsp = self.ctx.backend.call(op);
+                    if i >= lowest_prepared_op - 1 {
+                        if let Some(req) = iter.next() {
+                            // This primary prepared this request, and wasn't elected after it was
+                            // prepared but before it was committed.
+                            let cid = req.correlation_id;
+                            let from = cid.pid.clone();
+                            // This wasn't a rebroadcast prepare from a new primary.
+                            // Send a response to the client
+                            if cid.pid != self.ctx.pid {
+                                output.push(self.client_reply(rsp, request_num, &from, &cid));
+                            }
+                        }
+                    }
+                },
+                ClientOp::Reconfiguration(vr_msg::Reconfiguration {client_req_num,
+                                                                   epoch,
+                                                                   replicas, ..}) =>
+                {
+                    if i >= lowest_prepared_op - 1 {
+                        if let Some(req) = iter.next() {
+                            // This replica prepared this request as primary, and wasn't elected
+                            // after it was prepared but before this replica committed it.
+                            let cid = req.correlation_id;
+                            // This wasn't a rebroadcast prepare from a new primary.
+                            // Send a response to the client
+                            if cid.pid != self.ctx.pid {
+                                self.send_reconfig_client_reply(epoch, client_req_num, cid, output);
+                            }
+                        }
+                    }
+
+                    normal::commit_reconfiguration(&mut self.ctx, epoch, i+1, replicas, output);
+                    self.set_primary(output);
+
+                    // If the Reconfiguration is the last entry in the log, then this is either the
+                    // primary that received the client request, or a view change occurred and this
+                    // is a new primary in the epoch of the reconfiguration request processing the
+                    // reconfiguration
+                    //
+                    // If the reconfiguration is not the last in the log, we don't want to
+                    // transition, as the reconfiguration has already happened.
+                    if i + 1 == new_commit_num && new_commit_num == self.ctx.log.len() as u64 {
+                        self.broadcast_commit_msg_old(output);
+                        // We don't bother sending 'StartEpoch` requests to the new replicas here,
+                        // since they aren't yet online.
+                        return normal::enter_transitioning(self, output);
+                    }
+                }
+            }
+        }
+        self.into()
+    }
+
+    fn send_reconfig_client_reply(&self,
+                                  epoch: u64,
+                                  client_req_num: u64,
+                                  cid: CorrelationId,
+                                  output: &mut Vec<Envelope<Msg>>)
+    {
+        let to = cid.pid.clone();
+        let from = self.ctx.pid.clone();
+        let reply = ClientReply {
+            epoch: epoch,
+            view: 0,
+            request_num: client_req_num,
+            value: VrApiRsp::Ok
+        }.into();
+        output.push(Envelope::new(to, from, reply, Some(cid)));
     }
 
     fn handle_client_request(mut self,
@@ -77,7 +173,7 @@ impl Primary {
                              cid: CorrelationId,
                              output: &mut Vec<Envelope<Msg>>) -> VrState
     {
-        self.send_prepare(msg.into(), cid, output);
+        self.broadcast_prepare(msg.into(), cid, output);
         self.into()
     }
 
@@ -98,7 +194,7 @@ impl Primary {
             return self.into();
         }
         self.reconfiguration_in_progress = true;
-        self.send_prepare(msg.into(), cid, output);
+        self.broadcast_prepare(msg.into(), cid, output);
         self.into()
     }
 
@@ -110,6 +206,15 @@ impl Primary {
     {
         up_to_date!(self, from, msg, cid, output);
         let PrepareOk {op, ..} = msg;
+
+        // We can receive valid PrepareOk messages after we commit an operation, so this
+        // clause must come before the next clause which compares the op to the commit_num
+        if let Some(old_op) = self.min_accepts.get_mut(&from) {
+            if op > *old_op {
+                *old_op = op;
+            }
+        }
+        self.update_global_min_accept();
         if op <= self.ctx.commit_num {
             return self.into();
         }
@@ -123,98 +228,54 @@ impl Primary {
     fn handle_tick(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.idle_timeout() {
             self.ctx.last_received_time = SteadyTime::now();
+            if self.ctx.op != self.ctx.commit_num {
+                self.rebroadcast_prepare(output);
+            }
             self.broadcast_commit_msg(output);
         }
         self.into()
     }
 
-    fn send_prepare(&mut self,
+    fn rebroadcast_prepare(&mut self, output: &mut Vec<Envelope<Msg>>) {
+        // This isn't the original request cid, but it doesn't matter
+        // as it's already maintained in self.prepare_requests.
+        let cid = CorrelationId::pid(self.ctx.pid.clone());
+        let msg = self.ctx.log[self.ctx.op as usize - 1].clone();
+        if self.prepare_requests.is_empty() {
+            // This is a new primary that didn't prepare this request orignally.
+            // Therefore, no client reply will be required. Use this primary's pid for the cid then
+            // filter before replying when the request is committed.
+            self.prepare_requests.new_prepare(self.ctx.op, cid.clone());
+        }
+        self.ctx.broadcast(self.prepare_msg(msg), cid, output);
+    }
+
+    fn broadcast_prepare(&mut self,
                     msg: ClientOp,
                     cid: CorrelationId,
                     output: &mut Vec<Envelope<Msg>>)
     {
         self.ctx.last_received_time = SteadyTime::now();
         self.ctx.op += 1;
-        let prepare = Prepare {
+        self.ctx.log.push(msg.clone());
+        self.prepare_requests.new_prepare(self.ctx.op, cid.clone());
+        self.ctx.broadcast(self.prepare_msg(msg), cid, output);
+    }
+
+    fn prepare_msg(&self, msg: ClientOp) -> rabble::Msg<Msg> {
+        Prepare {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
             op: self.ctx.op,
             commit_num: self.ctx.commit_num,
-            msg: msg.clone().into()
-        };
-        self.ctx.log.push(msg);
-        self.prepare_requests.new_prepare(self.ctx.op, cid.clone());
-        self.ctx.broadcast(prepare.into(), cid, output);
+            global_min_accept: self.ctx.global_min_accept,
+            msg: msg
+        }.into()
     }
 
     fn has_commit_quorum(&mut self, op: u64, from: Pid) -> bool {
         self.prepare_requests.insert(op, from);
         self.prepare_requests.has_quorum(op)
-    }
-
-    pub fn commit(mut self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        let lowest_prepared_op = self.prepare_requests.lowest_op;
-        let mut iter = self.prepare_requests.remove(new_commit_num).into_iter();
-        let commit_num = self.ctx.commit_num;
-        for i in commit_num..new_commit_num {
-            let msg = self.ctx.log[i as usize].clone();
-            self.ctx.commit_num = i + 1;
-            match msg {
-                ClientOp::Request(ClientRequest {op, request_num, ..}) => {
-                    let rsp = self.ctx.backend.call(op);
-                    if i >= lowest_prepared_op - 1 {
-                        if let Some(req) = iter.next() {
-                            // This primary prepared this request, and wasn't elected after it was
-                            // prepared but before it was committed.
-                            let cid = req.correlation_id;
-                            let from = cid.pid.clone();
-                            output.push(self.client_reply(rsp, request_num, &from, &cid));
-                        }
-                    }
-                },
-                ClientOp::Reconfiguration(vr_msg::Reconfiguration {client_req_num,
-                                                                   epoch,
-                                                                   replicas, ..}) =>
-                {
-                    if i >= lowest_prepared_op - 1 {
-                        if let Some(req) = iter.next() {
-                            // This replica prepared this request as primary, and wasn't elected
-                            // after it was prepared but before this replica committed it.
-                            let cid = req.correlation_id;
-                            let to = cid.pid.clone();
-                            let from = self.ctx.pid.clone();
-                            let reply = ClientReply {
-                                epoch: epoch,
-                                view: 0,
-                                request_num: client_req_num,
-                                value: VrApiRsp::Ok
-                            }.into();
-                            output.push(Envelope::new(to, from, reply, Some(cid)));
-                        }
-                    }
-
-                    self.ctx.epoch = epoch + 1;
-                    self.ctx.update_for_new_epoch(i+1, replicas);
-                    self.ctx.announce_reconfiguration(output);
-                    self.set_primary(output);
-
-                    // If the Reconfiguration is the last entry in the log, then this is either the
-                    // primary that received the client request, or a view change occurred and this
-                    // is a new primary in the epoch of the reconfiguration request processing the
-                    // reconfiguration
-                    //
-                    // If the reconfiguration is not the last in the log, we don't want to
-                    // transition, as the reconfiguration has already happened.
-                    if new_commit_num == self.ctx.log.len() as u64 {
-                        self.broadcast_commit_msg_old(output);
-                        // We don't bother sending 'StartEpoch` requests to the new replicas here,
-                        // since they aren't yet online.
-                        return normal::enter_transitioning(self, output);
-                    }
-                }
-            }
-        }
-        self.into()
     }
 
     /// Return Some(error msg) if the reconfiguration request is invalid. Return None on success.
@@ -261,11 +322,18 @@ impl Primary {
         Commit {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
-            commit_num: self.ctx.commit_num
+            commit_num: self.ctx.commit_num,
+            global_min_accept: self.ctx.global_min_accept
         }.into()
     }
 
-    fn broadcast_commit_msg(&self, output: &mut Vec<Envelope<Msg>>) {
+    fn update_global_min_accept(&mut self) {
+        let (_, global_min_accept) =
+            self.min_accepts.iter().min_by(|&(_,&x), &(_,&y)| x.cmp(&y)).unwrap();
+        self.ctx.global_min_accept = *global_min_accept;
+    }
+
+    fn broadcast_commit_msg(&mut self, output: &mut Vec<Envelope<Msg>>) {
         self.ctx.broadcast(self.commit_msg(),
                            CorrelationId::pid(self.ctx.pid.clone()),
                            output);
@@ -285,23 +353,28 @@ impl Primary {
         let msg = Commit {
             epoch: self.ctx.epoch - 1,
             view: self.ctx.view,
-            commit_num: self.ctx.commit_num
+            commit_num: self.ctx.commit_num,
+            global_min_accept: self.ctx.global_min_accept
         }.into();
-        self.ctx.broadcast_old(msg, CorrelationId::pid(self.ctx.pid.clone()), output)
-    }
-
-    pub fn set_primary(&mut self, output: &mut Vec<Envelope<Msg>>) {
-        let primary = self.ctx.compute_primary();
-        info!(self.ctx.logger, "Elected primary"; "primary" => format!("{:?}", primary),
-                                                  "view" => self.ctx.view);
-        let msg = NamespaceMsg::NewPrimary(primary);
-        output.push(self.ctx.namespace_mgr_envelope(msg));
+        self.broadcast_old(msg, CorrelationId::pid(self.ctx.pid.clone()), output)
     }
 
     fn idle_timeout(&self) -> bool {
         SteadyTime::now() - self.ctx.last_received_time >
-            Duration::milliseconds(self.tick_ms as i64)
+            Duration::milliseconds(self.ctx.primary_idle_timeout_ms as i64)
     }
+
+    /// Wrap a VrMsg in an envelope and send to all old replicas
+    pub fn broadcast_old(&self,
+                         msg: rabble::Msg<Msg>,
+                         cid: CorrelationId,
+                         output: &mut Vec<Envelope<Msg>>)
+    {
+        output.extend(self.ctx.old_config.replicas.iter().cloned()
+            .filter(|pid| *pid != self.ctx.pid)
+            .map(|pid| Envelope::new(pid, self.ctx.pid.clone(), msg.clone(), Some(cid.clone()))));
+    }
+
 }
 
 #[cfg(test)]
@@ -373,14 +446,15 @@ mod tests {
     /// Mock the prepare ok from a backup and handle it
     /// Ensure that the client request commits and a reply is sent
     #[test]
-    fn prepare_client_request_succeeds() {
+    fn prepare_and_commit_client_request_succeeds() {
         let pids = pids();
         let mut ctx = VrCtx::new(logger(),
                                  pids[0].clone(),
                                  VersionedReplicas::new(),
                                  new_config());
         ctx.idle_timeout_ms = 0;
-        let primary = Primary::new(ctx, 0);
+        ctx.primary_idle_timeout_ms = 0;
+        let primary = Primary::new(ctx);
         let client_req = ClientRequest {
             op: VrApiReq::TreeOp(TreeOp::CreateNode {path: "/a".to_owned(), ty: NodeType::Blob}),
             client_id: "client1".to_owned(),
@@ -417,5 +491,18 @@ mod tests {
         assert_eq!(envelope.to, test_pid());
         assert_eq!(envelope.correlation_id, Some(cid));
         assert_matches!(envelope.msg, m!(VrMsg::ClientReply(_)));
+
+        // Ensure that a commit broadcast gets sent
+        let state = primary.handle_tick(&mut output);
+        let primary = take_primary(state);
+        assert_eq!(primary.ctx.log.len(), 1);
+        assert_eq!(primary.ctx.op, 1);
+        assert_eq!(primary.ctx.commit_num, 1);
+        // broadcast of commit to the 2 backups
+        assert_eq!(output.len(), 2);
+        for envelope in output.drain(..) {
+            assert_matches!(envelope.msg, m!(VrMsg::Commit(_)));
+        }
+
     }
 }

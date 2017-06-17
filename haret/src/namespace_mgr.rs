@@ -1,7 +1,6 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use time::Duration;
 use std::collections::{HashSet, HashMap};
 use slog::Logger;
 use amy::{Registrar, Notification};
@@ -12,7 +11,7 @@ use config::Config;
 use vr::{VrMsg, Replica, VersionedReplicas};
 use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};
 use namespaces::Namespaces;
-use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_TICK_MS};
+use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_IDLE_TIMEOUT_MS};
 use admin::{AdminReq, AdminRpy};
 use api::ApiRpy;
 
@@ -32,23 +31,20 @@ pub struct NamespaceMgr {
     api_addrs: HashMap<NodeId, String>,
     local_replicas: HashSet<Pid>,
 
-    /**************************************************************************/
-    // It's possible these ticks will be replaced by per fsm timeouts scheduled by the FSMs
-    // themselves. For now stick to the original strategy in the old dispatcher code.
-
-    /// Timeout configuration for VR Fsms
-    idle_timeout: Duration,
-
     /// The amount of time between VrMsg::Tick messages being sent to replicas. By default this
-    /// value is set at 1/3 * primary_tick_ms for the following reasons:
-    /// 1) We want to send timeout messages as close to the tick timeout as possible (therfore use
+    /// value is set at 1/3 * DEFAULT_PRIMARY_IDLE_TIMEOUT_MS (`ctx.primary_idle_timeout_ms`) for
+    /// the following reasons:
+    ///
+    /// 1) We want to send timeout messages as close to the primary timeout as possible (therfore use
     ///    smaller tick values)
     /// 2) We don't want to unnecessarily spam the FSMs with ticks and chew CPU cycles (therefore
     ///    use larger tick values)
-    /// This setting allows us to maximally send a commit message 1/3 primary_tick_ms late. If we
-    /// always ensure that `idle_timeout` is at least double `primary_tick_ms` we can minimize
-    /// unnecessary view changes. Note that for backups, the ticks are higher frequency than
-    /// necessary, but this is the tradeoff made for having a single Tick message.
+    ///
+    /// This setting allows us to maximally send a commit message 1/3 `ctx.primary_idle_timeout_ms`
+    /// late. If we always ensure that `ctx.idle_timeout` is at least double
+    /// `ctx.primary_idle_timeout_ms` we can minimize unnecessary view changes. Note that for
+    /// backups, the ticks are higher frequency than necessary, but this is the tradeoff made
+    /// for having a single Tick message.
     tick_period: usize,
     /*************************************************************************/
     fsm_timer_id: usize,
@@ -73,8 +69,7 @@ impl NamespaceMgr {
             api_addr: api_addr,
             api_addrs: HashMap::new(),
             local_replicas: HashSet::new(),
-            idle_timeout: Duration::milliseconds(DEFAULT_IDLE_TIMEOUT_MS as i64),
-            tick_period: DEFAULT_PRIMARY_TICK_MS as usize / 3 ,
+            tick_period: DEFAULT_PRIMARY_IDLE_TIMEOUT_MS as usize / 3 ,
             fsm_timer_id: 0, // Dummy timer for now. Will be set in init()
             management_timer_id: 0, // Dummy timer for now. Will be set in init()
         }
@@ -335,7 +330,8 @@ impl NamespaceMgr {
                                 new_config.clone());
        let primary = ctx.compute_primary();
        let namespace_id = NamespaceId(primary.group.clone().unwrap());
-       ctx.idle_timeout_ms = self.idle_timeout.num_milliseconds();
+       ctx.idle_timeout_ms = DEFAULT_IDLE_TIMEOUT_MS;
+       ctx.primary_idle_timeout_ms = DEFAULT_PRIMARY_IDLE_TIMEOUT_MS;
        self.namespaces.primaries.insert(namespace_id, primary.clone());
        self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), ctx))).unwrap();
        self.local_replicas.insert(pid.clone());

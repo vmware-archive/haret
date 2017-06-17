@@ -14,3 +14,8 @@ pub mod op_invariants;
 
 #[allow(dead_code)]
 pub mod scheduler;
+
+#[allow(dead_code)]
+mod model;
+
+pub use self::model::Model;

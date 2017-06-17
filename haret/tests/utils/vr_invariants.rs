@@ -68,3 +68,12 @@ pub fn assert_quorum_of_logs_equal_up_to_smallest_commit(quorum: usize,
     }
     safe_assert!(count >= quorum)
 }
+
+pub fn assert_global_min_accept(states: &Vec<VrState>) -> Result<(), String> {
+    for ref state in states {
+        let ctx = state.ctx();
+        safe_assert!(ctx.commit_num >= ctx.global_min_accept)?;
+        safe_assert!(ctx.commit_num >= ctx.global_min_accept)?;
+    }
+    Ok(())
+}

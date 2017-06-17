@@ -32,7 +32,7 @@ dev/%: build
 	cp config.toml $@
 	cd $@; \
 	 rm -rf nonces; \
-	 $(PWD)/target/debug/devconfig $(notdir $@)
+	 $(PWD)/target/debug/haret-devconfig $(notdir $@)
 
 # Start a single node (e.g. `make start-dev1`)
 start-dev%:

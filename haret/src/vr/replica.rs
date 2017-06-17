@@ -4,7 +4,7 @@
 use rabble::{self, Process, Pid, CorrelationId, Envelope};
 use msg::Msg;
 use vr::vr_fsm::VrState;
-use vr::vr_ctx::{VrCtx, DEFAULT_PRIMARY_TICK_MS};
+use vr::vr_ctx::VrCtx;
 use vr::states::{Primary, Backup, Recovery, Reconfiguration};
 use disk_msgs::{DiskReq, DiskRpy};
 use super::super::admin::{AdminReq, AdminRpy};
@@ -30,7 +30,7 @@ impl Replica {
     fn start_initial(&mut self) {
        let ctx = self.ctx.take().unwrap();
        if self.pid == ctx.compute_primary() {
-           self.state = Some(VrState::Primary(Primary::new(ctx, DEFAULT_PRIMARY_TICK_MS)));
+           self.state = Some(VrState::Primary(Primary::new(ctx)));
        } else {
            self.state = Some(VrState::Backup(Backup::new(ctx)));
        };

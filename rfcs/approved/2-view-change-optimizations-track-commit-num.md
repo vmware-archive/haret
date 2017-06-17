@@ -67,36 +67,51 @@ will be sent to the backups with the next Commit message, rather than piggybacke
 This is a good solution in that it mimizes the amount of data sent during view change, but it still
 has a lot of overhead, especially for a large number of writes with small sizes. By slightly
 increasing the amount of data transferred during view change, we can minimize the amount of overhead
-in the normal protocol. Since it's expected in a healthy cluster that all replicas are almost
-always up to date, we can instead just keep track of the commit number of each replica at the
-primary. We can then send the minimum of the commit nums of all the replicas in each `Prepare`, only
-requiring 8 bytes of overhead. During view change, `DoViewChange` and `StartView` messages will send
-only log messages that come after the minimum commit entry of all the replicas.
+in the normal protocol. Since it's expected in a healthy cluster that all replicas are almost always
+up to date, we can instead just keep track of the last accepted prepare of each replica at the
+primary. We can then send the minimum of the accepted prepares of all the replicas in each
+`Prepare`, only requiring 8 bytes of overhead. During view change, `DoViewChange` and `StartView`
+messages will send only log messages that come after the minimum accepted entry of all the replicas.
 
 If a replica starts to lag too far behind, the primary can raise an alert. If multiple replicas lag
 too far behind, in addition to raising alerts, the primary can stop accepting new requests until
-they catch up, as a form of back pressure. Furthermore, this global commit knowledge also provides a
+they catch up, as a form of back pressure. Furthermore, this global accept knowledge also provides a
 frontier from which to enable garbage collection of the log.
 
 # Concrete changes to the state machine
 
-1. PROTOCOL: The global minimum commit `m` is added to the prepare and commit messages sent by the primary.
-2. PRIMARY: The primary will maintain a mapping of the lowest seen commits for each replica in the quorum.
-3. REPLICAS: All of the replicas will maintain a state variable containing the global minimum commit detailed in the last prepare or commit message.
-4. PRIMARY: When the primary prepares a commit or a prepare message to be sent it must first update its own entry in the mapping, then take the minimum number in the mapping to add it to message to be sent.
-5. PRIMARY: When the primary receives a `PrepareOK` message from a replica, it can assume that the operation `o` less one is the minimum number that the replica has committed, as the protocol requires that all `Prepare` messages be processed in order.  It then updates its commit mapping for the sending replica to `o - 1`.
-6. REPLICAS: When a set of replicas starts a view change, their `DoViewChange` message should contain the tail of the log from the global minimum commit `m`, instead of the entire log.  The new primary then select the log tail as per the protocol.
-7. REPLICAS: When the new primary sends the `StartView` message, it only sends the log tail from `m` instead of reshipping the entire log.
-6. REPLICAS: When a set of replicas completes a view change, the new primary will initialize its mapping with its last known global minimium.
-7. REPLICAS: When a set of replicas completes a epoch change, the new primary will initialize its mapping with the operation number of the reconfiguration request.
+1. PROTOCOL: The global minimum accept `m` is added to the prepare and commit messages sent by the
+   primary.
+2. PRIMARY: The primary will maintain a mapping of the lowest seen acepted prepeares for each
+   replica in the quorum.
+3. REPLICAS: All of the replicas will maintain a state variable containing the global minimum accept
+   detailed in the last prepare or commit message.
+4. PRIMARY: When the primary creates a prepare message to be sent it must first update its own entry
+   in the mapping, then take the minimum number in the mapping to add it to message to be sent.
+5. PRIMARY: When the primary receives a `PrepareOK` message from a replica, it updates its accept
+   mapping for the sending replica.
+6. REPLICAS: When a set of replicas starts a view change, their `DoViewChange` message should
+   contain the tail of the log from the global minimum accept `m`, instead of the entire log.  The
+   new primary then selects the log tail as per the protocol.
+7. PRIMARY: When the new primary sends the `StartView` message, it only sends the log tail from `m`
+   instead of reshipping the entire log.
+8. PRIMARY: When a set of replicas completes a view change, the new primary will initialize its
+   mapping with its last known global minimium.
+9. PRIMARY: When a set of replicas completes an epoch change, the new primary will initialize its
+   mapping with its last known global minimium.
+10. PRIMARY: During recovery the primary will ship the entire log (or application state) to the
+    recovering replica along with the global minimum accepted prepare.
+11. REPLICAS: During recovery the replicas will update their application state along with the global
+    minimum accepted prepare.
 
 # Advantages
 
 This scheme drastically reduces the amount of data transferred during view changes. It is also
 extremely simple and adds a minimum amount of overhead to normal `Prepare` messages: just 8 bytes to
-track the minimum commit num at all replicas. The additional tracking of the commit nums at all
-replicas by the primary also allows threshold based alerting for slow replicas, and potentially
-provides a means for backpressure. It also allows a global frontier for log garbage collection.
+track the minimum accepted prepare at all replicas. The additional tracking of the accepted prepares
+at all replicas by the primary also allows threshold based alerting for slow replicas, and
+potentially provides a means for backpressure. It also allows a global frontier for log garbage
+collection.
 
 # Drawbacks
 
