@@ -4,18 +4,16 @@
 use rabble::{self, Pid, Envelope, CorrelationId};
 use slog::{self, Logger};
 use std::collections::HashSet;
-use std::mem;
 use std::iter::FromIterator;
 use time::{Duration, SteadyTime};
-use vr::vr_msg::{self, ClientOp};
+use vr::vr_msg::ClientOp;
 use vr::VersionedReplicas;
 use vr::VrBackend;
 use msg::Msg;
-use namespace_msg::{NamespaceMsg, NamespaceId};
+use namespace_msg::NamespaceMsg;
 
 pub const DEFAULT_IDLE_TIMEOUT_MS: i64 = 2000;
-pub const DEFAULT_PRIMARY_TICK_MS: i64 = 500;
-
+pub const DEFAULT_PRIMARY_IDLE_TIMEOUT_MS: i64 = 500;
 
 /// The internal state of the VR FSM shared among all states
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +26,10 @@ pub struct VrCtx {
     pub op: u64,
     pub commit_num: u64,
 
+    /// The minimum accepted prepare request at all replicas
+    /// Used for the view change optimizations detailed in RFC 2
+    pub global_min_accept: u64,
+
     // Note that deserialization will return the wrong time.
     // This is only used in debuggin goutput though.
     #[serde(skip_serializing, skip_deserializing, default = "now")]
@@ -38,7 +40,18 @@ pub struct VrCtx {
     /// The number of replicas needed to provide quorum
     pub quorum: u64,
 
+    /// This is the time a backup waits before starting a view change.
+    /// It is also used in other states as a timeout
+    /// It should be smaller than primary_idle_timeout_ms;
     pub idle_timeout_ms: i64,
+
+    /// This is the time a primary waits for client requests before sending commit messages
+    /// It should be larger than idle_timeout_ms;
+    ///
+    /// It's only in this module instead of the primary state because its configuration
+    /// should travel across state transitions, and the VrCtx is the only part of the VR state that
+    /// allows this.
+    pub primary_idle_timeout_ms: i64,
 
     pub log: Vec<ClientOp>,
 
@@ -71,10 +84,12 @@ impl VrCtx {
             view: 0,
             op: 0,
             commit_num: 0,
+            global_min_accept: 0,
             last_received_time: SteadyTime::now(),
             last_normal_view: 0,
             quorum: quorum as u64,
             idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
+            primary_idle_timeout_ms: DEFAULT_PRIMARY_IDLE_TIMEOUT_MS,
             log: Vec::new(),
             backend: VrBackend::new(),
             old_config: old_config,
@@ -103,17 +118,6 @@ impl VrCtx {
         self.new_config.replicas[index].clone()
     }
 
-    /// Wrap a VrMsg in an envelope and send to all old replicas
-    pub fn broadcast_old(&self,
-                         msg: rabble::Msg<Msg>,
-                         cid: CorrelationId,
-                         output: &mut Vec<Envelope<Msg>>)
-    {
-        output.extend(self.old_config.replicas.iter().cloned()
-            .filter(|pid| *pid != self.pid)
-            .map(|pid| Envelope::new(pid, self.pid.clone(), msg.clone(), Some(cid.clone()))));
-    }
-
     /// Wrap a VrMsg in an envelope and send to all new replicas
     pub fn broadcast(&self,
                      msg: rabble::Msg<Msg>,
@@ -128,27 +132,10 @@ impl VrCtx {
                                                Some(cid.clone()))));
     }
 
-    pub fn announce_reconfiguration(&self, output: &mut Vec<Envelope<Msg>>) {
-        output.push(self.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
-            namespace_id: NamespaceId(self.pid.group.as_ref().unwrap().to_owned()),
-            old_config: self.old_config.clone(),
-            new_config: self.new_config.clone()
-        }));
-    }
-
     pub fn replicas_to_replace(&self) -> Vec<Pid> {
         let new_set = HashSet::<Pid>::from_iter(self.new_config.replicas.clone());
         let old_set = HashSet::<Pid>::from_iter(self.old_config.replicas.clone());
         old_set.difference(&new_set).cloned().collect()
-    }
-
-    pub fn update_for_new_epoch(&mut self, op: u64, replicas: Vec<Pid>) {
-        self.last_received_time = SteadyTime::now();
-        self.view = 0;
-        self.last_normal_view = 0;
-        mem::swap(&mut self.old_config, &mut self.new_config);
-        self.new_config = VersionedReplicas {epoch: self.epoch, op: op, replicas: replicas};
-        self.quorum = self.new_config.replicas.len() as u64 / 2 + 1;
     }
 
     /// We use a cast to i64 until the stdlib Duration that takes u64 is stabilized; It doesn't matter
@@ -158,18 +145,87 @@ impl VrCtx {
             > Duration::milliseconds(self.idle_timeout_ms)
     }
 
-    pub fn last_log_entry_is_latest_reconfiguration(&self, epoch: u64, op: u64) -> bool {
-        if let ClientOp::Reconfiguration(vr_msg::Reconfiguration {epoch: log_epoch, ..})
-            = self.log[(op-1) as usize]
-        {
-            if log_epoch + 1 == epoch {
-                return true;
-            }
-        }
-        false
-    }
-
     pub fn is_leaving(&self) -> bool {
         self.replicas_to_replace().contains(&self.pid)
+    }
+
+    pub fn append_log_tail(&mut self, log_start: u64, log_tail: Vec<ClientOp>) {
+        self.global_min_accept = log_start;
+        self.log.truncate(log_start as usize);
+        self.log.extend(log_tail);
+    }
+
+    pub fn get_log_tail(&self) -> Vec<ClientOp> {
+        self.log[self.global_min_accept as usize..].to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate slog;
+    extern crate slog_stdlog;
+    extern crate slog_term;
+    extern crate slog_envlogger;
+
+    use super::*;
+    use rabble::{Pid, NodeId};
+    use vr::{VersionedReplicas, VrApiReq, TreeOp, NodeType};
+    use vr::vr_msg::{ClientOp, ClientRequest};
+    use slog::{DrainExt, Logger};
+
+    /// Set up logging to go to the terminal and be configured via `RUST_LOG`
+    fn logger() -> Logger {
+        let drain = slog_term::streamer().async().full().build();
+        Logger::root(slog_envlogger::EnvLogger::new(drain.fuse()), o!())
+    }
+
+    fn test_pid() -> Pid {
+        Pid {
+            group: None,
+            name: "test-pid".to_owned(),
+            node: node_id()
+        }
+    }
+
+    fn node_id() -> NodeId {
+        NodeId {
+            name: "node1".to_owned(),
+            addr: "127.0.0.1:9999".to_owned()
+        }
+    }
+
+    fn blob_create() -> VrApiReq {
+        VrApiReq::TreeOp(TreeOp::CreateNode {path: "/a".to_owned(), ty: NodeType::Blob})
+    }
+
+    fn client_request(i: u64) -> ClientOp {
+        ClientRequest {
+            op: blob_create(),
+            client_id: "test-client".to_owned(),
+            request_num: i
+        }.into()
+    }
+
+    #[test]
+    fn append_and_get_log_tail() {
+        let replicas = VersionedReplicas::new();
+        let mut ctx = VrCtx::new(logger(), test_pid(), replicas.clone(), replicas);
+        // Client request num 1 - 5
+        let log: Vec<ClientOp> = (1..6).map(|i| client_request(i).into()).collect();
+        ctx.log = log.clone();
+
+        // This mimics a do_view_change or start_view operation where the tail is retrieved
+        // from the log in the sender and then appended in the receiver. We ensure that any time we
+        // take some entries from some log and append those entries to the same log we end up with the
+        // same log.
+        //
+        // This could be a quickcheck property, but this is faster and inductively correct
+        for i in 0..5 {
+            ctx.global_min_accept = i;
+            let tail = ctx.get_log_tail();
+            ctx.append_log_tail(i, tail.clone());
+            assert_eq!(tail, ctx.get_log_tail());
+            assert_eq!(log, ctx.log);
+        }
     }
 }

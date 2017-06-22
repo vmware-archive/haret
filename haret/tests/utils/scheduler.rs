@@ -15,6 +15,14 @@ use haret::vr::{VrState, VrMsg, VrCtx, VersionedReplicas};
 use haret::vr::states::{Primary, Backup, Recovery, Reconfiguration};
 use rabble::{self, Pid, NodeId, CorrelationId, Envelope};
 
+#[derive(Debug)]
+enum SchedulerMsg {
+    Test {to: Pid, msg: VrMsg},
+    Envelope(Envelope<Msg>),
+    Namespace(NamespaceMsg),
+    Debug(String)
+}
+
 pub struct Scheduler {
     pub logger: Logger,
     pub pid: Pid,
@@ -26,7 +34,8 @@ pub struct Scheduler {
     pub namespace_id: NamespaceId,
     pub fsms: HashMap<Pid, Option<VrState>>,
     pub old_config: VersionedReplicas,
-    pub new_config: VersionedReplicas
+    pub new_config: VersionedReplicas,
+    history: Vec<SchedulerMsg>
 }
 
 impl Iterator for Scheduler {
@@ -75,8 +84,13 @@ impl Scheduler {
             namespace_id: NamespaceId(Uuid::nil().to_string()),
             fsms: fsms,
             old_config: VersionedReplicas::new(),
-            new_config: new_config
+            new_config: new_config,
+            history: Vec::new()
         }
+    }
+
+    pub fn log(&self) {
+        println!("{:#?}", self.history);
     }
 
     pub fn quorum(&self) -> usize {
@@ -86,7 +100,8 @@ impl Scheduler {
     pub fn send_to_primary(&mut self, msg: VrMsg) -> Vec<Envelope<Msg>> {
         if let Some(ref pid) = self.primary.clone() {
             debug!(self.logger, "Send to primary:"; "pid" => pid.to_string(), "msg" => format!("{:?}", msg));
-            return self.send(pid, msg);
+            self.send_msg(pid, msg);
+            self.send_until_empty();
         }
         Vec::new()
     }
@@ -100,15 +115,18 @@ impl Scheduler {
         None
     }
 
-    pub fn stop_primary(&mut self) {
+    // Return true if the primary was actually stopped
+    pub fn stop_primary(&mut self) -> bool {
         // We never want a quorum of stopped nodes, as VR cannot recover from that
         if self.fsms.len() == self.quorum() {
-            return;
+            return false;
         }
         if let Some(primary) = self.primary.take() {
             self.fsms.remove(&primary);
             self.crashed.push(primary);
+            return true;
         }
+        false
     }
 
     pub fn stop_backup(&mut self) {
@@ -136,11 +154,7 @@ impl Scheduler {
         };
         debug!(self.logger, "Send to backup:"; "pid" => to.to_string(),
                                                "msg" => format!("{:?}", msg));
-        self.send(&to, msg)
-    }
-
-    pub fn send(&mut self, to: &Pid, msg: VrMsg) -> Vec<Envelope<Msg>> {
-        self.send_msg(to, msg);
+        self.send_msg(&to, msg);
         self.send_until_empty()
     }
 
@@ -166,6 +180,7 @@ impl Scheduler {
                                  self.old_config.clone(),
                                  self.new_config.clone());
         ctx.idle_timeout_ms = 0;
+        ctx.primary_idle_timeout_ms = 0;
         let state = VrState::Recovery(Recovery::new(ctx, self.nonce));
         self.nonce += 1;
         let from = self.pid.clone();
@@ -180,6 +195,7 @@ impl Scheduler {
         let from = self.pid.clone();
         let cid = CorrelationId::pid(self.pid.clone());
         if let Some(state) = self.fsms.get_mut(to) {
+            self.history.push(SchedulerMsg::Test {to: to.clone(), msg: msg.clone()});
             let vr_state = state.take().unwrap();
             let vr_state = vr_state.next(msg, from, cid, &mut self.fsm_output);
             *state = Some(vr_state);
@@ -187,10 +203,11 @@ impl Scheduler {
     }
 
     /// Send a msg to an fsm after extracting the relevant parts from an envelope
-    pub fn send_envelope(&mut self, envelope: Envelope<Msg>) {
+    fn send_envelope(&mut self, envelope: Envelope<Msg>) {
         if let Some(state) = self.fsms.get_mut(&envelope.to) {
-            let vr_state = state.take().unwrap();
+            self.history.push(SchedulerMsg::Envelope(envelope.clone()));
             if let rabble::Msg::User(Msg::Vr(vrmsg)) = envelope.msg {
+                let vr_state = state.take().unwrap();
                 let vr_state = vr_state.next(vrmsg,
                                              envelope.from,
                                              envelope.correlation_id.unwrap(),
@@ -235,6 +252,7 @@ impl Scheduler {
 
     fn handle_announcement(&mut self, msg: rabble::Msg<Msg>) {
         if let rabble::Msg::User(Msg::Namespace(namespace_msg)) = msg {
+            self.history.push(SchedulerMsg::Namespace(namespace_msg.clone()));
             match namespace_msg {
                 NamespaceMsg::Reconfiguration {old_config, new_config, ..} => {
                     self.reconfigure(old_config, new_config);
@@ -265,6 +283,7 @@ impl Scheduler {
             let mut ctx =
                 VrCtx::new(self.logger.clone(), replica.clone(), old.clone(), new.clone());
             ctx.idle_timeout_ms = 0;
+            ctx.primary_idle_timeout_ms = 0;
             if self.fsms.contains_key(&replica) { return; }
             self.fsms.insert(replica, Some(VrState::Reconfiguration(Reconfiguration::new(ctx))));
         }
@@ -282,8 +301,9 @@ fn create_fsms(pids: Vec<Pid>,
         // Set timeouts to zero, since the only time we send a tick message is when we want the
         // event to occur driven by the timeout.
         ctx.idle_timeout_ms = 0;
+        ctx.primary_idle_timeout_ms = 0;
         if pid == ctx.compute_primary() {
-            fsms.insert(pid, Some(Primary::new(ctx, 0).into()));
+            fsms.insert(pid, Some(Primary::new(ctx).into()));
         } else {
             fsms.insert(pid, Some(Backup::new(ctx).into()));
         }

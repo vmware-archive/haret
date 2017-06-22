@@ -7,7 +7,7 @@ use time::SteadyTime;
 use msg::Msg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, VrMsg, ClientOp};
-use vr::vr_ctx::{VrCtx, DEFAULT_PRIMARY_TICK_MS};
+use vr::vr_ctx::VrCtx;
 use vr::states::common::view_change;
 use super::utils::QuorumTracker;
 use super::{Primary, StateTransfer, StartViewChange};
@@ -17,7 +17,8 @@ pub struct Latest {
     pub last_normal_view: u64,
     pub commit_num: u64,
     pub op: u64,
-    pub log: Vec<ClientOp>
+    pub log_start: u64,
+    pub log_tail: Vec<ClientOp>
 }
 
 impl Latest {
@@ -26,7 +27,8 @@ impl Latest {
             last_normal_view: 0,
             commit_num: 0,
             op: 0,
-            log: Vec::new()
+            log_start: 0,
+            log_tail: Vec::new()
         }
     }
 }
@@ -37,7 +39,8 @@ impl From<vr_msg::DoViewChange> for Latest {
             last_normal_view: msg.last_normal_view,
             commit_num: msg.commit_num,
             op: msg.op,
-            log: msg.log
+            log_start: msg.log_start,
+            log_tail: msg.log_tail
         }
     }
 }
@@ -60,7 +63,7 @@ impl Transition for DoViewChange {
         match msg {
             VrMsg::StartViewChange(msg) => self.handle_start_view_change(msg, from, output),
             VrMsg::DoViewChange(msg) => self.handle_do_view_change(msg, from, output),
-            VrMsg::StartView(msg) => view_change::handle_start_view(self, msg, output),
+            VrMsg::StartView(msg) => view_change::handle_start_view(self, msg, cid, output),
             VrMsg::Tick => view_change::handle_tick(self, output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);
@@ -106,19 +109,13 @@ impl DoViewChange {
     }
 
     fn become_primary(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        let current = Latest {
-            last_normal_view: self.ctx.last_normal_view,
-            commit_num: self.ctx.commit_num,
-            op: self.ctx.op,
-            // TODO: FIXME: Cloning the log is expensive
-            log: self.ctx.log.clone()
-        };
-        let latest = self.compute_latest_state(current);
+        let latest = self.compute_latest_state();
         self.ctx.op = latest.op;
-        self.ctx.log = latest.log;
         self.ctx.last_normal_view = self.ctx.view;
+        self.ctx.last_received_time = SteadyTime::now();
+        self.ctx.append_log_tail(latest.log_start, latest.log_tail);
         self.broadcast_start_view_msg(latest.commit_num, output);
-        let mut primary = Primary::new(self.ctx, DEFAULT_PRIMARY_TICK_MS);
+        let mut primary = Primary::new(self.ctx);
         primary.set_primary(output);
         primary.commit(latest.commit_num, output)
     }
@@ -166,7 +163,15 @@ impl DoViewChange {
         DoViewChange::start_do_view_change(self, from, msg, output)
     }
 
-    pub fn compute_latest_state(&mut self, current: Latest) -> Latest {
+    fn compute_latest_state(&mut self) -> Latest {
+        let current = Latest {
+            last_normal_view: self.ctx.last_normal_view,
+            commit_num: self.ctx.commit_num,
+            op: self.ctx.op,
+            log_start: self.ctx.global_min_accept,
+            log_tail: self.ctx.get_log_tail()
+        };
+
         self.responses.drain()
             .map(|(_, msg)| msg.into())
             .fold(current, |mut latest, other: Latest| {
@@ -175,7 +180,8 @@ impl DoViewChange {
                 {
                    latest.last_normal_view = other.last_normal_view;
                    latest.op = other.op;
-                   latest.log = other.log;
+                   latest.log_start = other.log_start;
+                   latest.log_tail = other.log_tail;
                 }
                 if other.commit_num > latest.commit_num {
                     latest.commit_num = other.commit_num;
@@ -195,7 +201,8 @@ impl DoViewChange {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
             op: self.ctx.op,
-            log: self.ctx.log.clone(),
+            log_start: self.ctx.global_min_accept,
+            log_tail: self.ctx.get_log_tail(),
             commit_num: new_commit_num
         }.into()
     }

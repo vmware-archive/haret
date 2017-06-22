@@ -28,7 +28,7 @@ impl Transition for StartView {
         match msg {
             VrMsg::StartViewChange(msg) => self.handle_start_view_change(msg, from, output),
             VrMsg::DoViewChange(msg) => self.handle_do_view_change(msg, from, output),
-            VrMsg::StartView(msg) => view_change::handle_start_view(self, msg, output),
+            VrMsg::StartView(msg) => view_change::handle_start_view(self, msg, cid, output),
             VrMsg::Tick => view_change::handle_tick(self, output),
             VrMsg::Prepare(msg) => {
                 up_to_date!(self, from, msg, cid, output);

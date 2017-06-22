@@ -14,7 +14,7 @@ pub struct Request {
     replies: HashSet<Pid>,
 
     // Note that deserialization will return the wrong time.
-    // This is only used in debuggin goutput though.
+    // This is only used in debugging output though.
     #[serde(skip_serializing, skip_deserializing, default = "now")]
     timeout: SteadyTime
 }
@@ -41,6 +41,10 @@ impl PrepareRequests {
             lowest_op: 1,
             requests: VecDeque::new(),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.requests.is_empty()
     }
 
     pub fn new_prepare(&mut self, op: u64, correlation_id: CorrelationId) {
@@ -87,12 +91,5 @@ impl PrepareRequests {
         let lowest_op = self.lowest_op;
         self.lowest_op = op + 1;
         self.requests.drain(0..(op - lowest_op + 1) as usize).collect()
-    }
-
-    pub fn expired(&self) -> bool {
-        match self.requests.front() {
-            Some(request) => request.timeout > SteadyTime::now(),
-            None => false
-        }
     }
 }

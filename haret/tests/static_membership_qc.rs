@@ -21,7 +21,7 @@ extern crate vertree;
 #[macro_use]
 mod utils;
 
-use utils::{vr_invariants, op_invariants};
+use utils::{Model, vr_invariants, op_invariants};
 use utils::scheduler::Scheduler;
 use utils::arbitrary::{Op, ClientRequest};
 use rabble::Envelope;
@@ -32,11 +32,18 @@ use haret::Msg;
 quickcheck! {
     fn prop_static_membership(ops: Vec<Op>) -> bool {
         let mut scheduler = Scheduler::new(3);
+        let mut model = Model::new(scheduler.new_config.replicas.clone());
         let mut client_req_num = 0;
         for op in ops {
-            if let Err(s) = assert_op(op.clone(), &mut scheduler, &mut client_req_num) {
+            model.update(op.clone());
+            if let Err(s) = assert_op(op.clone(),
+                                      &mut scheduler,
+                                      &mut client_req_num,
+                                      &mut model)
+            {
                 let errmsg = format!("{:?} Error: {}", op, s);
                 error!(scheduler.logger, errmsg);
+                scheduler.log();
                 return false;
             }
         }
@@ -44,7 +51,10 @@ quickcheck! {
     }
 }
 
-fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Result<(), String> {
+fn assert_op(op: Op,
+             scheduler: &mut Scheduler,
+             client_req_num: &mut u64,
+             model: &mut Model) -> Result<(), String> {
     match op {
         Op::ClientRequest(ClientRequest(vr_msg::ClientRequest {op, client_id, ..})) => {
             // Client requests are generated with invalid client request nums
@@ -58,30 +68,32 @@ fn assert_op(op: Op, scheduler: &mut Scheduler, client_req_num: &mut u64) -> Res
             if replies.len() == 1 {
                 return assert_client_request_correctness(&scheduler, req, replies.pop().unwrap());
             }
-            safe_assert_eq!(replies.len(), 0)
+            safe_assert_eq!(replies.len(), 0)?;
         },
         Op::Commit => {
             scheduler.send_to_primary(VrMsg::Tick);
-            assert_basic_correctness(scheduler)
+            assert_basic_correctness(scheduler)?;
         },
         Op::ViewChange => {
             wait_for_view_change(scheduler);
-            assert_basic_correctness(scheduler)
+            assert_basic_correctness(scheduler)?;
         },
         Op::CrashBackup => {
             scheduler.stop_backup();
-            assert_basic_correctness(scheduler)
+            assert_basic_correctness(scheduler)?;
         },
         Op::CrashPrimary => {
-            scheduler.stop_primary();
-            wait_for_view_change(scheduler);
-            assert_basic_correctness(scheduler)
+            if scheduler.stop_primary() {
+                wait_for_view_change(scheduler);
+                assert_basic_correctness(scheduler)?;
+            }
         },
         Op::Restart => {
             scheduler.restart_crashed_node();
-            assert_basic_correctness(scheduler)
+            assert_basic_correctness(scheduler)?;
         }
     }
+    model.check(&scheduler.get_states())
 }
 
 // Keep trying until view change completes

@@ -115,7 +115,8 @@ msg!(DoViewChange {
     view: u64,
     op: u64,
     last_normal_view: u64,
-    log: Vec<ClientOp>,
+    log_start: u64,
+    log_tail: Vec<ClientOp>,
     commit_num: u64
 });
 
@@ -123,7 +124,8 @@ msg!(StartView {
     epoch: u64,
     view: u64,
     op: u64,
-    log: Vec<ClientOp>,
+    log_start: u64,
+    log_tail: Vec<ClientOp>,
     commit_num: u64
 });
 
@@ -132,6 +134,7 @@ msg!(Prepare {
     view: u64,
     op: u64,
     commit_num: u64,
+    global_min_accept: u64,
     msg: ClientOp
 });
 
@@ -144,7 +147,8 @@ msg!(PrepareOk {
 msg!(Commit {
     epoch: u64,
     view: u64,
-    commit_num: u64
+    commit_num: u64,
+    global_min_accept: u64
 });
 
 msg!(GetState {
@@ -170,6 +174,8 @@ msg!(RecoveryResponse {
     epoch: u64,
     view: u64,
     nonce: u64,
+    global_min_accept: u64,
+
     // The following fields are only valid when sent by the Primary
     op: Option<u64>,
     commit_num: Option<u64>,

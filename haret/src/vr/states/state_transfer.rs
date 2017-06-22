@@ -84,8 +84,10 @@ impl StateTransfer {
         for m in log_tail {
             self.ctx.log.push(m);
         }
+        let cid = CorrelationId::pid(self.ctx.pid.clone());
         let mut backup = Backup::new(self.ctx);
         backup.set_primary(output);
+        backup.send_prepare_ok(cid, output);
         backup.commit(commit_num, output)
     }
 

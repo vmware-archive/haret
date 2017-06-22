@@ -42,7 +42,6 @@ impl Transition for Recovery {
                     let cid = CorrelationId::pid(self.ctx.pid.clone());
                     self.responses = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout_ms);
                     self.primary = None;
-                    self.nonce += 1;
                     self.ctx.broadcast(self.recovery_msg(), cid, output);
                 }
                 self.into()
@@ -96,6 +95,11 @@ impl Recovery {
             };
             let mut backup = Backup::new(self.ctx);
             backup.set_primary(output);
+            // This isn't in the VR protocol, but we send a PrepareOk here so that
+            // the primary can update it's min_accept table in case it committed operations while
+            // this replica was down.
+            let cid = CorrelationId::pid(backup.ctx.pid.clone());
+            backup.send_prepare_ok(cid, output);
             return backup.commit(commit_num, output);
         }
         self.into()
@@ -112,6 +116,7 @@ impl Recovery {
                               op,
                               commit_num,
                               log,
+                              global_min_accept,
                               old_config,
                               new_config} = msg;
 
@@ -144,6 +149,7 @@ impl Recovery {
 
         let response_from_primary = op.is_some();
         if response_from_primary && view == self.ctx.view {
+            self.ctx.global_min_accept = global_min_accept;
             self.primary = Some(RecoveryPrimary {
                 pid: from.clone(),
                 view: view,
@@ -182,6 +188,7 @@ impl Recovery {
             epoch: ctx.epoch,
             view: ctx.view,
             nonce: nonce,
+            global_min_accept: ctx.global_min_accept,
             op: op,
             commit_num: commit_num,
             log: log,

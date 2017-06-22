@@ -1,9 +1,14 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::mem;
 use rabble::{Pid, Envelope, CorrelationId};
 use msg::Msg;
+use time::SteadyTime;
+use namespace_msg::{NamespaceMsg, NamespaceId};
+use vr::replica::VersionedReplicas;
 use vr::vr_fsm::{State, VrState};
+use vr::vr_ctx::VrCtx;
 use vr::vr_msg::{self, StartView, GetState};
 use vr::states::{Primary, Backup, StartViewChange, DoViewChange, StateTransfer, Reconfiguration};
 use vr::states::{Leaving, Recovery};
@@ -46,6 +51,7 @@ pub fn handle_do_view_change<T: State>(state: T,
 
 pub fn handle_start_view<T: State>(state: T,
                                    msg: StartView,
+                                   cid: CorrelationId,
                                    output: &mut Vec<Envelope<Msg>>) -> VrState
 {
     if msg.epoch < state.borrow_ctx().epoch {
@@ -56,8 +62,8 @@ pub fn handle_start_view<T: State>(state: T,
     }
     // A primary has been elected in a new view / epoch
     // Even if the epoch is larger here, we will learn it and the new config by playing the log
-    let StartView {view, op, log, commit_num, ..} = msg;
-    Backup::become_backup(state.ctx(), view, op, log, commit_num, output)
+    let StartView {view, op, log_start, log_tail, commit_num, ..} = msg;
+    Backup::become_backup(state.ctx(), view, op, log_start, log_tail, commit_num, cid, output)
 }
 
 pub fn handle_get_state<T: State>(state: T,
@@ -94,6 +100,22 @@ pub fn handle_start_epoch<T: State>(state: T,
     state.into()
 }
 
+pub fn commit_reconfiguration(ctx: &mut VrCtx,
+                              epoch: u64,
+                              op: u64,
+                              replicas: Vec<Pid>,
+                              output: &mut Vec<Envelope<Msg>>)
+{
+    ctx.epoch = epoch + 1;
+    ctx.last_received_time = SteadyTime::now();
+    ctx.view = 0;
+    ctx.last_normal_view = 0;
+    mem::swap(&mut ctx.old_config, &mut ctx.new_config);
+    ctx.new_config = VersionedReplicas {epoch: ctx.epoch, op: op, replicas: replicas};
+    ctx.quorum = ctx.new_config.replicas.len() as u64 / 2 + 1;
+    announce_reconfiguration(ctx, output);
+}
+
 /// The primary or backup has just committed the reconfiguration request. It must now determine
 /// whether it is the primary of view 0 in the new epoch, a backup in the new epoch, or it is being
 /// shutdown.
@@ -109,4 +131,12 @@ pub fn enter_transitioning<T: State>(state: T, output: &mut Vec<Envelope<Msg>>) 
     Backup::enter(state.ctx())
 }
 
+/// Send a reconfiguration message to the namespace_mgr so it can start any new replicas
+fn announce_reconfiguration(ctx: &VrCtx, output: &mut Vec<Envelope<Msg>>) {
+    output.push(ctx.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
+        namespace_id: NamespaceId(ctx.pid.group.as_ref().unwrap().to_owned()),
+        old_config: ctx.old_config.clone(),
+        new_config: ctx.new_config.clone()
+    }));
+}
 

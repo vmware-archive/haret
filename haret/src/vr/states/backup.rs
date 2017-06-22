@@ -31,7 +31,7 @@ impl Transition for Backup {
             VrMsg::StartViewChange(msg) =>
                 normal::handle_start_view_change(self, msg, from, output),
             VrMsg::DoViewChange(msg) => normal::handle_do_view_change(self, msg, from, output),
-            VrMsg::StartView(msg) => normal::handle_start_view(self, msg, output),
+            VrMsg::StartView(msg) => normal::handle_start_view(self, msg, cid, output),
             VrMsg::Tick => self.handle_tick(output),
             VrMsg::GetState(msg) => normal::handle_get_state(self, msg, from, cid, output),
             VrMsg::Recovery(msg) => normal::handle_recovery(self, msg, from, cid, output),
@@ -55,33 +55,24 @@ impl Backup {
         Backup::new(ctx).into()
     }
 
-    fn send_prepare_ok(&mut self,
-                           msg: ClientOp, // ClientRequest | Reconfiguration
-                           cid: CorrelationId,
-                           output: &mut Vec<Envelope<Msg>>)
-    {
-        self.ctx.last_received_time = SteadyTime::now();
-        self.ctx.op += 1;
-        self.ctx.log.push(msg);
-        output.push(self.send_to_primary(self.prepare_ok_msg(), cid));
-    }
-
     /// Transition to a backup after receiving a `StartView` message
     pub fn become_backup(mut ctx: VrCtx,
                          view: u64,
                          op: u64,
-                         log: Vec<ClientOp>,
+                         log_start: u64,
+                         log_tail: Vec<ClientOp>,
                          commit_num: u64,
+                         cid: CorrelationId,
                          output: &mut Vec<Envelope<Msg>>) -> VrState
     {
-        ctx.last_received_time = SteadyTime::now();
         ctx.op = op;
-        ctx.log = log;
         // TODO: This isn't correct if we transition to a new epoch
         ctx.last_normal_view = ctx.view;
         ctx.view = view;
+        ctx.append_log_tail(log_start, log_tail);
         let mut backup = Backup::new(ctx);
         backup.set_primary(output);
+        backup.send_prepare_ok(cid, output);
         backup.commit(commit_num, output)
     }
 
@@ -95,9 +86,7 @@ impl Backup {
                 ClientOp::Reconfiguration(vr_msg::Reconfiguration {epoch,
                                                                    replicas, ..}) =>
                 {
-                    self.ctx.epoch = epoch + 1;
-                    self.ctx.update_for_new_epoch(i+1, replicas);
-                    self.ctx.announce_reconfiguration(output);
+                    normal::commit_reconfiguration(&mut self.ctx, epoch, i + 1, replicas, output);
                     self.set_primary(output);
 
                     // If the reconfiguration is not the last in the log, we don't want to
@@ -113,6 +102,21 @@ impl Backup {
         self.into()
     }
 
+    pub fn send_prepare_ok(&mut self, cid: CorrelationId, output: &mut Vec<Envelope<Msg>>) {
+        self.ctx.last_received_time = SteadyTime::now();
+        output.push(self.send_to_primary(self.prepare_ok_msg(), cid));
+    }
+
+    fn append_and_send_prepare_ok(&mut self,
+                                  msg: ClientOp,
+                                  cid: CorrelationId,
+                                  output: &mut Vec<Envelope<Msg>>)
+    {
+        self.ctx.op += 1;
+        self.ctx.log.push(msg);
+        self.send_prepare_ok(cid, output);
+    }
+
     fn handle_prepare(mut self,
                       msg: Prepare,
                       from: Pid,
@@ -121,10 +125,18 @@ impl Backup {
     {
         up_to_date!(self, from, msg, cid, output);
         self.ctx.last_received_time = SteadyTime::now();
-        let Prepare {op, commit_num, msg, ..} = msg;
+        let Prepare {op, commit_num, msg, global_min_accept, ..} = msg;
+        if global_min_accept > self.ctx.global_min_accept {
+            self.ctx.global_min_accept = global_min_accept;
+        }
+        // Prior PrepareOk messages could have been dropped on their way to the primary
+        if op == self.ctx.op {
+            self.send_prepare_ok(cid, output);
+            return self.into();
+        }
         if op == self.ctx.op + 1 {
             // This is the next op in order
-            self.send_prepare_ok(msg, cid, output);
+            self.append_and_send_prepare_ok(msg, cid, output);
             return self.commit(commit_num, output)
         } else if op > self.ctx.op + 1 {
             return StateTransfer::start_same_view(self.ctx, cid, output);
@@ -140,10 +152,13 @@ impl Backup {
     {
         up_to_date!(self, from, msg, cid, output);
         self.ctx.last_received_time = SteadyTime::now();
+        if msg.global_min_accept > self.ctx.global_min_accept {
+            self.ctx.global_min_accept = msg.global_min_accept;
+        }
         if msg.commit_num == self.ctx.commit_num {
             // We are already up to date
             return self.into();
-        } else if msg.commit_num == self.ctx.op {
+        } else if msg.commit_num <= self.ctx.op && msg.commit_num > self.ctx.commit_num {
             return self.commit(msg.commit_num, output);
         }
         StateTransfer::start_same_view(self.ctx, cid, output)
@@ -168,7 +183,7 @@ impl Backup {
         Envelope::new(self.primary.clone(), self.ctx.pid.clone(), msg, Some(cid))
     }
 
-    pub fn prepare_ok_msg(&self) -> rabble::Msg<Msg> {
+    fn prepare_ok_msg(&self) -> rabble::Msg<Msg> {
         PrepareOk {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
