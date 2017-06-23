@@ -20,20 +20,23 @@ open a Pull Request. For any questions about the CLA process, please refer to ou
 [FAQ](https://cla.vmware.com/faq).
 
 ## Documentation
-All documentation exists in the `docs` directory, or in source code comments. Patches can therefore
-also be submitted as pull requests, and should be.
+Most documentation exists in the `docs` directory, or in source code comments. Some documentation
+about specific code subsystems lives in the code directories. Patches can therefore also be
+submitted as pull requests, and should be.
 
 ## I want to help.
 While we welcome all contributions, there are some tasks that are easier to get started with than
 others, and are a good way to introduce yourself to the project. We've marked all these tasks with
-the [Help
-Wanted](https://github.com/vmware/v2r2/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22) tag.
+the [Intro-to-haret]
+(https://github.com/vmware/haret/issues?q=is%3Aissue+is%3Aopen+label%3AIntro-to-haret) tag. We are
+excited to help onboard, mentor and provide guidance to anyone willing to work on these issues.
+
 Please look here first if you are a newcomer to the project. If you do decide to work on one of
 these issues leave a comment so others know that you are taking on the task. Although, be aware that
 other contributions for the same issue may still come in from elsewhere and be considered if the
 issue has not been resolved.
 
-For issues that aren't marked `Help Wanted`, that doesn't mean that you can't help or work on them.
+For issues that aren't marked `Intro-to-haret`, that doesn't mean that you can't help or work on them.
 It simply means that there may be complications such as there being no acceptable solution decided
 upon yet. In that case it can very much be worth leaving a comment asking a question or suggesting a
 solution for a problem. We'd love for a comment to spark a discussion and allow us to learn from each
