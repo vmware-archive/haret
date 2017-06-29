@@ -46,7 +46,7 @@ fn basic() {
 }
 
 fn basic_ops() {
-    let mut scheduler = Scheduler::new(3);
+    let mut scheduler = Scheduler::new("unit-basic", 3);
     let replicas = scheduler.new_config.replicas.clone();
 
     let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(),
@@ -88,7 +88,7 @@ fn basic_ops() {
 /// We guarantee a state transfer by dropping all messages to r1 and proceeding with the basic ops
 /// test. Then we "turn r1 back on" and watch the state change occur.
 fn state_transfer() {
-    let mut scheduler = Scheduler::new(3);
+    let mut scheduler = Scheduler::new("unit-state_transfer", 3);
     let replicas = scheduler.new_config.replicas.clone();
 
     let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
@@ -121,7 +121,7 @@ fn state_transfer() {
 }
 
 fn recovery() {
-    let mut scheduler = Scheduler::new(3);
+    let mut scheduler = Scheduler::new("unit-recovery", 3);
     let replicas = scheduler.new_config.replicas.clone();
 
     let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
@@ -171,7 +171,7 @@ fn recovery() {
 }
 
 fn reconfiguration() {
-    let mut scheduler = Scheduler::new(3);
+    let mut scheduler = Scheduler::new("unit-reconfiguration", 3);
     let mut replicas = scheduler.new_config.replicas.clone();
 
     assert_eq!(scheduler.fsms.len(), 3);

@@ -21,7 +21,7 @@ extern crate vertree;
 #[macro_use]
 mod utils;
 
-use utils::{Model, vr_invariants, op_invariants};
+use utils::{Model, vr_invariants, op_invariants, safe};
 use utils::scheduler::Scheduler;
 use utils::arbitrary::{Op, ClientRequest};
 use rabble::Envelope;
@@ -30,24 +30,30 @@ use haret::Msg;
 
 /// Test that a fixed replica set (no reconfigurations) properly runs VR operations
 quickcheck! {
-    fn prop_static_membership(ops: Vec<Op>) -> bool {
-        let mut scheduler = Scheduler::new(3);
-        let mut model = Model::new(scheduler.new_config.replicas.clone());
-        let mut client_req_num = 0;
-        for op in ops {
-            model.update(op.clone());
-            if let Err(s) = assert_op(op.clone(),
-                                      &mut scheduler,
-                                      &mut client_req_num,
-                                      &mut model)
-            {
-                let errmsg = format!("{:?} Error: {}", op, s);
-                error!(scheduler.logger, errmsg);
-                scheduler.log();
-                return false;
+    fn prop_static_membership(ops: Vec<Op>) -> Result<(), String> {
+        let mut scheduler = Scheduler::new("static_membership_qc", 3);
+        safe(|| {
+            let mut model = Model::new(scheduler.new_config.replicas.clone());
+            let mut client_req_num = 0;
+            for op in ops {
+                model.update(op.clone());
+                if let Err(s) = assert_op(op.clone(),
+                                          &mut scheduler,
+                                          &mut client_req_num,
+                                          &mut model)
+                {
+                    scheduler.log();
+                    return Err(s);
+                }
             }
-        }
-        true
+            Ok(())
+        }).map_err(|e| {
+            // We got a panic so we need to log the schedule here since it wasn't logged by a normal
+            // test failure.
+            scheduler.log();
+            e
+        })??; // Return an error if it's a panic or a nested Err result
+        Ok(())
     }
 }
 
@@ -128,7 +134,7 @@ fn assert_vr_invariants(scheduler: &Scheduler) -> Result<(), String> {
     let states = scheduler.get_states();
     vr_invariants::assert_single_primary_per_epoch_view(&states)?;
     vr_invariants::assert_minority_of_nodes_recovering(quorum, &states)?;
-    vr_invariants::assert_quorum_of_logs_equal_up_to_smallest_commit(quorum, &states)
+    vr_invariants::assert_global_min_accept(&states)
 }
 
 

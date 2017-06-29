@@ -5,6 +5,7 @@ use rabble::{self, Pid};
 use msg::Msg;
 use super::vr_api_messages::{VrApiReq, VrApiRsp};
 use super::replica::VersionedReplicas;
+use super::VrBackend;
 use std::convert::From;
 
 /// Generate a message struct: `$struct_name` from a set of fields
@@ -179,7 +180,9 @@ msg!(RecoveryResponse {
     // The following fields are only valid when sent by the Primary
     op: Option<u64>,
     commit_num: Option<u64>,
-    log: Option<Vec<ClientOp>>,
+    state: Option<VrBackend>,
+    log_start: Option<u64>,
+    log_tail: Option<Vec<ClientOp>>,
 
     // The following fields aren't in the paper, but they allow recovery in a later epoch
     // This is required because a replica may be started from an old config via gossip.

@@ -1,6 +1,7 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt;
 use rabble::{Pid, CorrelationId, Envelope};
 use msg::Msg;
 use vr::states::*;
@@ -82,6 +83,24 @@ pub enum VrState {
     Reconfiguration(Reconfiguration),
     Leaving(Leaving),
     Shutdown(Shutdown)
+}
+
+// TODO: Implement state specific display instead of just name and ctx
+impl fmt::Display for VrState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            VrState::Primary(_) => write!(f, "Primary  {}\n", self.ctx()),
+            VrState::Backup(_) => write!(f, "Backup  {}\n", self.ctx()),
+            VrState::StateTransfer(_) => write!(f, "StateTransfer {}\n", self.ctx()),
+            VrState::StartViewChange(_) => write!(f, "StartViewChange {}\n", self.ctx()),
+            VrState::DoViewChange(_) => write!(f, "DoViewChange {}\n", self.ctx()),
+            VrState::StartView(_) => write!(f, "StartView {}\n", self.ctx()),
+            VrState::Recovery(_) => write!(f, "Recovery {}\n", self.ctx()),
+            VrState::Reconfiguration(_) => write!(f, "Reconfiguration {}\n", self.ctx()),
+            VrState::Leaving(_) => write!(f, "Leaving {}\n", self.ctx()),
+            VrState::Shutdown(_) => write!(f, "Shutdown {}\n", self.ctx())
+        }
+    }
 }
 
 impl VrState {

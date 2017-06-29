@@ -182,6 +182,12 @@ impl DoViewChange {
                    latest.op = other.op;
                    latest.log_start = other.log_start;
                    latest.log_tail = other.log_tail;
+                } else if other.last_normal_view == latest.last_normal_view
+                       && other.op == latest.op
+                       && other.log_start > latest.log_start
+                {
+                           latest.log_start = other.log_start;
+                           latest.log_tail = other.log_tail;
                 }
                 if other.commit_num > latest.commit_num {
                     latest.commit_num = other.commit_num;

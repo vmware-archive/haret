@@ -35,8 +35,8 @@ macro_rules! safe_assert_eq {
             let res: Result<(), String> = Ok(());
             res
         } else {
-             return Err(format!("Assert failure: left = {:#?}, right = {:#?}
-                                File: {}, Line: {}\nExtra Context: {:#?}",
+             return Err(format!("Assert failure: left = {:#?}, right = {:#?} \
+                                File: {}, Line: {} Extra Context: {:#?}",
                                 $left, $right, file!(), line!(), $extra))
         }
 

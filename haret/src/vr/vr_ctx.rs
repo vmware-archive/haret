@@ -1,10 +1,11 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use rabble::{self, Pid, Envelope, CorrelationId};
-use slog::{self, Logger};
 use std::collections::HashSet;
 use std::iter::FromIterator;
+use std::fmt;
+use rabble::{self, Pid, Envelope, CorrelationId};
+use slog::{self, Logger};
 use time::{Duration, SteadyTime};
 use vr::vr_msg::ClientOp;
 use vr::VersionedReplicas;
@@ -53,6 +54,10 @@ pub struct VrCtx {
     /// allows this.
     pub primary_idle_timeout_ms: i64,
 
+    /// This is either 0 or the op number of the last truncated entry in the log
+    pub log_start: u64,
+
+    /// The tail of the log starting with the entry in `log_start`.
     pub log: Vec<ClientOp>,
 
     #[serde(skip_serializing, skip_deserializing)]
@@ -60,6 +65,16 @@ pub struct VrCtx {
 
     pub old_config: VersionedReplicas,
     pub new_config: VersionedReplicas,
+}
+
+impl fmt::Display for VrCtx {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "pid: {}\n", self.pid)?;
+        write!(f, "epoch: {}, view: {}, op: {}, commit: {}, global_min_accept: {}\n",
+               self.epoch, self.view, self.op, self.commit_num, self.global_min_accept)?;
+        write!(f, "last_normal_view: {}, quorum: {}, log_start: {}, log len: {}\n",
+               self.last_normal_view, self.quorum, self.log_start, self.log.len())
+    }
 }
 
 fn now() -> SteadyTime {
@@ -90,6 +105,7 @@ impl VrCtx {
             quorum: quorum as u64,
             idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
             primary_idle_timeout_ms: DEFAULT_PRIMARY_IDLE_TIMEOUT_MS,
+            log_start: 0,
             log: Vec::new(),
             backend: VrBackend::new(),
             old_config: old_config,
@@ -150,13 +166,23 @@ impl VrCtx {
     }
 
     pub fn append_log_tail(&mut self, log_start: u64, log_tail: Vec<ClientOp>) {
-        self.global_min_accept = log_start;
-        self.log.truncate(log_start as usize);
-        self.log.extend(log_tail);
+        if self.log_start > log_start {
+            // On this replica some operations have already committed and been truncated.
+            // This replica must have been the previous primary.
+            // Only append later log entries.
+           let start = (self.log_start - log_start) as usize;
+           self.log.extend_from_slice(&log_tail[start..]);
+        } else {
+            let keep = (log_start - self.log_start) as usize;
+            self.global_min_accept = log_start;
+            self.log.truncate(keep);
+            self.log.extend(log_tail);
+        }
     }
 
     pub fn get_log_tail(&self) -> Vec<ClientOp> {
-        self.log[self.global_min_accept as usize..].to_vec()
+        let start = (self.global_min_accept - self.log_start) as usize;
+        self.log[start..].to_vec()
     }
 }
 

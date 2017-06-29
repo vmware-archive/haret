@@ -2,7 +2,7 @@ target
 dev
 *.swp
 *.pid
-tests/output
+scheduler-output
 *~
 *#
 .vscode

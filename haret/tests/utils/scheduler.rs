@@ -6,6 +6,9 @@
 
 use std::iter::FromIterator;
 use std::collections::{HashSet, HashMap};
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use slog::{DrainExt, Logger};
 use slog_term;
@@ -18,8 +21,11 @@ use rabble::{self, Pid, NodeId, CorrelationId, Envelope};
 #[derive(Debug)]
 enum SchedulerMsg {
     Test {to: Pid, msg: VrMsg},
+    StopPrimary(Pid),
+    StopBackup(Pid),
     Envelope(Envelope<Msg>),
     Namespace(NamespaceMsg),
+    State(VrState),
     Debug(String)
 }
 
@@ -35,6 +41,7 @@ pub struct Scheduler {
     pub fsms: HashMap<Pid, Option<VrState>>,
     pub old_config: VersionedReplicas,
     pub new_config: VersionedReplicas,
+    path: PathBuf,
     history: Vec<SchedulerMsg>
 }
 
@@ -53,7 +60,8 @@ impl Iterator for Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(num_replicas: u64) -> Scheduler {
+    pub fn new(test_name: &'static str, num_replicas: u64) -> Scheduler {
+
         let node_id = NodeId {
             name: "test_node".to_string(),
             addr: "127.0.0.1:1999".to_string()
@@ -73,6 +81,10 @@ impl Scheduler {
         let primary = pids[0].clone();
         let fsms = create_fsms(pids, &new_config, &logger);
         let pid = Pid {name: "scheduler".to_string(), group: None, node: node_id};
+
+        let dir = Path::new("./tests/scheduler-output");
+        fs::create_dir_all(dir).unwrap();
+
         Scheduler {
             logger: logger,
             pid: pid,
@@ -85,12 +97,38 @@ impl Scheduler {
             fsms: fsms,
             old_config: VersionedReplicas::new(),
             new_config: new_config,
+            path: dir.join(test_name),
             history: Vec::new()
         }
     }
 
-    pub fn log(&self) {
-        println!("{:#?}", self.history);
+    pub fn log(&mut self) {
+        println!("Test schedule written to {:?}", self.path);
+        let mut f = fs::File::create(&self.path).unwrap();
+        for msg in self.history.drain(..) {
+            match msg {
+                SchedulerMsg::Test {to, msg} => {
+                    write!(f, "TestMsg to: {}\nmsg: {:?}\n\n", to.name, msg).unwrap();
+                },
+                SchedulerMsg::Envelope(Envelope {to, from, msg, correlation_id}) => {
+                    write!(f, "Envelope to: {}, from: {}\nmsg: {:?}\ncid: {:?}\n\n",
+                           to.name, from.name, msg, correlation_id).unwrap();
+                },
+                SchedulerMsg::Namespace(msg) => {
+                    write!(f, "{:?}\n\n", msg).unwrap();
+                },
+                SchedulerMsg::State(state) => {
+                    //write!(f, "State: {}\n\n", state);
+                    write!(f, "State: {}", state).unwrap();
+                },
+                SchedulerMsg::Debug(s) => {
+                    write!(f, "{}\n\n", s).unwrap();
+                },
+                _ => {
+                    write!(f, "{:?}\n\n", msg).unwrap();
+                }
+            }
+        }
     }
 
     pub fn quorum(&self) -> usize {
@@ -122,6 +160,7 @@ impl Scheduler {
             return false;
         }
         if let Some(primary) = self.primary.take() {
+            self.history.push(SchedulerMsg::StopPrimary(primary.clone()));
             self.fsms.remove(&primary);
             self.crashed.push(primary);
             return true;
@@ -139,6 +178,7 @@ impl Scheduler {
         } else {
             self.fsms.iter().next().unwrap().0.clone()
         };
+        self.history.push(SchedulerMsg::StopBackup(backup.clone()));
         debug!(self.logger, "Crash backup:"; "pid" => backup.to_string());
         self.fsms.remove(&backup);
         self.crashed.push(backup);
@@ -198,6 +238,7 @@ impl Scheduler {
             self.history.push(SchedulerMsg::Test {to: to.clone(), msg: msg.clone()});
             let vr_state = state.take().unwrap();
             let vr_state = vr_state.next(msg, from, cid, &mut self.fsm_output);
+            self.history.push(SchedulerMsg::State(vr_state.clone()));
             *state = Some(vr_state);
         }
     }
@@ -212,6 +253,7 @@ impl Scheduler {
                                              envelope.from,
                                              envelope.correlation_id.unwrap(),
                                              &mut self.fsm_output);
+                self.history.push(SchedulerMsg::State(vr_state.clone()));
                 *state = Some(vr_state);
             } else {
                 unreachable!()

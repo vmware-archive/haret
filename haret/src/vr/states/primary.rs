@@ -9,6 +9,7 @@ use msg::Msg;
 use namespace_msg::NamespaceMsg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, VrMsg, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Commit};
+use vr::vr_msg::{Recovery, RecoveryResponse};
 use vr::vr_ctx::VrCtx;
 use vr::vr_api_messages::{VrApiRsp, VrApiError};
 use super::utils::PrepareRequests;
@@ -38,7 +39,7 @@ impl Transition for Primary {
             VrMsg::PrepareOk(msg) => self.handle_prepare_ok(msg, from, cid, output),
             VrMsg::Tick => self.handle_tick(output),
             VrMsg::GetState(msg) => normal::handle_get_state(self, msg, from, cid, output),
-            VrMsg::Recovery(msg) => normal::handle_recovery(self, msg, from, cid, output),
+            VrMsg::Recovery(msg) => self.handle_recovery(msg, from, cid, output),
             VrMsg::StartEpoch(_) => normal::handle_start_epoch(self, from, cid, output),
             VrMsg::StartViewChange(msg) =>
                 normal::handle_start_view_change(self, msg, from, output),
@@ -91,20 +92,20 @@ impl Primary {
     pub fn commit(mut self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
         let lowest_prepared_op = self.prepare_requests.lowest_op;
         let mut iter = self.prepare_requests.remove(new_commit_num).into_iter();
-        let commit_num = self.ctx.commit_num;
-        for i in commit_num..new_commit_num {
+        let start = self.ctx.commit_num - self.ctx.log_start;
+        let end = new_commit_num - self.ctx.log_start;
+        for i in start..end {
             let msg = self.ctx.log[i as usize].clone();
-            self.ctx.commit_num = i + 1;
             match msg {
                 ClientOp::Request(ClientRequest {op, request_num, ..}) => {
                     let rsp = self.ctx.backend.call(op);
-                    if i >= lowest_prepared_op - 1 {
+                    if (i + self.ctx.log_start) >= lowest_prepared_op - 1 {
                         if let Some(req) = iter.next() {
                             // This primary prepared this request, and wasn't elected after it was
                             // prepared but before it was committed.
                             let cid = req.correlation_id;
                             let from = cid.pid.clone();
-                            // This wasn't a rebroadcast prepare from a new primary.
+                            // This wasn't a prepare from a new primary.
                             // Send a response to the client
                             if cid.pid != self.ctx.pid {
                                 output.push(self.client_reply(rsp, request_num, &from, &cid));
@@ -116,7 +117,7 @@ impl Primary {
                                                                    epoch,
                                                                    replicas, ..}) =>
                 {
-                    if i >= lowest_prepared_op - 1 {
+                    if (i + self.ctx.log_start) >= lowest_prepared_op - 1 {
                         if let Some(req) = iter.next() {
                             // This replica prepared this request as primary, and wasn't elected
                             // after it was prepared but before this replica committed it.
@@ -139,7 +140,9 @@ impl Primary {
                     //
                     // If the reconfiguration is not the last in the log, we don't want to
                     // transition, as the reconfiguration has already happened.
-                    if i + 1 == new_commit_num && new_commit_num == self.ctx.log.len() as u64 {
+                    if i + 1 == end && end == self.ctx.log.len() as u64 {
+                        self.ctx.commit_num = new_commit_num;
+                        normal::gc_log(&mut self.ctx);
                         self.broadcast_commit_msg_old(output);
                         // We don't bother sending 'StartEpoch` requests to the new replicas here,
                         // since they aren't yet online.
@@ -148,6 +151,8 @@ impl Primary {
                 }
             }
         }
+        self.ctx.commit_num = new_commit_num;
+        normal::gc_log(&mut self.ctx);
         self.into()
     }
 
@@ -218,12 +223,26 @@ impl Primary {
         if op <= self.ctx.commit_num {
             return self.into();
         }
-        if self.has_commit_quorum(op, from) {
+        self.track_prepare_ok(op, from);
+        if self.has_commit_quorum(op) {
             debug!(self.ctx.logger, "primary: has commit quorum: op = {}", op);
             return self.commit(op, output);
         }
         self.into()
     }
+
+    fn handle_recovery(self,
+                       msg: Recovery,
+                       to: Pid,
+                       cid: CorrelationId,
+                       output: &mut Vec<Envelope<Msg>>) -> VrState
+    {
+        let vr_msg::Recovery {epoch, nonce} = msg;
+        let response = self.recovery_response_msg(epoch, nonce);
+        output.push(Envelope::new(to, self.ctx.pid.clone(), response, Some(cid)));
+        self.into()
+    }
+
 
     fn handle_tick(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.idle_timeout() {
@@ -240,7 +259,8 @@ impl Primary {
         // This isn't the original request cid, but it doesn't matter
         // as it's already maintained in self.prepare_requests.
         let cid = CorrelationId::pid(self.ctx.pid.clone());
-        let msg = self.ctx.log[self.ctx.op as usize - 1].clone();
+        let index = (self.ctx.op - self.ctx.log_start - 1) as usize;
+        let msg = self.ctx.log[index].clone();
         if self.prepare_requests.is_empty() {
             // This is a new primary that didn't prepare this request orignally.
             // Therefore, no client reply will be required. Use this primary's pid for the cid then
@@ -273,8 +293,39 @@ impl Primary {
         }.into()
     }
 
-    fn has_commit_quorum(&mut self, op: u64, from: Pid) -> bool {
+    fn recovery_response_msg(&self, epoch: u64, nonce: u64) -> rabble::Msg<Msg> {
+        let (old_config, new_config) = if self.ctx.epoch > epoch {
+            (Some(self.ctx.old_config.clone()), Some(self.ctx.new_config.clone()))
+        } else {
+            (None, None)
+        };
+
+        RecoveryResponse {
+            epoch: self.ctx.epoch,
+            view: self.ctx.view,
+            nonce: nonce,
+            global_min_accept: self.ctx.global_min_accept,
+            op: Some(self.ctx.op),
+            commit_num: Some(self.ctx.commit_num),
+            state: Some(self.ctx.backend.clone()),
+            log_start: Some(self.ctx.log_start),
+            log_tail: Some(self.ctx.log.clone()),
+            old_config: old_config,
+            new_config: new_config
+        }.into()
+    }
+
+    fn track_prepare_ok(&mut self, op: u64, from: Pid) {
+        if self.prepare_requests.is_empty() && op > self.ctx.commit_num {
+            // We were just elected primary and haven't sent any prepare requests yet.
+            // This is a PrepareOk message for uncommitted operations from a backup
+            let cid = CorrelationId::pid(self.ctx.pid.clone());
+            self.prepare_requests.new_prepare(op, cid.clone());
+        }
         self.prepare_requests.insert(op, from);
+    }
+
+    fn has_commit_quorum(&mut self, op: u64) -> bool {
         self.prepare_requests.has_quorum(op)
     }
 
@@ -495,7 +546,9 @@ mod tests {
         // Ensure that a commit broadcast gets sent
         let state = primary.handle_tick(&mut output);
         let primary = take_primary(state);
+        // The log doesn't get garbage collected after the commit because only one backup replied
         assert_eq!(primary.ctx.log.len(), 1);
+        assert_eq!(primary.ctx.log_start, 0);
         assert_eq!(primary.ctx.op, 1);
         assert_eq!(primary.ctx.commit_num, 1);
         // broadcast of commit to the 2 backups

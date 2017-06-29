@@ -6,7 +6,7 @@ use super::vr_api_messages::{VrApiReq, VrApiRsp, VrApiError, TreeOp, TreeCas, Tr
 use super::vr_api_messages::{Guard, NodeType};
 use vertree::{self, Tree, Value, ErrorKind};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VrBackend {
     pub tree: Tree
 }
@@ -242,8 +242,8 @@ impl From<vertree::Error> for VrApiRsp {
                 VrApiError::CasFailed {path: path, expected: expected, actual: actual},
             ErrorKind::BadPath(msg) => VrApiError::BadFormat(msg),
             ErrorKind::Io(e) => VrApiError::Io(e.to_string()),
-            ErrorKind::MsgPackValueReadError(e) => VrApiError::EncodingError(e.to_string()),
-            ErrorKind::MsgPackValueWriteError(e) => VrApiError::EncodingError(e.to_string()),
+            ErrorKind::MsgPackEncodeError(e) => VrApiError::EncodingError(e.to_string()),
+            ErrorKind::MsgPackDecodeError(e) => VrApiError::EncodingError(e.to_string()),
             ErrorKind::CannotDeleteRoot => VrApiError::CannotDeleteRoot,
             ErrorKind::PathMustBeAbsolute(path) => VrApiError::PathMustBeAbsolute(path),
             ErrorKind::Msg(msg) => VrApiError::Msg(msg)
