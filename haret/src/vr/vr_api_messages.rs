@@ -51,13 +51,13 @@ pub enum TreeOp {
 impl TreeOp {
     pub fn is_write(&self) -> bool {
         match *self {
-            TreeOp::Snapshot {..} => true,
-            TreeOp::CreateNode {..} => true,
-            TreeOp::DeleteNode {..} => true,
-            TreeOp::BlobPut {..} => true,
-            TreeOp::QueuePush {..} => true,
-            TreeOp::QueuePop {..} => true,
-            TreeOp::SetInsert {..} => true,
+            TreeOp::Snapshot {..} |
+            TreeOp::CreateNode {..} |
+            TreeOp::DeleteNode {..} |
+            TreeOp::BlobPut {..} |
+            TreeOp::QueuePush {..} |
+            TreeOp::QueuePop {..} |
+            TreeOp::SetInsert {..} |
             TreeOp::SetRemove {..} => true,
             _ => false
         }

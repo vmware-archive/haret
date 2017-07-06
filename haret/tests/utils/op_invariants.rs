@@ -23,11 +23,9 @@ pub fn assert_create_response(scheduler: &Scheduler,
     };
 
     match api_rsp {
-        VrApiRsp::Ok => {
-            assert_successful_create(scheduler, path, request_num, ty)
-        },
+        VrApiRsp::Ok |
         VrApiRsp::Error(VrApiError::AlreadyExists(_)) => {
-            assert_successful_create(scheduler, path, request_num, ty)
+            assert_successful_create(scheduler, &path, request_num, ty)
         },
         VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => {
             Ok(())
@@ -55,9 +53,9 @@ pub fn assert_put_response(scheduler: &Scheduler,
 
     match api_rsp {
         VrApiRsp::TreeOpResult(TreeOpResult::Ok(_)) => {
-            assert_successful_put_or_get(scheduler, path, request_num, data)
+            assert_successful_put_or_get(scheduler, path, request_num, &data)
         },
-        VrApiRsp::Error(VrApiError::AlreadyExists(_)) => Ok(()),
+        VrApiRsp::Error(VrApiError::AlreadyExists(_)) |
         VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => Ok(()),
         VrApiRsp::Error(VrApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
         VrApiRsp::Error(VrApiError::DoesNotExist(_)) => {
@@ -83,9 +81,9 @@ pub fn assert_get_response(scheduler: &Scheduler,
 
     match api_rsp {
         VrApiRsp::TreeOpResult(TreeOpResult::Blob(data, _)) => {
-            assert_successful_put_or_get(scheduler, path, request_num, data)
+            assert_successful_put_or_get(scheduler, path, request_num, &data)
         },
-        VrApiRsp::Error(VrApiError::AlreadyExists(_)) => Ok(()),
+        VrApiRsp::Error(VrApiError::AlreadyExists(_)) |
         VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => Ok(()),
         VrApiRsp::Error(VrApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
         VrApiRsp::Error(VrApiError::DoesNotExist(_)) => {
@@ -114,19 +112,19 @@ fn match_client_reply(request: VrMsg, reply: Envelope<Msg>)
 
 
 pub fn assert_successful_create(scheduler: &Scheduler,
-                                path: String,
+                                path: &str,
                                 request_num: u64,
                                 ty: NodeType) -> Result<(), String>
 {
     assert_majority_of_nodes_contain_op(scheduler, request_num)?;
     assert_primary_has_committed_op(scheduler, request_num)?;
-    assert_path_exists_in_primary_backend(scheduler, path.clone(), ty)
+    assert_path_exists_in_primary_backend(scheduler, path, ty)
 }
 
 pub fn assert_successful_put_or_get(scheduler: &Scheduler,
                                     path: String,
                                     request_num: u64,
-                                    data: Vec<u8>) -> Result<(), String>
+                                    data: &[u8]) -> Result<(), String>
 {
     assert_majority_of_nodes_contain_op(scheduler, request_num)?;
     assert_primary_has_committed_op(scheduler, request_num)?;
@@ -137,13 +135,10 @@ pub fn assert_majority_of_nodes_contain_op(scheduler: &Scheduler,
                                            request_num: u64) -> Result<(), String> {
     let mut contained_in_log = 0;
     for r in &scheduler.new_config.replicas {
-        match scheduler.get_state(&r) {
-            Some(state) => {
-                if is_client_request_last_in_log(state.ctx(), request_num) {
-                    contained_in_log += 1;
-                }
-            },
-            None => ()
+        if let Some(state) = scheduler.get_state(r) {
+            if is_client_request_last_in_log(state.ctx(), request_num) {
+                contained_in_log += 1;
+            }
         }
     }
     safe_assert!(contained_in_log >= scheduler.quorum())
@@ -154,14 +149,13 @@ pub fn assert_primary_has_committed_op(scheduler: &Scheduler,
 {
     if let Some(ref primary) = scheduler.primary {
         let state = scheduler.get_state(primary).unwrap();
-        if let VrState::Primary(_) = state {
-           ();
-        } else {
-            fail!();
+        match state {
+            VrState::Primary(_) => { }
+            _ => { fail!(); }
         }
         let ctx = state.ctx();
         safe_assert_eq!(ctx.op, ctx.commit_num)?;
-        safe_assert!(is_client_request_last_in_log(&ctx, request_num))
+        safe_assert!(is_client_request_last_in_log(ctx, request_num))
     } else {
         fail!()
     }
@@ -169,7 +163,7 @@ pub fn assert_primary_has_committed_op(scheduler: &Scheduler,
 
 fn assert_data_matches_primary_backend(scheduler: &Scheduler,
                                        path: String,
-                                       data: Vec<u8>) -> Result<(), String>
+                                       data: &[u8]) -> Result<(), String>
 {
     if let Some(ref primary) = scheduler.primary {
         let state = scheduler.get_state(primary).unwrap();
@@ -189,15 +183,16 @@ fn assert_data_matches_primary_backend(scheduler: &Scheduler,
 }
 
 fn assert_path_exists_in_primary_backend(scheduler: &Scheduler,
-                                         path: String,
+                                         path: &str,
                                          ty: NodeType) -> Result<(), String>
 {
     if let Some(ref primary) = scheduler.primary {
         let state = scheduler.get_state(primary).unwrap();
         let ctx = state.ctx();
-        if ctx.backend.tree.find(&path, ty.into()).is_err() {
+
+        if ctx.backend.tree.find(path, ty.into()).is_err() {
             // Check to see if it was already created as a directory
-            if ctx.backend.tree.find(&path, vertree::NodeType::Directory).is_err() {
+            if ctx.backend.tree.find(path, vertree::NodeType::Directory).is_err() {
                 fail!()
             }
         }
@@ -221,8 +216,8 @@ fn assert_element_not_found_primary(scheduler: &Scheduler,
 
 fn is_client_request_last_in_log(ctx: &VrCtx, request_num: u64) -> bool {
     if ctx.op == 0 { return false; }
-    let ref msg = ctx.log[(ctx.op - 1) as usize];
-    if let &ClientOp::Request(ClientRequest {request_num: logged_num, ..}) = msg {
+    let msg = &ctx.log[(ctx.op - 1) as usize];
+    if let ClientOp::Request(ClientRequest {request_num: logged_num, ..}) = *msg {
         if request_num == logged_num {
             return true;
         }

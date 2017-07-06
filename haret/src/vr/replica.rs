@@ -124,3 +124,9 @@ impl VersionedReplicas {
         }
     }
 }
+
+impl Default for VersionedReplicas {
+    fn default() -> Self {
+        VersionedReplicas::new()
+    }
+}

@@ -164,7 +164,7 @@ impl Recovery {
     fn recovery_msg(&self) -> rabble::Msg<Msg> {
         vr_msg::Recovery {
             epoch: self.ctx.epoch,
-            nonce: self.nonce.clone()
+            nonce: self.nonce,
         }.into()
     }
 

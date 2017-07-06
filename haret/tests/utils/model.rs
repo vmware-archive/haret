@@ -126,11 +126,11 @@ impl Model {
     /// Note that this method is mutable because some members contain multiple possible values that
     /// can be collapsed during checking to known values.
     pub fn check(&mut self, states: &[VrState]) -> Result<(), String> {
-        for ref state in states {
+        for state in states {
            safe_assert!(self.possible_views.contains(&state.ctx().view))?;
            self.possible_views = vec![state.ctx().view];
            safe_assert_eq!(self.log, state.ctx().log)?;
-           match **state {
+           match *state {
                VrState::Primary(_) => {
                    assert_contains!(self.possible_primary_commit_num, &state.ctx().commit_num)?;
                    // Reset the possible primary value with the known result

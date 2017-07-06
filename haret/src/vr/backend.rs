@@ -153,8 +153,8 @@ impl VrBackend {
             // Returning Ok here because we already have a VrApiRsp (even though it's an error)
             return Ok(VrApiRsp::Error(err));
         }
-        let guards = guards.into_iter().map(|g| vertree::Guard::from(g)).collect();
-        let ops = ops.into_iter().map(|op| vertree::WriteOp::from(op)).collect();
+        let guards = guards.into_iter().map(vertree::Guard::from).collect();
+        let ops = ops.into_iter().map(vertree::WriteOp::from).collect();
         let (replies, tree) = self.tree.multi_cas(guards, ops)?;
         self.tree = tree;
         let replies = replies.into_iter().map(|r| r.into()).collect();

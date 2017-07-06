@@ -66,7 +66,7 @@ fn assert_op(op: Op,
             });
             let mut replies = scheduler.send_to_primary(req.clone());
             if replies.len() == 1 {
-                return assert_client_request_correctness(&scheduler, req, replies.pop().unwrap());
+                return assert_client_request_correctness(scheduler, req, replies.pop().unwrap());
             }
             safe_assert_eq!(replies.len(), 0)?;
         },
