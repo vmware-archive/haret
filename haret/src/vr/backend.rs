@@ -138,7 +138,7 @@ impl VrBackend {
                 reply.into()
             },
             TreeOp::SetSupersetSet {path, set} => {
-                let reply = self.tree.set_subset(path, None, Some(set))?;
+                let reply = self.tree.set_superset(path, None, Some(set))?;
                 reply.into()
             }
         };
