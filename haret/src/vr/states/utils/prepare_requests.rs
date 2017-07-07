@@ -7,7 +7,7 @@ use rabble::{Pid, CorrelationId};
 
 /// Metadata for an individual prepare request
 ///
-/// Metdata is stored in a VecDeque where the index is the operation number.
+/// Metdata is stored in a `VecDeque` where the index is the operation number.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub correlation_id: CorrelationId,
@@ -60,7 +60,7 @@ impl PrepareRequests {
 
     // Returns true if the request exists, false otherwise
     pub fn insert(&mut self, op: u64, replica: Pid) -> bool {
-        if op >= self.lowest_op && self.requests.len() != 0 {
+        if op >= self.lowest_op && !self.requests.is_empty() {
             match self.requests.get_mut((op - self.lowest_op) as usize) {
                 Some(ref mut request) => {
                     request.replies.insert(replica);

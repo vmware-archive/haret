@@ -218,7 +218,7 @@ fn reconfiguration() {
     assert_eq!(state.ctx().view, 1);
 }
 
-fn assert_new_epoch(replicas: &Vec<Pid>, scheduler: &mut Scheduler) {
+fn assert_new_epoch(replicas: &[Pid], scheduler: &mut Scheduler) {
     if let Some(state) = scheduler.get_state(&replicas[0]) {
         assert_eq!(state.ctx().epoch, 2);
         assert_matches!(state, VrState::Primary(_));
@@ -242,7 +242,7 @@ fn assert_new_epoch(replicas: &Vec<Pid>, scheduler: &mut Scheduler) {
     }
 }
 
-fn assert_second_view_change(replicas: &Vec<Pid>, scheduler: &mut Scheduler) {
+fn assert_second_view_change(replicas: &[Pid], scheduler: &mut Scheduler) {
     scheduler.send_msg(&replicas[1], VrMsg::Tick);
     scheduler.send_until_empty();
     if let Some(state) = scheduler.get_state(&replicas[0]) {

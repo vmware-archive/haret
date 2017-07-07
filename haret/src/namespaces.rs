@@ -41,7 +41,7 @@ impl Namespaces {
     }
 
     pub fn get_config(&self, namespace: &NamespaceId) -> Option<(VersionedReplicas, VersionedReplicas)> {
-        match self.map.get(&namespace) {
+        match self.map.get(namespace) {
             Some(&(ref old_config, ref new_config)) =>
                 Some((old_config.clone(), new_config.clone())),
             None => None
@@ -56,7 +56,7 @@ impl Namespaces {
                        new: VersionedReplicas) -> (bool, Vec<Pid>)
     {
         if let Some(&mut(ref mut saved_old_config, ref mut saved_new_config)) =
-            self.map.get_mut(&namespace)
+            self.map.get_mut(namespace)
         {
             // This is an old reconfig message, nothing to start
             if new.epoch <= saved_new_config.epoch { return (false, Vec::new()) }
@@ -71,5 +71,11 @@ impl Namespaces {
         } else {
             (false, Vec::new())
         }
+    }
+}
+
+impl Default for Namespaces {
+    fn default() -> Self {
+        Namespaces::new()
     }
 }

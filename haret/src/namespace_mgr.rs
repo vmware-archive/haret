@@ -248,7 +248,7 @@ impl NamespaceMgr {
     /// Receive a copy of current namespaces from another node and see if the local copy is
     /// outdated. Configure them and start/stop replicas as needed.
     pub fn check_namespaces(&mut self, namespaces: Namespaces) {
-        for (namespace_id, &(ref old_config, ref new_config)) in namespaces.map.iter() {
+        for (namespace_id, &(ref old_config, ref new_config)) in &namespaces.map {
             if self.namespaces.exists(namespace_id) {
                 self.reconfigure(namespace_id.clone(), old_config.clone(), new_config.clone());
             } else {
@@ -333,7 +333,7 @@ impl NamespaceMgr {
        ctx.idle_timeout_ms = DEFAULT_IDLE_TIMEOUT_MS;
        ctx.primary_idle_timeout_ms = DEFAULT_PRIMARY_IDLE_TIMEOUT_MS;
        self.namespaces.primaries.insert(namespace_id, primary.clone());
-       self.node.spawn(&pid, Box::new(Replica::new(pid.clone(), ctx))).unwrap();
+       self.node.spawn(pid, Box::new(Replica::new(pid.clone(), ctx))).unwrap();
        self.local_replicas.insert(pid.clone());
    }
 
@@ -391,7 +391,7 @@ impl ServiceHandler<Msg> for NamespaceMgr {
 }
 
 /// Ensure all pids have an identical `group` value and that group value is not `None`
-fn validate_group_pids(pids: &Vec<Pid>) -> rabble::Result<NamespaceId> {
+fn validate_group_pids(pids: &[Pid]) -> rabble::Result<NamespaceId> {
     let mut namespace_id = None;
     for pid in pids {
         match pid.group {

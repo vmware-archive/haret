@@ -42,10 +42,10 @@ impl Arbitrary for Op {
         let range = Range::new(0, 100);
         match range.ind_sample(&mut thread_rng()) {
             0...80 => Op::ClientRequest(ClientRequest::arbitrary(g)),
-            80...85 => Op::Commit,
-            85...90 => Op::ViewChange,
-            90...92 => Op::CrashPrimary,
-            92...95 => Op::CrashBackup,
+            81...85 => Op::Commit,
+            86...90 => Op::ViewChange,
+            91...92 => Op::CrashPrimary,
+            93...95 => Op::CrashBackup,
             _ => Op::Restart
         }
     }

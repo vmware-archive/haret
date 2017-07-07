@@ -131,7 +131,7 @@ pub fn enter_transitioning<T: State>(state: T, output: &mut Vec<Envelope<Msg>>) 
     Backup::enter(state.ctx())
 }
 
-/// Send a reconfiguration message to the namespace_mgr so it can start any new replicas
+/// Send a reconfiguration message to the `namespace_mgr` so it can start any new replicas
 fn announce_reconfiguration(ctx: &VrCtx, output: &mut Vec<Envelope<Msg>>) {
     output.push(ctx.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
         namespace_id: NamespaceId(ctx.pid.group.as_ref().unwrap().to_owned()),

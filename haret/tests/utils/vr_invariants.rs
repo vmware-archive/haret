@@ -7,11 +7,11 @@
 use std::u64::MAX;
 use haret::vr::VrState;
 
-pub fn assert_single_primary_per_epoch_view(states: &Vec<VrState>) -> Result<(), String> {
+pub fn assert_single_primary_per_epoch_view(states: &[VrState]) -> Result<(), String> {
     // List of epoch/views for all primaries
     let mut epoch_view = None;
-    for ref state in states {
-        if let &&VrState::Primary(_) = state {
+    for state in states {
+        if let VrState::Primary(_) = *state {
             match epoch_view {
                 None => epoch_view = Some((state.ctx().epoch, state.ctx().view)),
                 Some((epoch, view)) => {
@@ -24,11 +24,11 @@ pub fn assert_single_primary_per_epoch_view(states: &Vec<VrState>) -> Result<(),
 }
 
 pub fn assert_minority_of_nodes_recovering(quorum: usize,
-                                           states: &Vec<VrState>) -> Result<(), String>
+                                           states: &[VrState]) -> Result<(), String>
 {
     let mut recovering_count = 0;
-    for ref state in states {
-        if let &&VrState::Recovery(_) = state {
+    for state in states {
+        if let VrState::Recovery(_) = *state {
             recovering_count += 1;
         }
     }
@@ -36,11 +36,11 @@ pub fn assert_minority_of_nodes_recovering(quorum: usize,
 }
 
 pub fn assert_quorum_of_logs_equal_up_to_smallest_commit(quorum: usize,
-                                                         states: &Vec<VrState>)
+                                                         states: &[VrState])
     -> Result<(), String>
 {
     let mut smallest_commit: u64 = MAX;
-    for ref state in states {
+    for state in states {
         if state.ctx().commit_num < smallest_commit {
             smallest_commit = state.ctx().commit_num;
         }
@@ -49,7 +49,7 @@ pub fn assert_quorum_of_logs_equal_up_to_smallest_commit(quorum: usize,
 
     let mut slice = None;
     let mut count = 0;
-    for ref state in states {
+    for state in states {
         let ctx = state.ctx();
         if ctx.commit_num >= smallest_commit {
             match slice {
@@ -69,8 +69,8 @@ pub fn assert_quorum_of_logs_equal_up_to_smallest_commit(quorum: usize,
     safe_assert!(count >= quorum)
 }
 
-pub fn assert_global_min_accept(states: &Vec<VrState>) -> Result<(), String> {
-    for ref state in states {
+pub fn assert_global_min_accept(states: &[VrState]) -> Result<(), String> {
+    for state in states {
         let ctx = state.ctx();
         safe_assert!(ctx.commit_num >= ctx.global_min_accept)?;
         safe_assert!(ctx.commit_num >= ctx.global_min_accept)?;

@@ -99,7 +99,7 @@ impl StateTransfer {
     {
         {
             let msg = self.get_state_msg();
-            let ref from = self.ctx.pid;
+            let from = &self.ctx.pid;
             output.extend(self.ctx.old_config
                           .replicas
                           .iter()

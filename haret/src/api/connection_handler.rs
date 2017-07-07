@@ -95,7 +95,7 @@ impl ApiConnectionHandler {
         unreachable!()
     }
 
-    fn proto_tree_op_to_vr_tree_op(&mut self, mut msg: TreeOp) -> vr::TreeOp {
+    fn proto_tree_op_to_vr_tree_op(&self, mut msg: TreeOp) -> vr::TreeOp {
         if msg.has_create_node() {
             self.to_vr_create_node(msg.take_create_node())
         } else if msg.has_delete_node() {
@@ -186,7 +186,7 @@ impl ApiConnectionHandler {
         output.push(ConnectionMsg::Envelope(envelope));
     }
 
-    fn to_vr_create_node(&mut self, mut msg: CreateNode) -> vr::TreeOp {
+    fn to_vr_create_node(&self, mut msg: CreateNode) -> vr::TreeOp {
         let path = msg.take_path();
         let node_type = match msg.get_node_type() {
             NodeType::BLOB => vr::NodeType::Blob,
@@ -197,77 +197,77 @@ impl ApiConnectionHandler {
         vr::TreeOp::CreateNode{path: path, ty: node_type}
     }
 
-    fn to_vr_delete_node(&mut self, mut msg: DeleteNode) -> vr::TreeOp {
+    fn to_vr_delete_node(&self, mut msg: DeleteNode) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::DeleteNode {path: path}
     }
 
-    fn to_vr_list_keys(&mut self, mut msg: ListKeys) -> vr::TreeOp {
+    fn to_vr_list_keys(&self, mut msg: ListKeys) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::ListKeys {path: path}
     }
 
-    fn to_vr_blob_put(&mut self, mut msg: BlobPut) -> vr::TreeOp {
+    fn to_vr_blob_put(&self, mut msg: BlobPut) -> vr::TreeOp {
         let path = msg.take_path();
         let val = msg.take_val();
         vr::TreeOp::BlobPut {path: path, val: val}
     }
 
-    fn to_vr_blob_get(&mut self, mut msg: BlobGet) -> vr::TreeOp {
+    fn to_vr_blob_get(&self, mut msg: BlobGet) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::BlobGet {path: path}
     }
 
-    fn to_vr_blob_size(&mut self, mut msg: BlobSize) -> vr::TreeOp {
+    fn to_vr_blob_size(&self, mut msg: BlobSize) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::BlobSize {path: path}
     }
 
-    fn to_vr_queue_push(&mut self, mut msg: QueuePush) -> vr::TreeOp {
+    fn to_vr_queue_push(&self, mut msg: QueuePush) -> vr::TreeOp {
         let path = msg.take_path();
         let val = msg.take_val();
         vr::TreeOp::QueuePush {path: path, val: val}
     }
 
-    fn to_vr_queue_pop(&mut self, mut msg: QueuePop) -> vr::TreeOp {
+    fn to_vr_queue_pop(&self, mut msg: QueuePop) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::QueuePop {path: path}
     }
 
-    fn to_vr_queue_front(&mut self, mut msg: QueueFront) -> vr::TreeOp {
+    fn to_vr_queue_front(&self, mut msg: QueueFront) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::QueueFront {path: path}
     }
 
-    fn to_vr_queue_back(&mut self, mut msg: QueueBack) -> vr::TreeOp {
+    fn to_vr_queue_back(&self, mut msg: QueueBack) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::QueueBack {path: path}
     }
 
-    fn to_vr_queue_len(&mut self, mut msg: QueueLen) -> vr::TreeOp {
+    fn to_vr_queue_len(&self, mut msg: QueueLen) -> vr::TreeOp {
         let path = msg.take_path();
         vr::TreeOp::QueueLen{path: path}
     }
 
-    fn to_vr_set_insert(&mut self, mut msg: SetInsert) -> vr::TreeOp {
+    fn to_vr_set_insert(&self, mut msg: SetInsert) -> vr::TreeOp {
         let path = msg.take_path();
         let val = msg.take_val();
         vr::TreeOp::SetInsert {path: path, val: val}
     }
 
-    fn to_vr_set_remove(&mut self, mut msg: SetRemove) -> vr::TreeOp {
+    fn to_vr_set_remove(&self, mut msg: SetRemove) -> vr::TreeOp {
         let path = msg.take_path();
         let val = msg.take_val();
         vr::TreeOp::SetRemove {path: path, val: val}
     }
 
-    fn to_vr_set_contains(&mut self, mut msg: SetContains) -> vr::TreeOp {
+    fn to_vr_set_contains(&self, mut msg: SetContains) -> vr::TreeOp {
         let path = msg.take_path();
         let val = msg.take_val();
         vr::TreeOp::SetContains {path: path, val: val}
     }
 
-    fn to_vr_set_union(&mut self, mut msg: SetUnion) -> vr::TreeOp {
+    fn to_vr_set_union(&self, mut msg: SetUnion) -> vr::TreeOp {
         let paths = msg.take_paths().into_vec();
         let sets: Vec<_> = msg.take_sets().into_iter().map(|mut s| {
             HashSet::from_iter(s.take_val().into_iter())
@@ -275,43 +275,43 @@ impl ApiConnectionHandler {
         vr::TreeOp::SetUnion {paths: paths, sets: sets}
     }
 
-    fn to_vr_set_intersection(&mut self, mut msg: SetIntersection) -> vr::TreeOp {
+    fn to_vr_set_intersection(&self, mut msg: SetIntersection) -> vr::TreeOp {
         let path1 = msg.take_path1();
         let path2 = msg.take_path2();
         vr::TreeOp::SetIntersection {path1: path1, path2: path2}
     }
 
-    fn to_vr_set_difference(&mut self, mut msg: SetDifference) -> vr::TreeOp {
+    fn to_vr_set_difference(&self, mut msg: SetDifference) -> vr::TreeOp {
         let path1 = msg.take_path1();
         let path2 = msg.take_path2();
         vr::TreeOp::SetDifference {path1: path1, path2: path2}
     }
 
-    fn to_vr_set_symmetric_difference(&mut self, mut msg: SetSymmetricDifference) -> vr::TreeOp {
+    fn to_vr_set_symmetric_difference(&self, mut msg: SetSymmetricDifference) -> vr::TreeOp {
         let path1 = msg.take_path1();
         let path2 = msg.take_path2();
         vr::TreeOp::SetSymmetricDifference {path1: path1, path2: path2}
     }
 
-    fn to_vr_set_subset_path(&mut self, mut msg: SetSubsetPath) -> vr::TreeOp {
+    fn to_vr_set_subset_path(&self, mut msg: SetSubsetPath) -> vr::TreeOp {
         let path1 = msg.take_path1();
         let path2 = msg.take_path2();
         vr::TreeOp::SetSubsetPath {path1: path1, path2: path2}
     }
 
-    fn to_vr_set_subset_set(&mut self, mut msg: SetSubsetSet) -> vr::TreeOp {
+    fn to_vr_set_subset_set(&self, mut msg: SetSubsetSet) -> vr::TreeOp {
         let path = msg.take_path();
         let set = HashSet::from_iter(msg.take_set().take_val().into_iter());
         vr::TreeOp::SetSubsetSet {path: path, set: set}
     }
 
-    fn to_vr_set_superset_path(&mut self, mut msg: SetSupersetPath) -> vr::TreeOp {
+    fn to_vr_set_superset_path(&self, mut msg: SetSupersetPath) -> vr::TreeOp {
         let path1 = msg.take_path1();
         let path2 = msg.take_path2();
         vr::TreeOp::SetSupersetPath {path1: path1, path2: path2}
     }
 
-    fn to_vr_set_superset_set(&mut self, mut msg: SetSupersetSet) -> vr::TreeOp {
+    fn to_vr_set_superset_set(&self, mut msg: SetSupersetSet) -> vr::TreeOp {
         let path = msg.take_path();
         let set = HashSet::from_iter(msg.take_set().take_val().into_iter());
         vr::TreeOp::SetSupersetSet {path: path, set: set}

@@ -58,7 +58,7 @@ impl Scheduler {
             name: "test_node".to_string(),
             addr: "127.0.0.1:1999".to_string()
         };
-        let pids = create_pids(num_replicas, node_id.clone());
+        let pids = create_pids(num_replicas, &node_id);
         let new_config = VersionedReplicas {
             epoch: 1,
             op: 0,
@@ -71,7 +71,7 @@ impl Scheduler {
         };
         let logger = logger();
         let primary = pids[0].clone();
-        let fsms = create_fsms(pids, new_config.clone(), &logger);
+        let fsms = create_fsms(pids, &new_config, &logger);
         let pid = Pid {name: "scheduler".to_string(), group: None, node: node_id};
         Scheduler {
             logger: logger,
@@ -170,7 +170,7 @@ impl Scheduler {
     }
 
     pub fn stop(&mut self, replica: &Pid) {
-        self.fsms.remove(&replica);
+        self.fsms.remove(replica);
         self.crashed.push(replica.clone());
     }
 
@@ -291,7 +291,7 @@ impl Scheduler {
 }
 
 fn create_fsms(pids: Vec<Pid>,
-               new_config: VersionedReplicas,
+               new_config: &VersionedReplicas,
                logger: &Logger) -> HashMap<Pid, Option<VrState>>
 {
     let mut fsms = HashMap::new();
@@ -311,7 +311,7 @@ fn create_fsms(pids: Vec<Pid>,
     fsms
 }
 
-fn create_pids(num_replicas: u64, node_id: NodeId) -> Vec<Pid> {
+fn create_pids(num_replicas: u64, node_id: &NodeId) -> Vec<Pid> {
     (1..num_replicas+1).into_iter().map(|i| Pid {
         group: Some(Uuid::nil().to_string()),
         name: format!("r{}", i),
