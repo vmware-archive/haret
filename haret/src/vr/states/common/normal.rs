@@ -11,7 +11,7 @@ use vr::vr_fsm::{State, VrState};
 use vr::vr_ctx::VrCtx;
 use vr::vr_msg::{self, StartView, GetState};
 use vr::states::{Primary, Backup, StartViewChange, DoViewChange, StateTransfer, Reconfiguration};
-use vr::states::{Leaving, Recovery};
+use vr::states::Leaving;
 
 pub fn handle_start_view_change<T: State>(state: T,
                                           msg: vr_msg::StartViewChange,
@@ -80,17 +80,6 @@ pub fn handle_get_state<T: State>(state: T,
     state.into()
 }
 
-pub fn handle_recovery<T: State>(state: T,
-                                 msg: vr_msg::Recovery,
-                                 from: Pid,
-                                 cid: CorrelationId,
-                                 output: &mut Vec<Envelope<Msg>>) -> VrState
-{
-
-    Recovery::send_response(state.borrow_ctx(), from, msg, cid, output);
-    state.into()
-}
-
 pub fn handle_start_epoch<T: State>(state: T,
                                     from: Pid,
                                     cid: CorrelationId,
@@ -131,6 +120,24 @@ pub fn enter_transitioning<T: State>(state: T, output: &mut Vec<Envelope<Msg>>) 
     Backup::enter(state.ctx())
 }
 
+/// Garbage collect the log
+///
+/// The log truncation point is always <= ctx.global_min accept.
+/// The log is only truncated after the truncation point has been committed.
+pub fn gc_log(ctx: &mut VrCtx) {
+    assert!(ctx.global_min_accept >= ctx.log_start);
+    assert!(ctx.commit_num >= ctx.log_start);
+    if ctx.commit_num >= ctx.global_min_accept {
+        let end = (ctx.global_min_accept - ctx.log_start) as usize;
+        let _ = ctx.log.drain(0..end);
+        ctx.log_start = ctx.global_min_accept;
+    } else {
+        let end = (ctx.commit_num - ctx.log_start) as usize;
+        let _ = ctx.log.drain(0..end);
+        ctx.log_start = ctx.commit_num;
+    }
+}
+
 /// Send a reconfiguration message to the `namespace_mgr` so it can start any new replicas
 fn announce_reconfiguration(ctx: &VrCtx, output: &mut Vec<Envelope<Msg>>) {
     output.push(ctx.namespace_mgr_envelope(NamespaceMsg::Reconfiguration {
@@ -139,4 +146,3 @@ fn announce_reconfiguration(ctx: &VrCtx, output: &mut Vec<Envelope<Msg>>) {
         new_config: ctx.new_config.clone()
     }));
 }
-

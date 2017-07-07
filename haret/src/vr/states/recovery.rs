@@ -1,12 +1,11 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::mem;
 use rabble::{self, Pid, CorrelationId, Envelope};
 use msg::Msg;
 use super::utils::QuorumTracker;
 use vr::vr_msg::{self, VrMsg, RecoveryResponse, ClientOp};
-use vr::VrCtx;
+use vr::{VrCtx, VrBackend};
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::states::Backup;
 
@@ -16,7 +15,9 @@ pub struct RecoveryPrimary {
     pub view: u64,
     pub op: u64,
     pub commit_num: u64,
-    pub log: Vec<ClientOp>
+    pub state: VrBackend,
+    pub log_start: u64,
+    pub log_tail: Vec<ClientOp>
 }
 
 /// The recovery state of the VR Protocol where a replica is recovering data from a quorum of
@@ -67,18 +68,6 @@ impl Recovery {
         }
     }
 
-    pub fn send_response(ctx: &VrCtx,
-                         to: Pid,
-                         msg: vr_msg::Recovery,
-                         cid: CorrelationId,
-                         output: &mut Vec<Envelope<Msg>>)
-    {
-        let vr_msg::Recovery {epoch, nonce} = msg;
-        let response = Recovery::response_msg(ctx, epoch, nonce);
-        output.push(Envelope::new(to, ctx.pid.clone(), response, Some(cid)));
-    }
-
-
     fn has_quorum(&self) -> bool {
         let current_view = self.ctx.view;
         self.responses.has_super_quorum() &&
@@ -88,9 +77,14 @@ impl Recovery {
     fn commit_recovery(mut self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.has_quorum() {
             let commit_num = {
-                let mut primary = self.primary.as_mut().unwrap();
+                let primary = self.primary.take().unwrap();
                 self.ctx.op = primary.op;
-                mem::swap(&mut self.ctx.log, &mut primary.log);
+                self.ctx.backend = primary.state;
+                self.ctx.log_start = primary.log_start;
+                self.ctx.log = primary.log_tail;
+                // Don't attempt to commit operations that are already part of the backend state
+                // They don't exist in the log anyway.
+                self.ctx.commit_num = primary.log_start;
                 primary.commit_num
             };
             let mut backup = Backup::new(self.ctx);
@@ -110,32 +104,22 @@ impl Recovery {
                              msg: RecoveryResponse,
                              output: &mut Vec<Envelope<Msg>>)
     {
-        let RecoveryResponse {epoch,
-                              view,
-                              nonce,
-                              op,
-                              commit_num,
-                              log,
-                              global_min_accept,
-                              old_config,
-                              new_config} = msg;
-
-        if nonce != self.nonce {
+        if msg.nonce != self.nonce {
             return;
         }
-        if epoch < self.ctx.epoch {
+        if msg.epoch < self.ctx.epoch {
             return;
         }
 
         // If we get a response from a replica in a later epoch, we learn the config from the
         // message and try again with the new group. If this replica isn't a member of the new group
         // it shuts down.
-        if epoch > self.ctx.epoch {
+        if msg.epoch > self.ctx.epoch {
             let cid = CorrelationId::pid(self.ctx.pid.clone());
-            self.ctx.epoch = epoch;
-            self.ctx.view = view;
-            self.ctx.old_config = old_config.unwrap();
-            self.ctx.new_config = new_config.unwrap();
+            self.ctx.epoch = msg.epoch;
+            self.ctx.view = msg.view;
+            self.ctx.old_config = msg.old_config.unwrap();
+            self.ctx.new_config = msg.new_config.unwrap();
             self.ctx.quorum = self.ctx.new_config.replicas.len() as u64 / 2 + 1;
             self.primary = None;
             self.responses = QuorumTracker::new(self.ctx.quorum, self.ctx.idle_timeout_ms);
@@ -143,19 +127,21 @@ impl Recovery {
             return;
         }
 
-        if view > self.ctx.view {
-            self.ctx.view = view;
+        if msg.view > self.ctx.view {
+            self.ctx.view = msg.view;
         }
 
-        let response_from_primary = op.is_some();
-        if response_from_primary && view == self.ctx.view {
-            self.ctx.global_min_accept = global_min_accept;
+        let response_from_primary = msg.op.is_some();
+        if response_from_primary && msg.view == self.ctx.view {
+            self.ctx.global_min_accept = msg.global_min_accept;
             self.primary = Some(RecoveryPrimary {
                 pid: from.clone(),
-                view: view,
-                op: op.unwrap(),
-                commit_num: commit_num.unwrap(),
-                log: log.unwrap()
+                view: msg.view,
+                op: msg.op.unwrap(),
+                commit_num: msg.commit_num.unwrap(),
+                state: msg.state.unwrap(),
+                log_start: msg.log_start.unwrap(),
+                log_tail: msg.log_tail.unwrap()
             });
         }
         self.responses.insert(from, ())
@@ -165,35 +151,6 @@ impl Recovery {
         vr_msg::Recovery {
             epoch: self.ctx.epoch,
             nonce: self.nonce,
-        }.into()
-    }
-
-
-    fn response_msg(ctx: &VrCtx, epoch: u64, nonce: u64) -> rabble::Msg<Msg> {
-        let primary = ctx.compute_primary();
-
-        let (op, commit_num, log) = if primary == ctx.pid {
-            (Some(ctx.op), Some(ctx.commit_num), Some(ctx.log.clone()))
-        } else {
-            (None, None, None)
-        };
-
-        let (old_config, new_config) = if ctx.epoch > epoch {
-            (Some(ctx.old_config.clone()), Some(ctx.new_config.clone()))
-        } else {
-            (None, None)
-        };
-
-        RecoveryResponse {
-            epoch: ctx.epoch,
-            view: ctx.view,
-            nonce: nonce,
-            global_min_accept: ctx.global_min_accept,
-            op: op,
-            commit_num: commit_num,
-            log: log,
-            old_config: old_config,
-            new_config: new_config
         }.into()
     }
 }

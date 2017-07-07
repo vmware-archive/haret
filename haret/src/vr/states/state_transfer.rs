@@ -129,7 +129,8 @@ impl StateTransfer {
         new_state.ctx.epoch = new_epoch;
         new_state.ctx.view = new_view;
         new_state.ctx.op = new_state.ctx.commit_num;
-        new_state.ctx.log.truncate(new_state.ctx.op as usize);
+        let end = StateTransfer::truncation_point(&new_state.ctx);
+        new_state.ctx.log.truncate(end);
         let from = new_state.ctx.pid.clone();
         let msg = new_state.get_state_msg();
         output.push(Envelope::new(primary, from, msg, Some(cid)));
@@ -146,7 +147,8 @@ impl StateTransfer {
         new_state.ctx.last_received_time = SteadyTime::now();
         new_state.ctx.view = new_view;
         new_state.ctx.op = new_state.ctx.commit_num;
-        new_state.ctx.log.truncate(new_state.ctx.op as usize);
+        let end = StateTransfer::truncation_point(&new_state.ctx);
+        new_state.ctx.log.truncate(end);
         new_state.send_get_state_to_random_replica(cid, output);
         new_state.into()
     }
@@ -193,13 +195,25 @@ impl StateTransfer {
     }
 
     fn new_state_msg(ctx: &VrCtx, op: u64) -> rabble::Msg<Msg> {
+        let start = (op - ctx.log_start) as usize;
+        let end = (ctx.op - ctx.log_start) as usize;
         NewState {
             epoch: ctx.epoch,
             view: ctx.view,
             op: ctx.op,
             commit_num: ctx.commit_num,
-            log_tail: (&ctx.log[op as usize..ctx.op as usize]).to_vec()
+            log_tail: (&ctx.log[start..end]).to_vec()
         }.into()
     }
 
+    /// We don't want to truncate past the global_min_accept value.  We also know that operations up
+    /// to the global_min_accept value cannot be reordered since they exist on all replicas.
+    /// Therefore if the global_min_accept > commit_num we only truncate to the global_min_accept
+    /// entry. Otherwise we truncate to the latest commited entry.
+    fn truncation_point(ctx: &VrCtx) -> usize {
+        if ctx.global_min_accept > ctx.commit_num {
+            return (ctx.global_min_accept - ctx.log_start) as usize;
+        }
+        (ctx.commit_num - ctx.log_start) as usize
+    }
 }

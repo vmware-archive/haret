@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use rabble::Pid;
-use haret::vr::{ClientOp, VrState};
+use haret::vr::{ClientOp, VrState, VrCtx};
 use super::arbitrary::{Op, ClientRequest};
 
 /// This is a model of the state of a VR replica set under test. It doesn't represent a particular
@@ -75,7 +75,6 @@ impl Model {
                 self.possible_backup_commit_num.extend(&self.possible_primary_commit_num);
                 self.possible_backup_commit_num.sort();
                 self.possible_backup_commit_num.dedup();
-                self.possible_primary_commit_num = self.possible_backup_commit_num.clone();
 
                 self.possible_backup_min_accept.extend(&self.possible_primary_min_accept);
                 self.possible_backup_min_accept.sort();
@@ -91,7 +90,6 @@ impl Model {
                 if self.replicas.len() as u64 - self.crashed != self.quorum {
                     self.crashed += 1;
                     self.update_view();
-                    self.possible_primary_commit_num = self.possible_backup_commit_num.clone();
                     self.possible_primary_min_accept = self.possible_backup_min_accept.clone();
                 }
             }
@@ -129,7 +127,7 @@ impl Model {
         for state in states {
            safe_assert!(self.possible_views.contains(&state.ctx().view))?;
            self.possible_views = vec![state.ctx().view];
-           safe_assert_eq!(self.log, state.ctx().log)?;
+           self.compare_logs(state.ctx())?;
            match *state {
                VrState::Primary(_) => {
                    assert_contains!(self.possible_primary_commit_num, &state.ctx().commit_num)?;
@@ -138,8 +136,6 @@ impl Model {
 
                    assert_contains!(self.possible_primary_min_accept,
                                     &state.ctx().global_min_accept)?;
-                   // Reset the possible primary value with the known result
-                   self.possible_primary_min_accept = vec![state.ctx().global_min_accept];
                },
                VrState::Backup(_) => {
                    assert_contains!(self.possible_backup_commit_num, &state.ctx().commit_num)?;
@@ -148,6 +144,24 @@ impl Model {
                },
                _ => fail!()
            }
+        }
+        Ok(())
+    }
+
+    /// The model log is never garbage collected.
+    /// In this model there are no message drops or partitions, therefore the log represents the
+    /// latest state at at all replicas if there was no GC.
+    /// However, the logs at the replicas are GC'd at different times. The primary log will be GC'd
+    /// before the backup logs for example.
+    ///
+    /// Therefore we ensure that the logs match after the GC point.
+    fn compare_logs(&self, ctx: &VrCtx) -> Result<(), String> {
+        let begin = ctx.log_start as usize;
+        let end = ctx.log_start as usize + ctx.log.len();
+        for i in begin..end {
+            self.log.get(i).map_or(Ok(()), |entry| {
+                safe_assert_eq!(*entry, ctx.log[i - ctx.log_start as usize], i)
+            })?;
         }
         Ok(())
     }

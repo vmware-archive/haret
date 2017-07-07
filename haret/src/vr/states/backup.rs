@@ -8,6 +8,7 @@ use msg::Msg;
 use NamespaceMsg;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, ClientOp, ClientRequest, Prepare, PrepareOk, Commit, VrMsg};
+use vr::vr_msg::{Recovery, RecoveryResponse};
 use vr::vr_ctx::VrCtx;
 use super::common::normal;
 use super::{StateTransfer, StartViewChange};
@@ -34,7 +35,7 @@ impl Transition for Backup {
             VrMsg::StartView(msg) => normal::handle_start_view(self, msg, cid, output),
             VrMsg::Tick => self.handle_tick(output),
             VrMsg::GetState(msg) => normal::handle_get_state(self, msg, from, cid, output),
-            VrMsg::Recovery(msg) => normal::handle_recovery(self, msg, from, cid, output),
+            VrMsg::Recovery(msg) => self.handle_recovery(msg, from, cid, output),
             VrMsg::StartEpoch(_) => normal::handle_start_epoch(self, from, cid, output),
             _ => self.into()
         }
@@ -77,7 +78,13 @@ impl Backup {
     }
 
     pub fn commit(mut self, new_commit_num: u64, output: &mut Vec<Envelope<Msg>>) -> VrState {
-        for i in self.ctx.commit_num..new_commit_num {
+        if new_commit_num <= self.ctx.log_start || new_commit_num <= self.ctx.commit_num {
+            /// This was the previous primary that learned of a later commit already
+            return self.into();
+        }
+        let start = self.ctx.commit_num - self.ctx.log_start;
+        let end = new_commit_num - self.ctx.log_start;
+        for i in start..end {
             let msg = self.ctx.log[i as usize].clone();
             match msg {
                 ClientOp::Request(ClientRequest {op, ..}) => {
@@ -91,14 +98,16 @@ impl Backup {
 
                     // If the reconfiguration is not the last in the log, we don't want to
                     // transition, as the reconfiguration has already happened.
-                    if new_commit_num == self.ctx.log.len() as u64 {
+                    if i + 1 == end && end == self.ctx.log.len() as u64 {
                         self.ctx.commit_num = new_commit_num;
+                        normal::gc_log(&mut self.ctx);
                         return normal::enter_transitioning(self, output);
                     }
                 },
             }
         }
         self.ctx.commit_num = new_commit_num;
+        normal::gc_log(&mut self.ctx);
         self.into()
     }
 
@@ -164,6 +173,18 @@ impl Backup {
         StateTransfer::start_same_view(self.ctx, cid, output)
     }
 
+    fn handle_recovery(self,
+                       msg: Recovery,
+                       to: Pid,
+                       cid: CorrelationId,
+                       output: &mut Vec<Envelope<Msg>>) -> VrState
+    {
+        let vr_msg::Recovery {epoch, nonce} = msg;
+        let response = self.recovery_response_msg(epoch, nonce);
+        output.push(Envelope::new(to, self.ctx.pid.clone(), response, Some(cid)));
+        self.into()
+    }
+
     fn handle_tick(self, output: &mut Vec<Envelope<Msg>>) -> VrState {
         if self.ctx.idle_timeout() {
             return StartViewChange::enter(self.ctx, output);
@@ -190,4 +211,27 @@ impl Backup {
             op: self.ctx.op
         }.into()
     }
+
+    fn recovery_response_msg(&self, epoch: u64, nonce: u64) -> rabble::Msg<Msg> {
+        let (old_config, new_config) = if self.ctx.epoch > epoch {
+            (Some(self.ctx.old_config.clone()), Some(self.ctx.new_config.clone()))
+        } else {
+            (None, None)
+        };
+
+        RecoveryResponse {
+            epoch: self.ctx.epoch,
+            view: self.ctx.view,
+            nonce: nonce,
+            global_min_accept: self.ctx.global_min_accept,
+            op: None,
+            commit_num: None,
+            state: None,
+            log_start: None,
+            log_tail: None,
+            old_config: old_config,
+            new_config: new_config
+        }.into()
+    }
+
 }
