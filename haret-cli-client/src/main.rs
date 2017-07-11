@@ -48,10 +48,10 @@ fn run_interactive(mut client: HaretClient) {
         prompt();
         let mut command = String::new();
         io::stdin().read_line(&mut command).unwrap();
-        if &command == "help\n" {
+        if command == "help\n" {
             println!("{}", help());
         }
-        match run(command, &mut client) {
+        match run(&command, &mut client) {
             Ok(result) => println!("{}", result),
             Err(err) => println!("{}", err)
         }
@@ -64,8 +64,8 @@ fn run_script(flag: &str, mut args: Args, mut client: HaretClient) {
         println!("{}", help());
         exit(-1);
     }
-    let command = args.next().unwrap_or(String::new());
-    match run(command, &mut client) {
+    let command = args.next().unwrap_or_default();
+    match run(&command, &mut client) {
         Ok(result) => {
             println!("{}", result);
             exit(0);
@@ -77,10 +77,10 @@ fn run_script(flag: &str, mut args: Args, mut client: HaretClient) {
     }
 }
 
-fn run(command: String, mut client: &mut HaretClient) -> Result<String> {
+fn run(command: &str, mut client: &mut HaretClient) -> Result<String> {
     let args: Vec<_> = command.split_whitespace().collect();
     for command in commands() {
-        if pattern_match(&command.pattern, &args) {
+        if pattern_match(command.pattern, &args) {
             if command.consensus && client.primary.is_none() {
                 let msg = "This command must be run inside a namespace. Please call `enter \
                     <namespace_id>`.";
@@ -221,7 +221,7 @@ fn pattern_to_help_string(pattern: &str) -> String {
         }
 
         // Required paramter
-        if word.starts_with("$") {
+        if word.starts_with('$') {
             acc.push('<');
             acc.push_str(&word[1..]);
             acc.push('>');
@@ -230,7 +230,7 @@ fn pattern_to_help_string(pattern: &str) -> String {
         }
 
         // Required option list
-        if word.starts_with("*") {
+        if word.starts_with('*') {
             acc.push('<');
             acc.push_str(&word[1..]);
             acc.push('>');
@@ -239,7 +239,7 @@ fn pattern_to_help_string(pattern: &str) -> String {
         }
 
         // Remainder of line is space seperated options of the same type
-        if word.starts_with("+") {
+        if word.starts_with('+') {
             acc.push('<');
             acc.push_str(&word[1..]);
             acc.push_str("1");
@@ -264,7 +264,7 @@ fn make_help() -> String {
     let commands = commands();
     let mut s = "Usage: haret-cli-client <IpAddress> [-e <command>]\n\n".to_string();
     s.push_str("    Commands\n");
-    let help_patterns: Vec<_> = commands.iter().map(|c| pattern_to_help_string(&c.pattern)).collect();
+    let help_patterns: Vec<_> = commands.iter().map(|c| pattern_to_help_string(c.pattern)).collect();
     let column2_pos = help_patterns.iter().fold(0, |acc, p| {
         if p.len() > acc {
             return p.len();
@@ -273,7 +273,7 @@ fn make_help() -> String {
     }) + 8;
     for (command, pattern) in commands.iter().zip(help_patterns) {
         s.push_str(&pattern);
-        s.push_str(str::from_utf8(&vec![' ' as u8; column2_pos - pattern.len()]).unwrap());
+        s.push_str(str::from_utf8(&vec![b' '; column2_pos - pattern.len()]).unwrap());
         s.push_str(command.description);
         s.push('\n');
     }
@@ -291,24 +291,24 @@ fn make_help() -> String {
     s
 }
 
-fn pattern_match(pattern: &'static str, argv: &Vec<&str>) -> bool {
+fn pattern_match(pattern: &'static str, argv: &[&str]) -> bool {
     let split_pattern = pattern.split_whitespace();
     let argv = argv.iter();
     let mut iter = split_pattern.zip(argv.clone());
     let mut varargs = false;
     let matched = iter.all(|(pattern, arg)| {
-        if pattern == "" && *arg == "" {
+        if pattern.is_empty() && arg.is_empty() {
             return true;
         }
-        if pattern.starts_with("$") {
+        if pattern.starts_with('$') {
             return true;
         }
-        if pattern.starts_with("+") {
+        if pattern.starts_with('+') {
             varargs = true;
             return true;
         }
-        if pattern.starts_with("*") {
-            if pattern[1..].split(",").find(|option| arg == option).is_none() {
+        if pattern.starts_with('*') {
+            if pattern[1..].split(',').find(|option| arg == option).is_none() {
                 println!("Argument must be one of: {}", pattern);
                 return false;
             }
@@ -316,7 +316,7 @@ fn pattern_match(pattern: &'static str, argv: &Vec<&str>) -> bool {
         }
         pattern == *arg
     });
-    if matched == false { return false; }
+    if !matched { return false; }
     if !varargs && pattern.split_whitespace().count() != argv.len() {
         return false;
     }

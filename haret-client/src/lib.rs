@@ -116,7 +116,7 @@ impl HaretClient {
     }
 
     pub fn create(&mut self, path: &str, str_type: &str) -> Result<String> {
-        let node_type = match &str_type as &str {
+        let node_type = match str_type {
             "blob" => NodeType::BLOB,
             "queue" => NodeType::QUEUE,
             "set" => NodeType::SET,
@@ -299,7 +299,7 @@ impl HaretClient {
             }
 
             if consensus_reply.has_path() {
-                s.push_str(&format!("{}", consensus_reply.take_path()));
+                s.push_str(&consensus_reply.take_path());
             }
 
             if consensus_reply.has_error() {
@@ -318,7 +318,7 @@ impl HaretClient {
         if api_response.has_namespaces() {
             let namespaces = api_response.take_namespaces().take_ids().to_vec();
             return Ok(namespaces.iter().fold(String::new(), |mut acc, namespace_id | {
-                    acc.push_str(&namespace_id);
+                    acc.push_str(namespace_id);
                     acc.push_str("\n");
                     acc
             }));
