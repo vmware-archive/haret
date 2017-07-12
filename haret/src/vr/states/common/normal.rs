@@ -122,7 +122,7 @@ pub fn enter_transitioning<T: State>(state: T, output: &mut Vec<Envelope<Msg>>) 
 
 /// Garbage collect the log
 ///
-/// The log truncation point is always <= ctx.global_min accept.
+/// The log truncation point is always <= `ctx.global_min_accept`.
 /// The log is only truncated after the truncation point has been committed.
 pub fn gc_log(ctx: &mut VrCtx) {
     assert!(ctx.global_min_accept >= ctx.log_start);

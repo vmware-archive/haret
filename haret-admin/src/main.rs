@@ -56,7 +56,7 @@ fn run_script(flag: &str, mut args: Args, mut sock: TcpStream) {
         println!("{}", help());
         exit(-1);
     }
-    let command = args.next().unwrap_or(String::new());
+    let command = args.next().unwrap_or_default();
     match run(&command, &mut sock) {
         Ok(result) => {
             println!("{}", result);
@@ -70,7 +70,7 @@ fn run_script(flag: &str, mut args: Args, mut sock: TcpStream) {
 }
 
 fn run(command: &str, sock: &mut TcpStream) -> Result<String> {
-    let req = parse(&command)?;
+    let req = parse(command)?;
     exec(req, sock)
 }
 
@@ -87,8 +87,7 @@ fn parse(command: &str) -> Result<AdminReq> {
         Some("cluster") => parse_cluster(&mut iter),
         Some("metrics") => parse_metrics(&mut iter),
         Some("vr") => parse_vr(&mut iter),
-        Some(_) => Err(help()),
-        None => Err(help())
+        Some(_) | None => Err(help()),
     }
 }
 
@@ -108,21 +107,20 @@ fn parse_cluster(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
                 println!("'join' takes a single argument");
                 return Err(help());
             }
-            NodeId::from_str(args[0]).map(|node_id| AdminReq::Join(node_id))
+            NodeId::from_str(args[0]).map(AdminReq::Join)
                                      .map_err(|s| Error::new(ErrorKind::InvalidInput, s))
         },
         Some("status") => {
             parse_no_args("cluster status", &mut iter).map(|_| AdminReq::GetClusterStatus)
         },
-        Some(_) => Err(help()),
-        None => Err(help())
+        Some(_) | None => Err(help()),
     }
 }
 
 fn parse_metrics(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some(string) => {
-            match Pid::from_str(&string) {
+            match Pid::from_str(string) {
                 Ok(replica) => Ok(AdminReq::GetMetrics(replica)),
                 Err(_) => {
                     println!("Error: Couldn't parse replica pid");
@@ -150,7 +148,7 @@ fn parse_vr(mut iter: &mut SplitWhitespace) -> Result<AdminReq> {
 fn parse_vr_replica(iter: &mut SplitWhitespace) -> Result<AdminReq> {
     match iter.next() {
         Some(string) => {
-            match Pid::from_str(&string) {
+            match Pid::from_str(string) {
                 Ok(replica) => Ok(AdminReq::GetReplicaState(replica)),
                 Err(_) => {
                     println!("Error: Couldn't parse replica pid");
@@ -178,7 +176,7 @@ fn parse_vr_create(iter: &mut SplitWhitespace) -> Result<AdminReq> {
                 return Err(help());
             }
             let namespace_id = args[0];
-            let pidopts: Vec<_> = args[1].split(",").map(|s| Pid::from_str(s)).collect();
+            let pidopts: Vec<_> = args[1].split(',').map(|s| Pid::from_str(s)).collect();
             if pidopts.iter().any(|p| p.is_err()) {
                 return Err(Error::new(ErrorKind::InvalidInput, "Failed to parse pids"));
             }

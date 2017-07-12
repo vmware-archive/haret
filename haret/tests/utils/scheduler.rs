@@ -281,8 +281,7 @@ impl Scheduler {
     pub fn send_until_empty_with_drop(&mut self, drop_target: &Pid) -> Vec<Envelope<Msg>> {
         let mut replies = Vec::new();
         while let Some(envelope) = self.next() {
-            let to = envelope.to.clone();
-            match to {
+            match envelope.to.clone() {
                 ref pid if *pid == self.pid => replies.push(envelope),
                 ref pid if *pid == *drop_target => (), // Drop any messages from peers destined for drop target
                 ref pid if *pid == self.namespace_mgr => self.handle_announcement(envelope.msg),
