@@ -67,12 +67,11 @@ pub fn handle_start_view<T: State>(state: T,
 }
 
 pub fn handle_get_state<T: State>(state: T,
-                                  msg: GetState,
+                                  GetState { epoch, view, op }: GetState,
                                   from: Pid,
                                   cid: CorrelationId,
                                   output: &mut Vec<Envelope<Msg>>) -> VrState
 {
-    let GetState {epoch, view, op} = msg;
     if epoch != state.borrow_ctx().epoch || view != state.borrow_ctx().view {
         return state.into()
     }
