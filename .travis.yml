@@ -4,21 +4,36 @@ rust:
   - stable
   - beta
   - nightly
+
+before_script:
+  - pip install 'travis-cargo<0.2' --user
+  - (cd haret && travis-cargo --only nightly install clippy -- --force)
+
 script:
-  - (cd haret && cargo build --verbose)
-  - (cd haret && cargo test --verbose)
+  - (cd haret && travis-cargo build -- --verbose)
+  - (cd haret && travis-cargo test -- --verbose)
+  - (cd haret && travis-cargo --only nightly clippy)
 
-  - (cd haret-admin && cargo build --verbose)
-  - (cd haret-admin && cargo test --verbose)
+  - (cd haret-admin && travis-cargo build -- --verbose)
+  - (cd haret-admin && travis-cargo test -- --verbose)
+  - (cd haret-admin && travis-cargo --only nightly clippy)
 
-  - (cd haret-client && cargo build --verbose)
-  - (cd haret-client && cargo test --verbose)
+  - (cd haret-client && travis-cargo build -- --verbose)
+  - (cd haret-client && travis-cargo test -- --verbose)
+  - (cd haret-client && travis-cargo --only nightly clippy)
 
-  - (cd haret-cli-client && cargo build --verbose)
-  - (cd haret-cli-client && cargo test --verbose)
+  - (cd haret-cli-client && travis-cargo build -- --verbose)
+  - (cd haret-cli-client && travis-cargo test -- --verbose)
+  - (cd haret-cli-client && travis-cargo --only nightly clippy)
 
-  - (cd haret-devconfig && cargo build --verbose)
-  - (cd haret-devconfig && cargo test --verbose)
+  - (cd haret-devconfig && travis-cargo build -- --verbose)
+  - (cd haret-devconfig && travis-cargo test -- --verbose)
+  - (cd haret-devconfig && travis-cargo --only nightly clippy)
 
-  - (cd haret-server && cargo build --verbose)
-  - (cd haret-server && cargo test --verbose)
+  - (cd haret-server && travis-cargo build -- --verbose)
+  - (cd haret-server && travis-cargo test -- --verbose)
+  - (cd haret-server && travis-cargo --only nightly clippy)
+
+env:
+  global:
+  - TRAVIS_CARGO_NIGHTLY_FEATURE=""

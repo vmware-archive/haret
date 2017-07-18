@@ -9,6 +9,10 @@
 //! invariants are maintained. This is in addition to the FSM level constraints that operate on a
 //! single FSM.
 
+#![cfg_attr(feature="cargo-clippy", allow(large_enum_variant))]
+#![cfg_attr(feature="cargo-clippy", allow(collapsible_if))]
+#![cfg_attr(feature="cargo-clippy", allow(while_let_on_iterator))]
+
 extern crate uuid;
 extern crate haret;
 extern crate quickcheck;

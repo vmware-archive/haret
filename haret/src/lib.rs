@@ -1,6 +1,9 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg_attr(feature="cargo-clippy", allow(too_many_arguments))]
+#![cfg_attr(feature="cargo-clippy", allow(large_enum_variant))]
+
 // Crates we don't manage
 extern crate rand;
 extern crate libc;

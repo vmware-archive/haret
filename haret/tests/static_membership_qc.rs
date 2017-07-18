@@ -1,6 +1,10 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg_attr(feature="cargo-clippy", allow(large_enum_variant))]
+#![cfg_attr(feature="cargo-clippy", allow(collapsible_if))]
+#![cfg_attr(feature="cargo-clippy", allow(while_let_on_iterator))]
+
 #[macro_use]
 extern crate quickcheck;
 extern crate uuid;
