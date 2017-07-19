@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod replica;
-mod backend;
-mod vr_api_messages;
 
 #[macro_use]
 pub mod vr_fsm;
@@ -30,16 +28,3 @@ pub use self::vr_msg::{
     ClientRequest,
     ClientReply
 };
-
-pub use self::vr_api_messages::{
-    VrApiReq,
-    VrApiRsp,
-    VrApiError,
-    TreeOp,
-    TreeCas,
-    NodeType,
-    Guard,
-    TreeOpResult
-};
-
-pub use self::backend::VrBackend;

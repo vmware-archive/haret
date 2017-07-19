@@ -1,6 +1,8 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg_attr(feature="cargo-clippy", allow(let_and_return))]
+
 use rabble::Pid;
 use haret::vr::{ClientOp, VrState, VrCtx};
 use super::arbitrary::{Op, ClientRequest};
@@ -155,6 +157,7 @@ impl Model {
     /// before the backup logs for example.
     ///
     /// Therefore we ensure that the logs match after the GC point.
+    #[cfg_attr(feature="cargo-clippy", allow(needless_return))]
     fn compare_logs(&self, ctx: &VrCtx) -> Result<(), String> {
         let begin = ctx.log_start as usize;
         let end = ctx.log_start as usize + ctx.log.len();

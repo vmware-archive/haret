@@ -5,9 +5,10 @@ use rabble::{self, Pid, CorrelationId, Envelope};
 use msg::Msg;
 use super::utils::QuorumTracker;
 use vr::vr_msg::{self, VrMsg, RecoveryResponse, ClientOp};
-use vr::{VrCtx, VrBackend};
+use vr::VrCtx;
 use vr::vr_fsm::{Transition, VrState, State};
 use vr::states::Backup;
+use api::Backend;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecoveryPrimary {
@@ -15,7 +16,7 @@ pub struct RecoveryPrimary {
     pub view: u64,
     pub op: u64,
     pub commit_num: u64,
-    pub state: VrBackend,
+    pub state: Backend,
     pub log_start: u64,
     pub log_tail: Vec<ClientOp>
 }

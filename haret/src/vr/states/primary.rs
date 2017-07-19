@@ -11,7 +11,7 @@ use vr::vr_fsm::{Transition, VrState, State};
 use vr::vr_msg::{self, VrMsg, ClientOp, ClientRequest, ClientReply, Prepare, PrepareOk, Commit};
 use vr::vr_msg::{Recovery, RecoveryResponse};
 use vr::vr_ctx::VrCtx;
-use vr::vr_api_messages::{VrApiRsp, VrApiError};
+use api::{ApiRsp, ApiError};
 use super::utils::PrepareRequests;
 use super::common::normal;
 use super::StateTransfer;
@@ -168,7 +168,7 @@ impl Primary {
             epoch: epoch,
             view: 0,
             request_num: client_req_num,
-            value: VrApiRsp::Ok
+            value: ApiRsp::Ok
         }.into();
         output.push(Envelope::new(to, from, reply, Some(cid)));
     }
@@ -337,21 +337,21 @@ impl Primary {
     {
         let &vr_msg::Reconfiguration {client_req_num, epoch, ref replicas} = msg;
         let err = if self.reconfiguration_in_progress {
-            Some(VrApiError::Msg("Reconfiguration in progress".to_owned()))
+            Some(ApiError::Msg("Reconfiguration in progress".to_owned()))
         } else if replicas.len() < 3 {
-            Some(VrApiError::NotEnoughReplicas)
+            Some(ApiError::NotEnoughReplicas)
         } else if epoch != self.ctx.epoch {
-            Some(VrApiError::BadEpoch)
+            Some(ApiError::BadEpoch)
         } else if *replicas == self.ctx.new_config.replicas {
-            Some(VrApiError::Msg("No change to existing configuration".to_owned()))
+            Some(ApiError::Msg("No change to existing configuration".to_owned()))
         } else {
             None
         };
-        err.map(|e| self.client_reply(VrApiRsp::Error(e), client_req_num, from, cid))
+        err.map(|e| self.client_reply(ApiRsp::Error(e), client_req_num, from, cid))
     }
 
     fn client_reply(&self,
-                    rsp: VrApiRsp,
+                    rsp: ApiRsp,
                     client_req_num: u64,
                     to: &Pid,
                     cid: &CorrelationId) -> Envelope<Msg>
@@ -360,7 +360,7 @@ impl Primary {
         Envelope::new(to.clone(), self.ctx.pid.clone(), reply, Some(cid.clone()))
     }
 
-    fn client_reply_msg(&self, client_req_num: u64, value: VrApiRsp) -> rabble::Msg<Msg> {
+    fn client_reply_msg(&self, client_req_num: u64, value: ApiRsp) -> rabble::Msg<Msg> {
         ClientReply {
             epoch: self.ctx.epoch,
             view: self.ctx.view,
@@ -438,7 +438,9 @@ mod tests {
 
     use super::*;
     use rabble::{Pid, NodeId, CorrelationId};
-    use vr::{VersionedReplicas, VrApiReq, TreeOp, NodeType};
+    use vertree::NodeType;
+    use vr::VersionedReplicas;
+    use api::{ApiReq, TreeOp};
     use msg::Msg;
     use slog::{DrainExt, Logger};
 
@@ -507,7 +509,7 @@ mod tests {
         ctx.primary_idle_timeout_ms = 0;
         let primary = Primary::new(ctx);
         let client_req = ClientRequest {
-            op: VrApiReq::TreeOp(TreeOp::CreateNode {path: "/a".to_owned(), ty: NodeType::Blob}),
+            op: ApiReq::TreeOp(TreeOp::CreateNode {path: "/a".to_owned(), ty: NodeType::Blob}),
             client_id: "client1".to_owned(),
             request_num: 1
 

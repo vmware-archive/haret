@@ -9,7 +9,7 @@ use slog::{self, Logger};
 use time::{Duration, SteadyTime};
 use vr::vr_msg::ClientOp;
 use vr::VersionedReplicas;
-use vr::VrBackend;
+use api::Backend;
 use msg::Msg;
 use namespace_msg::NamespaceMsg;
 
@@ -61,7 +61,7 @@ pub struct VrCtx {
     pub log: Vec<ClientOp>,
 
     #[serde(skip_serializing, skip_deserializing)]
-    pub backend: VrBackend,
+    pub backend: Backend,
 
     pub old_config: VersionedReplicas,
     pub new_config: VersionedReplicas,
@@ -107,7 +107,7 @@ impl VrCtx {
             primary_idle_timeout_ms: DEFAULT_PRIMARY_IDLE_TIMEOUT_MS,
             log_start: 0,
             log: Vec::new(),
-            backend: VrBackend::new(),
+            backend: Backend::new(),
             old_config: old_config,
             new_config: new_config,
         }
@@ -195,8 +195,10 @@ mod tests {
 
     use super::*;
     use rabble::{Pid, NodeId};
-    use vr::{VersionedReplicas, VrApiReq, TreeOp, NodeType};
+    use vertree::NodeType;
+    use vr::VersionedReplicas;
     use vr::vr_msg::{ClientOp, ClientRequest};
+    use api::{ApiReq, TreeOp};
     use slog::{DrainExt, Logger};
 
     /// Set up logging to go to the terminal and be configured via `RUST_LOG`
@@ -220,8 +222,8 @@ mod tests {
         }
     }
 
-    fn blob_create() -> VrApiReq {
-        VrApiReq::TreeOp(TreeOp::CreateNode {path: "/a".to_owned(), ty: NodeType::Blob})
+    fn blob_create() -> ApiReq {
+        ApiReq::TreeOp(TreeOp::CreateNode {path: "/a".to_owned(), ty: NodeType::Blob})
     }
 
     fn client_request(i: u64) -> ClientOp {

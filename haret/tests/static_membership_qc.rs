@@ -29,7 +29,8 @@ use utils::{Model, vr_invariants, op_invariants, safe};
 use utils::scheduler::Scheduler;
 use utils::arbitrary::{Op, ClientRequest};
 use rabble::Envelope;
-use haret::vr::{vr_msg, VrMsg, VrApiReq, TreeOp};
+use haret::vr::{vr_msg, VrMsg};
+use haret::api::{ApiReq, TreeOp};
 use haret::Msg;
 
 /// Test that a fixed replica set (no reconfigurations) properly runs VR operations
@@ -61,6 +62,7 @@ quickcheck! {
     }
 }
 
+#[cfg_attr(feature="cargo-clippy", allow(let_and_return))]
 fn assert_op(op: Op,
              scheduler: &mut Scheduler,
              client_req_num: &mut u64,
@@ -142,19 +144,20 @@ fn assert_vr_invariants(scheduler: &Scheduler) -> Result<(), String> {
 }
 
 
+#[cfg_attr(feature="cargo-clippy", allow(needless_return))]
 fn assert_response_matches_internal_replica_state(scheduler: &Scheduler,
                                                   request: VrMsg,
                                                   reply: Envelope<Msg>) -> Result<(), String>
 {
     match request {
         VrMsg::ClientRequest(
-            vr_msg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::CreateNode{..}), ..}) =>
+            vr_msg::ClientRequest {op: ApiReq::TreeOp(TreeOp::CreateNode{..}), ..}) =>
                 op_invariants::assert_create_response(scheduler, request, reply),
         VrMsg::ClientRequest(
-            vr_msg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobPut{..}), ..}) =>
+            vr_msg::ClientRequest {op: ApiReq::TreeOp(TreeOp::BlobPut{..}), ..}) =>
                 op_invariants::assert_put_response(scheduler, request, reply),
         VrMsg::ClientRequest(
-            vr_msg::ClientRequest {op: VrApiReq::TreeOp(TreeOp::BlobGet{..}), ..}) =>
+            vr_msg::ClientRequest {op: ApiReq::TreeOp(TreeOp::BlobGet{..}), ..}) =>
                 op_invariants::assert_get_response(scheduler, request, reply),
         _ => fail!()
     }

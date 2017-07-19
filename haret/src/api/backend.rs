@@ -1,38 +1,45 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+//! This module contains the backend code that executes commited consensus operations.
+//! It represents the "state machine" in a "replicated state machine".
+//!
+//! Specifically, this backend wraps vertree and provides a generic public interface
+//! to the consensus code so that the consensus code can be independent of any specific
+//! api and it's tightly coupled backend implementation.
+
 use std::convert::From;
-use super::vr_api_messages::{VrApiReq, VrApiRsp, VrApiError, TreeOp, TreeCas, TreeOpResult};
-use super::vr_api_messages::{Guard, NodeType};
-use vertree::{self, Tree, Value, ErrorKind};
+use super::internal_api_messages::{ApiReq, ApiRsp, ApiError, TreeOp, TreeCas, TreeOpResult};
+use vertree::{self, Tree};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct VrBackend {
+pub struct Backend {
     pub tree: Tree
 }
 
-impl Default for VrBackend {
-    fn default() -> VrBackend {
-        VrBackend::new()
+impl Default for Backend {
+    fn default() -> Backend {
+        Backend::new()
     }
 }
 
-impl VrBackend {
-    pub fn new() -> VrBackend {
-        VrBackend {
+impl Backend {
+    pub fn new() -> Backend {
+        Backend {
             tree: Tree::new()
         }
     }
 
-    pub fn call(&mut self, msg: VrApiReq) -> VrApiRsp {
+    /// The sole method for executing backend operations provided to the consensus system
+    pub fn call(&mut self, msg: ApiReq) -> ApiRsp {
         match msg {
-            VrApiReq::TreeOp(tree_op) => {
+            ApiReq::TreeOp(tree_op) => {
                 match self.run_tree_op(tree_op) {
                     Ok(vr_api_rsp) => vr_api_rsp,
                     Err(vertree_error) => vertree_error.into()
                 }
             },
-            VrApiReq::TreeCas(tree_cas) => {
+            ApiReq::TreeCas(tree_cas) => {
                 match self.run_tree_cas(tree_cas) {
                     Ok(vr_api_rsp) => vr_api_rsp,
                     Err(vertree_error) => vertree_error.into()
@@ -41,24 +48,24 @@ impl VrBackend {
         }
     }
 
-    fn run_tree_op(&mut self, tree_op: TreeOp) -> Result<VrApiRsp, vertree::Error> {
+    fn run_tree_op(&mut self, tree_op: TreeOp) -> Result<ApiRsp, vertree::Error> {
         let val = match tree_op {
             TreeOp::Snapshot {directory} => {
                 let s = self.tree.snapshot(&directory)?;
-                VrApiRsp::Path(s)
+                ApiRsp::Path(s)
             },
             TreeOp::CreateNode {path, ty} => {
                 self.tree = self.tree.create(&path, ty.into())?;
-                VrApiRsp::Ok
+                ApiRsp::Ok
             },
             TreeOp::DeleteNode {path} => {
                 let (_, tree) = self.tree.delete(&path)?;
                 self.tree = tree;
-                VrApiRsp::Ok
+                ApiRsp::Ok
             },
             TreeOp::ListKeys {..} => {
                 // Use the path variable when vertree supports it
-                VrApiRsp::TreeOpResult(TreeOpResult::Keys(self.tree.keys()))
+                ApiRsp::TreeOpResult(TreeOpResult::Keys(self.tree.keys()))
             },
             TreeOp::BlobPut {path, val} => {
                 let (reply, tree) = self.tree.blob_put(path, val)?;
@@ -145,109 +152,20 @@ impl VrBackend {
         Ok(val)
     }
 
-    fn run_tree_cas(&mut self, tree_cas: TreeCas) -> Result<VrApiRsp, vertree::Error> {
+    fn run_tree_cas(&mut self, tree_cas: TreeCas) -> Result<ApiRsp, vertree::Error> {
         let TreeCas {guards, ops} = tree_cas;
         // All cas operations must be writes for now
         if ops.iter().any(|s| !s.is_write()) {
-            let err = VrApiError::InvalidCas("All cas operations must be writes".to_string());
-            // Returning Ok here because we already have a VrApiRsp (even though it's an error)
-            return Ok(VrApiRsp::Error(err));
+            let err = ApiError::InvalidCas("All cas operations must be writes".to_string());
+            // Returning Ok here because we already have a ApiRsp (even though it's an error)
+            return Ok(ApiRsp::Error(err));
         }
         let guards = guards.into_iter().map(vertree::Guard::from).collect();
         let ops = ops.into_iter().map(vertree::WriteOp::from).collect();
         let (replies, tree) = self.tree.multi_cas(guards, ops)?;
         self.tree = tree;
         let replies = replies.into_iter().map(|r| r.into()).collect();
-        Ok(VrApiRsp::TreeCasResult(replies))
+        Ok(ApiRsp::TreeCasResult(replies))
     }
 }
 
-impl From<TreeOp> for vertree::WriteOp {
-    fn from(op: TreeOp) -> vertree::WriteOp {
-        match op {
-            TreeOp::Snapshot {directory} => vertree::WriteOp::Snapshot {directory: directory},
-            TreeOp::CreateNode {path, ty} => vertree::WriteOp::CreateNode {path: path, ty: ty.into()},
-            TreeOp::DeleteNode {path} => vertree::WriteOp::DeleteNode {path: path},
-            TreeOp::BlobPut {path, val} => vertree::WriteOp::BlobPut {path: path, val: val},
-            TreeOp::QueuePush {path, val} => vertree::WriteOp::QueuePush {path: path, val: val},
-            TreeOp::QueuePop {path} => vertree::WriteOp::QueuePop {path: path},
-            TreeOp::SetInsert {path, val} => vertree::WriteOp::SetInsert {path: path, val: val},
-            TreeOp::SetRemove {path, val} => vertree::WriteOp::SetRemove {path: path, val: val},
-            _ => unreachable!()
-        }
-    }
-}
-
-impl From<NodeType> for vertree::NodeType {
-    fn from(n: NodeType) -> vertree::NodeType {
-        match n {
-            NodeType::Blob => vertree::NodeType::Blob,
-            NodeType::Queue => vertree::NodeType::Queue,
-            NodeType::Set => vertree::NodeType::Set,
-            NodeType::Directory => vertree::NodeType::Directory
-        }
-    }
-}
-
-impl From<vertree::NodeType> for NodeType {
-    fn from(n: vertree::NodeType) -> NodeType {
-        match n {
-            vertree::NodeType::Blob => NodeType::Blob,
-            vertree::NodeType::Queue =>NodeType::Queue,
-            vertree::NodeType::Set => NodeType::Set,
-            vertree::NodeType::Directory => NodeType::Directory
-        }
-    }
-}
-
-
-impl From<Guard> for vertree::Guard {
-    fn from(g: Guard) -> vertree::Guard {
-        vertree::Guard {
-            path: g.path,
-            version: g.version
-        }
-    }
-}
-
-impl From<vertree::Reply> for TreeOpResult {
-    fn from(reply: vertree::Reply) -> TreeOpResult {
-        let vertree::Reply {version, value, ..} = reply;
-        match value {
-            Value::Blob(vec) => TreeOpResult::Blob(vec, version),
-            Value::Set(set) => TreeOpResult::Set(set.data.into_iter().collect(), version),
-            Value::Int(i) => TreeOpResult::Int(i, version),
-            Value::Bool(b) => TreeOpResult::Bool(b, version),
-            Value::Empty => TreeOpResult::Empty(version),
-            Value::None => TreeOpResult::Ok(version)
-        }
-    }
-}
-
-impl From<vertree::Reply> for VrApiRsp {
-    fn from(reply: vertree::Reply) -> VrApiRsp {
-        VrApiRsp::TreeOpResult(reply.into())
-    }
-}
-
-impl From<vertree::Error> for VrApiRsp {
-    fn from(error: vertree::Error) -> VrApiRsp {
-        let vertree::Error(kind, _) = error;
-        let err = match kind {
-            ErrorKind::AlreadyExists(path) => VrApiError::AlreadyExists(path),
-            ErrorKind::DoesNotExist(path) => VrApiError::DoesNotExist(path),
-            ErrorKind::WrongType(path, ty) => VrApiError::WrongType(path, ty.into()),
-            ErrorKind::InvalidPathContent(path) => VrApiError::PathMustEndInDirectory(path),
-            ErrorKind::CasFailed{path, expected, actual} =>
-                VrApiError::CasFailed {path: path, expected: expected, actual: actual},
-            ErrorKind::BadPath(msg) => VrApiError::BadFormat(msg),
-            ErrorKind::Io(e) => VrApiError::Io(e.to_string()),
-            ErrorKind::MsgPackEncodeError(e) => VrApiError::EncodingError(e.to_string()),
-            ErrorKind::MsgPackDecodeError(e) => VrApiError::EncodingError(e.to_string()),
-            ErrorKind::CannotDeleteRoot => VrApiError::CannotDeleteRoot,
-            ErrorKind::PathMustBeAbsolute(path) => VrApiError::PathMustBeAbsolute(path),
-            ErrorKind::Msg(msg) => VrApiError::Msg(msg)
-        };
-        VrApiRsp::Error(err)
-    }
-}

@@ -35,10 +35,12 @@ extern crate vertree;
 mod utils;
 
 use rabble::{Pid, Envelope};
+use vertree::NodeType;
 use haret::Msg;
-use haret::vr::{VrMsg, VrState, NodeType, TreeOp, TreeOpResult, VrApiReq, VrApiRsp};
+use haret::vr::{VrMsg, VrState};
 use haret::vr::{ClientReply, ClientRequest};
 use haret::vr::vr_msg::Reconfiguration;
+use haret::api::{ApiReq, ApiRsp, TreeOp, TreeOpResult};
 use utils::scheduler::Scheduler;
 
 #[test]
@@ -53,7 +55,7 @@ fn basic_ops() {
     let mut scheduler = Scheduler::new("unit-basic", 3);
     let replicas = scheduler.new_config.replicas.clone();
 
-    let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(),
+    let op = ApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(),
                                                   ty: NodeType::Blob});
     let msg = ClientRequest {client_id: "test_client".to_string(), op: op, request_num: 1};
     let primary = &replicas[0];
@@ -95,7 +97,7 @@ fn state_transfer() {
     let mut scheduler = Scheduler::new("unit-state_transfer", 3);
     let replicas = scheduler.new_config.replicas.clone();
 
-    let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
+    let op = ApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
     let msg = ClientRequest {client_id: "test_client".to_string(), op: op, request_num: 1};
     let primary = &replicas[0];
     scheduler.send_msg(primary, msg.into());
@@ -128,7 +130,7 @@ fn recovery() {
     let mut scheduler = Scheduler::new("unit-recovery", 3);
     let replicas = scheduler.new_config.replicas.clone();
 
-    let op = VrApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
+    let op = ApiReq::TreeOp(TreeOp::CreateNode {path: "/test_root".to_string(), ty: NodeType::Blob});
     let msg = ClientRequest {client_id: "test_client".to_string(), op: op, request_num: 1};
     let view0_primary = &replicas[0];
 
@@ -196,7 +198,7 @@ fn reconfiguration() {
     let msg = replies.pop().unwrap().msg;
     if let rabble::Msg::User(Msg::Vr(VrMsg::ClientReply(reply)))= msg {
         assert_eq!(reply.request_num, 1);
-        assert_eq!(reply.value, VrApiRsp::Ok);
+        assert_eq!(reply.value, ApiRsp::Ok);
     } else {
         assert!(false);
     }
@@ -297,12 +299,12 @@ fn assert_commit_gets_sent(primary: &Pid,
 
 fn assert_put_and_get(primary: &Pid, scheduler: &mut Scheduler) {
     let put_op =
-        VrApiReq::TreeOp(TreeOp::BlobPut { path: "/test_root".to_string(), val: b"hello".to_vec()});
+        ApiReq::TreeOp(TreeOp::BlobPut { path: "/test_root".to_string(), val: b"hello".to_vec()});
     let put_msg =
         ClientRequest {client_id: "test_client".to_string(), op: put_op, request_num: 2};
     scheduler.send_msg(primary, put_msg.into());
     scheduler.send_until_empty();
-    let get_op = VrApiReq::TreeOp(TreeOp::BlobGet { path: "/test_root".to_string()});
+    let get_op = ApiReq::TreeOp(TreeOp::BlobGet { path: "/test_root".to_string()});
     let get_msg = ClientRequest {client_id: "test_client".to_string(), op: get_op, request_num: 3};
     scheduler.send_msg(primary, get_msg.into());
     let mut replies = scheduler.send_until_empty();
@@ -316,7 +318,7 @@ fn assert_put_and_get(primary: &Pid, scheduler: &mut Scheduler) {
         assert_eq!(epoch, 1);
         assert_eq!(view, 0);
         assert_eq!(request_num, 3);
-        if let VrApiRsp::TreeOpResult(TreeOpResult::Blob(data, _)) = value {
+        if let ApiRsp::TreeOpResult(TreeOpResult::Blob(data, _)) = value {
             assert_eq!(data, b"hello".to_vec());
         } else {
             assert!(false);
@@ -331,7 +333,7 @@ fn assert_create_response(mut replies: Vec<Envelope<Msg>>) {
     let msg = replies.pop().unwrap().msg;
     if let rabble::Msg::User(Msg::Vr(VrMsg::ClientReply(reply))) = msg {
         assert_eq!(reply.request_num, 1);
-        assert_eq!(reply.value, VrApiRsp::Ok);
+        assert_eq!(reply.value, ApiRsp::Ok);
     } else {
         assert!(false);
     }

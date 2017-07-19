@@ -1,25 +1,25 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
-use std::iter::FromIterator;
 use protobuf::RepeatedField;
 use rabble::{self, Pid, NodeId, Envelope, ConnectionMsg, ConnectionHandler, CorrelationId};
 use admin::{AdminReq, AdminRpy};
-use vr::{self, VrMsg, VrApiReq, VrApiRsp, VrApiError, ClientRequest, ClientReply};
+use vr::{VrMsg, ClientRequest, ClientReply};
 use msg::Msg;
 use namespace_msg::{NamespaceMsg, NamespaceId, ClientId};
-use super::messages::*;
-
-type Milliseconds = u64;
+use super::internal_api_messages::{self, ApiReq, ApiError, TreeCas};
+use super::messages as protobuf;
+use vertree::Guard;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ApiRpy {
+pub enum ClientRegistrationRpy {
     ClientRegistration {primary: Pid, new_registration: bool},
     Redirect {primary: Pid, api_addr: String},
     Retry(Milliseconds),
     UnknownNamespace
 }
+
+type Milliseconds = u64;
 
 /// The connection handler for API clients
 pub struct ApiConnectionHandler {
@@ -51,7 +51,7 @@ impl ApiConnectionHandler {
     }
 
     fn handle_register_client(&mut self,
-                              mut msg: RegisterClient,
+                              mut msg: protobuf::RegisterClient,
                               output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let client_id = msg.take_client_id();
@@ -64,7 +64,7 @@ impl ApiConnectionHandler {
     }
 
     fn handle_consensus_request(&mut self,
-                                mut msg: ConsensusRequest,
+                                mut msg: protobuf::ConsensusRequest,
                                 output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let mut api_pid = msg.take_to();
@@ -92,91 +92,59 @@ impl ApiConnectionHandler {
                                         msg.take_tree_cas(),
                                         output);
         }
-        unreachable!()
-    }
-
-    fn proto_tree_op_to_vr_tree_op(&self, mut msg: TreeOp) -> vr::TreeOp {
-        if msg.has_create_node() {
-            self.to_vr_create_node(msg.take_create_node())
-        } else if msg.has_delete_node() {
-            self.to_vr_delete_node(msg.take_delete_node())
-        } else if msg.has_list_keys() {
-            self.to_vr_list_keys(msg.take_list_keys())
-        } else if msg.has_blob_put() {
-            self.to_vr_blob_put(msg.take_blob_put())
-        } else if msg.has_blob_get() {
-            self.to_vr_blob_get(msg.take_blob_get())
-        } else if msg.has_blob_size() {
-            self.to_vr_blob_size(msg.take_blob_size())
-        } else if msg.has_queue_push() {
-            self.to_vr_queue_push(msg.take_queue_push())
-        } else if msg.has_queue_pop() {
-            self.to_vr_queue_pop(msg.take_queue_pop())
-        } else if msg.has_queue_front() {
-            self.to_vr_queue_front(msg.take_queue_front())
-        } else if msg.has_queue_back() {
-            self.to_vr_queue_back(msg.take_queue_back())
-        } else if msg.has_queue_len() {
-            self.to_vr_queue_len(msg.take_queue_len())
-        } else if msg.has_set_insert() {
-            self.to_vr_set_insert(msg.take_set_insert())
-        } else if msg.has_set_remove() {
-            self.to_vr_set_remove(msg.take_set_remove())
-        } else if msg.has_set_contains() {
-            self.to_vr_set_contains(msg.take_set_contains())
-        } else if msg.has_set_union() {
-            self.to_vr_set_union(msg.take_set_union())
-        } else if msg.has_set_intersection() {
-            self.to_vr_set_intersection(msg.take_set_intersection())
-        } else if msg.has_set_difference() {
-            self.to_vr_set_difference(msg.take_set_difference())
-        } else if msg.has_set_symmetric_difference() {
-            self.to_vr_set_symmetric_difference(msg.take_set_symmetric_difference())
-        } else if msg.has_set_subset_path() {
-            self.to_vr_set_subset_path(msg.take_set_subset_path())
-        } else if msg.has_set_subset_set() {
-            self.to_vr_set_subset_set(msg.take_set_subset_set())
-        } else if msg.has_set_superset_path() {
-            self.to_vr_set_superset_path(msg.take_set_superset_path())
-        } else if msg.has_set_superset_set() {
-            self.to_vr_set_superset_set(msg.take_set_superset_set())
-        } else {
-            unreachable!();
-        }
+        output.push(self.error(ApiError::InvalidMsg.into()));
     }
 
     fn handle_tree_op(&mut self,
                       pid: Pid,
                       client_id: String,
                       client_req_num: u64,
-                      msg: TreeOp,
+                      msg: protobuf::TreeOp,
                       output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
-        let vr_api_req = VrApiReq::TreeOp(self.proto_tree_op_to_vr_tree_op(msg));
-        self.send_client_request(pid, client_id, client_req_num, vr_api_req, output)
+        match internal_api_messages::proto_to_tree_op(msg) {
+            Ok(tree_op) => {
+                let api_req = ApiReq::TreeOp(tree_op);
+                self.send_client_request(pid, client_id, client_req_num, api_req, output);
+            },
+            Err(e) => output.push(self.error(e.into()))
+        }
     }
 
     fn handle_tree_cas(&mut self,
                        pid: Pid,
                        client_id: String,
                        client_req_num: u64,
-                       mut msg: TreeCas,
+                       mut msg: protobuf::TreeCas,
                        output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let guards: Vec<_> = msg.take_guards().iter_mut().map(|g| {
-            vr::Guard {path: g.take_path(), version: g.get_version()}
+            Guard {path: g.take_path(), version: g.get_version()}
         }).collect();
-        let ops: Vec<_> = msg.take_tree_ops().into_iter()
-            .map(|op| self.proto_tree_op_to_vr_tree_op(op)).collect();
-        let vr_api_req = VrApiReq::TreeCas(vr::TreeCas { guards: guards, ops: ops });
-        self.send_client_request(pid, client_id, client_req_num, vr_api_req, output)
+
+        let pb_ops = msg.take_tree_ops();
+        let mut ops = Vec::with_capacity(pb_ops.len());
+        for op in pb_ops.into_iter() {
+            match internal_api_messages::proto_to_tree_op(op) {
+                Ok(tree_op) => {
+                    ops.push(tree_op)
+                },
+                Err(e) => {
+                    output.push(self.error(e.into()));
+                    return;
+                }
+            }
+        }
+
+        let api_req = ApiReq::TreeCas(TreeCas { guards: guards, ops: ops });
+        self.send_client_request(pid, client_id, client_req_num, api_req, output);
     }
 
     fn send_client_request(&mut self,
                            pid: Pid,
                            client_id: String,
                            client_req_num: u64,
-                           req: VrApiReq,
+                           req: ApiReq,
                            output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         let vrmsg = ClientRequest {op: req,
@@ -186,141 +154,10 @@ impl ApiConnectionHandler {
         output.push(ConnectionMsg::Envelope(envelope));
     }
 
-    fn to_vr_create_node(&self, mut msg: CreateNode) -> vr::TreeOp {
-        let path = msg.take_path();
-        let node_type = match msg.get_node_type() {
-            NodeType::BLOB => vr::NodeType::Blob,
-            NodeType::QUEUE => vr::NodeType::Queue,
-            NodeType::SET => vr::NodeType::Set,
-            NodeType::DIRECTORY => vr::NodeType::Directory
-        };
-        vr::TreeOp::CreateNode{path: path, ty: node_type}
-    }
-
-    fn to_vr_delete_node(&self, mut msg: DeleteNode) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::DeleteNode {path: path}
-    }
-
-    fn to_vr_list_keys(&self, mut msg: ListKeys) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::ListKeys {path: path}
-    }
-
-    fn to_vr_blob_put(&self, mut msg: BlobPut) -> vr::TreeOp {
-        let path = msg.take_path();
-        let val = msg.take_val();
-        vr::TreeOp::BlobPut {path: path, val: val}
-    }
-
-    fn to_vr_blob_get(&self, mut msg: BlobGet) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::BlobGet {path: path}
-    }
-
-    fn to_vr_blob_size(&self, mut msg: BlobSize) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::BlobSize {path: path}
-    }
-
-    fn to_vr_queue_push(&self, mut msg: QueuePush) -> vr::TreeOp {
-        let path = msg.take_path();
-        let val = msg.take_val();
-        vr::TreeOp::QueuePush {path: path, val: val}
-    }
-
-    fn to_vr_queue_pop(&self, mut msg: QueuePop) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::QueuePop {path: path}
-    }
-
-    fn to_vr_queue_front(&self, mut msg: QueueFront) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::QueueFront {path: path}
-    }
-
-    fn to_vr_queue_back(&self, mut msg: QueueBack) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::QueueBack {path: path}
-    }
-
-    fn to_vr_queue_len(&self, mut msg: QueueLen) -> vr::TreeOp {
-        let path = msg.take_path();
-        vr::TreeOp::QueueLen{path: path}
-    }
-
-    fn to_vr_set_insert(&self, mut msg: SetInsert) -> vr::TreeOp {
-        let path = msg.take_path();
-        let val = msg.take_val();
-        vr::TreeOp::SetInsert {path: path, val: val}
-    }
-
-    fn to_vr_set_remove(&self, mut msg: SetRemove) -> vr::TreeOp {
-        let path = msg.take_path();
-        let val = msg.take_val();
-        vr::TreeOp::SetRemove {path: path, val: val}
-    }
-
-    fn to_vr_set_contains(&self, mut msg: SetContains) -> vr::TreeOp {
-        let path = msg.take_path();
-        let val = msg.take_val();
-        vr::TreeOp::SetContains {path: path, val: val}
-    }
-
-    fn to_vr_set_union(&self, mut msg: SetUnion) -> vr::TreeOp {
-        let paths = msg.take_paths().into_vec();
-        let sets: Vec<_> = msg.take_sets().into_iter().map(|mut s| {
-            HashSet::from_iter(s.take_val().into_iter())
-        }).collect();
-        vr::TreeOp::SetUnion {paths: paths, sets: sets}
-    }
-
-    fn to_vr_set_intersection(&self, mut msg: SetIntersection) -> vr::TreeOp {
-        let path1 = msg.take_path1();
-        let path2 = msg.take_path2();
-        vr::TreeOp::SetIntersection {path1: path1, path2: path2}
-    }
-
-    fn to_vr_set_difference(&self, mut msg: SetDifference) -> vr::TreeOp {
-        let path1 = msg.take_path1();
-        let path2 = msg.take_path2();
-        vr::TreeOp::SetDifference {path1: path1, path2: path2}
-    }
-
-    fn to_vr_set_symmetric_difference(&self, mut msg: SetSymmetricDifference) -> vr::TreeOp {
-        let path1 = msg.take_path1();
-        let path2 = msg.take_path2();
-        vr::TreeOp::SetSymmetricDifference {path1: path1, path2: path2}
-    }
-
-    fn to_vr_set_subset_path(&self, mut msg: SetSubsetPath) -> vr::TreeOp {
-        let path1 = msg.take_path1();
-        let path2 = msg.take_path2();
-        vr::TreeOp::SetSubsetPath {path1: path1, path2: path2}
-    }
-
-    fn to_vr_set_subset_set(&self, mut msg: SetSubsetSet) -> vr::TreeOp {
-        let path = msg.take_path();
-        let set = HashSet::from_iter(msg.take_set().take_val().into_iter());
-        vr::TreeOp::SetSubsetSet {path: path, set: set}
-    }
-
-    fn to_vr_set_superset_path(&self, mut msg: SetSupersetPath) -> vr::TreeOp {
-        let path1 = msg.take_path1();
-        let path2 = msg.take_path2();
-        vr::TreeOp::SetSupersetPath {path1: path1, path2: path2}
-    }
-
-    fn to_vr_set_superset_set(&self, mut msg: SetSupersetSet) -> vr::TreeOp {
-        let path = msg.take_path();
-        let set = HashSet::from_iter(msg.take_set().take_val().into_iter());
-        vr::TreeOp::SetSupersetSet {path: path, set: set}
-    }
-
-    fn error(&self, err: ApiError) -> ConnectionMsg<ApiConnectionHandler> {
-        let mut response = ApiResponse::new();
+    fn error(&self, err: protobuf::ApiError) -> ConnectionMsg<ApiConnectionHandler> {
+        let mut response = protobuf::ApiResponse::new();
         response.set_error(err);
-        let mut msg = ApiMsg::new();
+        let mut msg = protobuf::ApiMsg::new();
         msg.set_response(response);
         ConnectionMsg::Client(msg, CorrelationId::pid(self.pid.clone()))
     }
@@ -328,7 +165,7 @@ impl ApiConnectionHandler {
 
 impl ConnectionHandler for ApiConnectionHandler {
     type Msg = Msg;
-    type ClientMsg = ApiMsg;
+    type ClientMsg = protobuf::ApiMsg;
 
     fn new(pid: Pid, id: u64) -> ApiConnectionHandler {
         let namespace_mgr = Pid {
@@ -360,40 +197,41 @@ impl ConnectionHandler for ApiConnectionHandler {
         match msg {
             rabble::Msg::User(Msg::Vr(VrMsg::ClientReply(client_reply))) => {
                 let ClientReply {epoch, view, request_num, value} = client_reply;
-                let mut reply = ConsensusReply::new();
+                let mut reply = protobuf::ConsensusReply::new();
                 reply.set_epoch(epoch);
                 reply.set_view(view);
                 reply.set_request_num(request_num);
-                let response = vr_api_rsp_to_proto_api_response(reply, value);
-                let mut msg = ApiMsg::new();
+                let response = internal_api_messages::vr_api_rsp_to_proto_api_response(reply,
+                                                                                       value);
+                let mut msg = protobuf::ApiMsg::new();
                 msg.set_response(response);
                 output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::User(Msg::AdminRpy(AdminRpy::Namespaces(namespaces))) => {
                 let ids: Vec<_> = namespaces.map.keys().cloned().map(|k| k.0.to_string()).collect();
-                let mut namespaces = Namespaces::new();
+                let mut namespaces = protobuf::Namespaces::new();
                 namespaces.set_ids(RepeatedField::from_vec(ids));
-                let mut response = ApiResponse::new();
+                let mut response = protobuf::ApiResponse::new();
                 response.set_namespaces(namespaces);
-                let mut msg = ApiMsg::new();
+                let mut msg = protobuf::ApiMsg::new();
                 msg.set_response(response);
                 output.push(ConnectionMsg::Client(msg, correlation_id));
             },
-            rabble::Msg::User(Msg::ApiRpy(reply)) => {
+            rabble::Msg::User(Msg::ClientRegistrationRpy(reply)) => {
                 let response = api_rpy_to_proto_api_response(reply);
-                let mut msg = ApiMsg::new();
+                let mut msg = protobuf::ApiMsg::new();
                 msg.set_response(response);
                 output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             rabble::Msg::Timeout => {
-                let mut response = ApiResponse::new();
+                let mut response = protobuf::ApiResponse::new();
                 response.set_timeout(true);
-                let mut msg = ApiMsg::new();
+                let mut msg = protobuf::ApiMsg::new();
                 msg.set_response(response);
                 output.push(ConnectionMsg::Client(msg, correlation_id));
             },
             _ => {
-                let err = self.error(VrApiError::InvalidMsg.into());
+                let err = self.error(ApiError::InvalidMsg.into());
                 output.push(err);
             }
 
@@ -402,11 +240,11 @@ impl ConnectionHandler for ApiConnectionHandler {
 
 
     fn handle_network_msg(&mut self,
-                          mut msg: ApiMsg,
+                          mut msg: protobuf::ApiMsg,
                           output: &mut Vec<ConnectionMsg<ApiConnectionHandler>>)
     {
         if !msg.has_request() {
-            let err = self.error(VrApiError::InvalidMsg.into());
+            let err = self.error(ApiError::InvalidMsg.into());
             output.push(err);
             return;
         }
@@ -420,214 +258,114 @@ impl ConnectionHandler for ApiConnectionHandler {
             let msg = api_request.take_consensus_request();
             self.handle_consensus_request(msg, output);
         } else {
-            let err = self.error(VrApiError::InvalidMsg.into());
+            let err = self.error(ApiError::InvalidMsg.into());
             output.push(err);
         }
     }
 }
 
-fn api_rpy_to_proto_api_response(reply: ApiRpy) -> ApiResponse {
+fn api_rpy_to_proto_api_response(reply: ClientRegistrationRpy) -> protobuf::ApiResponse {
     match reply {
-        ApiRpy::ClientRegistration {primary, new_registration} => {
-            let pid = pid_to_api_pid(primary);
-            let mut cr = ClientRegistration::new();
-            cr.set_primary(pid);
+        ClientRegistrationRpy::ClientRegistration {primary, new_registration} => {
+            let mut cr = protobuf::ClientRegistration::new();
+            cr.set_primary(primary.into());
             cr.set_new_registration(new_registration);
-            let mut response = ApiResponse::new();
+            let mut response = protobuf::ApiResponse::new();
             response.set_client_registration(cr);
             response
         },
-        ApiRpy::Redirect {primary, api_addr} => {
-            let pid = pid_to_api_pid(primary);
-            let mut redirect = Redirect::new();
-            redirect.set_primary(pid);
+        ClientRegistrationRpy::Redirect {primary, api_addr} => {
+            let mut redirect = protobuf::Redirect::new();
+            redirect.set_primary(primary.into());
             redirect.set_api_addr(api_addr);
-            let mut response = ApiResponse::new();
+            let mut response = protobuf::ApiResponse::new();
             response.set_redirect(redirect);
             response
         },
-        ApiRpy::Retry(milliseconds) => {
-            let mut retry = Retry::new();
+        ClientRegistrationRpy::Retry(milliseconds) => {
+            let mut retry = protobuf::Retry::new();
             retry.set_milliseconds(milliseconds);
-            let mut response = ApiResponse::new();
+            let mut response = protobuf::ApiResponse::new();
             response.set_retry(retry);
             response
         },
-        ApiRpy::UnknownNamespace => {
-            let mut response = ApiResponse::new();
+        ClientRegistrationRpy::UnknownNamespace => {
+            let mut response = protobuf::ApiResponse::new();
             response.set_unknown_namespace(true);
             response
         }
     }
 }
 
-impl From<VrApiError> for ApiError {
-    fn from(error: VrApiError) -> ApiError {
-        let mut api_error = ApiError::new();
+impl From<ApiError> for protobuf::ApiError {
+    fn from(error: ApiError) -> protobuf::ApiError {
+        let mut api_error = protobuf::ApiError::new();
         match error {
-            VrApiError::NotFound(path) => {
-                let mut e = NotFound::new();
+            ApiError::NotFound(path) => {
+                let mut e = protobuf::NotFound::new();
                 e.set_path(path);
                 api_error.set_not_found(e);
             },
-            VrApiError::AlreadyExists(path) => {
-                let mut e = AlreadyExists::new();
+            ApiError::AlreadyExists(path) => {
+                let mut e = protobuf::AlreadyExists::new();
                 e.set_path(path);
                 api_error.set_already_exists(e);
             },
-            VrApiError::DoesNotExist(path) => {
-                let mut e = DoesNotExist::new();
+            ApiError::DoesNotExist(path) => {
+                let mut e = protobuf::DoesNotExist::new();
                 e.set_path(path);
                 api_error.set_does_not_exist(e);
             },
-            VrApiError::WrongType(path, ty) => {
-                let mut e = WrongType::new();
+            ApiError::WrongType(path, ty) => {
+                let mut e = protobuf::WrongType::new();
                 e.set_path(path);
                 e.set_node_type(ty.into());
                 api_error.set_wrong_type(e);
             },
-            VrApiError::PathMustEndInDirectory(path) => {
-                let mut e = PathMustEndInDirectory::new();
+            ApiError::PathMustEndInDirectory(path) => {
+                let mut e = protobuf::PathMustEndInDirectory::new();
                 e.set_path(path);
                 api_error.set_path_must_end_in_directory(e);
             },
-            VrApiError::PathMustBeAbsolute(path) => {
-                let mut e = PathMustBeAbsolute::new();
+            ApiError::PathMustBeAbsolute(path) => {
+                let mut e = protobuf::PathMustBeAbsolute::new();
                 e.set_path(path);
                 api_error.set_path_must_be_absolute(e);
             },
-            VrApiError::CasFailed {path, expected, actual} => {
-                let mut e = CasFailed::new();
+            ApiError::CasFailed {path, expected, actual} => {
+                let mut e = protobuf::CasFailed::new();
                 e.set_path(path);
                 e.set_expected(expected);
                 e.set_actual(actual);
                 api_error.set_cas_failed(e);
             },
-            VrApiError::BadFormat(s) => {
-                let mut e = BadFormat::new();
+            ApiError::BadFormat(s) => {
+                let mut e = protobuf::BadFormat::new();
                 e.set_msg(s);
                 api_error.set_bad_format(e);
             },
-            VrApiError::Io(s) => {
-                let mut e = Io::new();
+            ApiError::Io(s) => {
+                let mut e = protobuf::Io::new();
                 e.set_msg(s);
                 api_error.set_io(e);
             },
-            VrApiError::EncodingError(s) => {
-                let mut e = EncodingError::new();
+            ApiError::EncodingError(s) => {
+                let mut e = protobuf::EncodingError::new();
                 e.set_msg(s);
                 api_error.set_encoding(e);
             }
-            VrApiError::InvalidCas(s) => {
-                let mut e = InvalidCas::new();
+            ApiError::InvalidCas(s) => {
+                let mut e = protobuf::InvalidCas::new();
                 e.set_msg(s);
                 api_error.set_invalid_cas(e);
             },
-            VrApiError::Msg(s) => api_error.set_msg(s),
-            VrApiError::CannotDeleteRoot => api_error.set_cannot_delete_root(true),
-            VrApiError::InvalidMsg => api_error.set_invalid_msg(true),
-            VrApiError::Timeout => api_error.set_timeout(true),
-            VrApiError::NotEnoughReplicas => api_error.set_not_enough_replicas(true),
-            VrApiError::BadEpoch => api_error.set_bad_epoch(true)
+            ApiError::Msg(s) => api_error.set_msg(s),
+            ApiError::CannotDeleteRoot => api_error.set_cannot_delete_root(true),
+            ApiError::InvalidMsg => api_error.set_invalid_msg(true),
+            ApiError::Timeout => api_error.set_timeout(true),
+            ApiError::NotEnoughReplicas => api_error.set_not_enough_replicas(true),
+            ApiError::BadEpoch => api_error.set_bad_epoch(true)
         }
         api_error
     }
 }
-
-impl From<vr::NodeType> for NodeType {
-    fn from(ty: vr::NodeType) -> NodeType {
-        match ty {
-            vr::NodeType::Blob => NodeType::BLOB,
-            vr::NodeType::Queue => NodeType::QUEUE,
-            vr::NodeType::Set => NodeType::SET,
-            vr::NodeType::Directory => NodeType::DIRECTORY
-        }
-    }
-}
-
-impl From<vr::TreeOpResult> for TreeOpResult {
-    fn from(result: vr::TreeOpResult) -> TreeOpResult {
-        let (mut result, version) = match result {
-            vr::TreeOpResult::Ok(version) =>  {
-                let mut result = TreeOpResult::new();
-                result.set_ok(true);
-                (result, version)
-            },
-            vr::TreeOpResult::Empty(version) =>  {
-                let mut result = TreeOpResult::new();
-                result.set_empty(true);
-                (result, version)
-            },
-            vr::TreeOpResult::Bool(b, version) => {
-                let mut result = TreeOpResult::new();
-                result.set_bool(b);
-                (result, version)
-            },
-            vr::TreeOpResult::Blob(blob, version) => {
-                let mut result = TreeOpResult::new();
-                result.set_blob(blob);
-                (result, version)
-            },
-            vr::TreeOpResult::Int(i, version) => {
-                let mut result = TreeOpResult::new();
-                result.set_int(i);
-                (result, version)
-            },
-            vr::TreeOpResult::Set(set, version) => {
-                let val = RepeatedField::from_vec(set);
-                let mut set = Set::new();
-                set.set_val(val);
-                let mut result = TreeOpResult::new();
-                result.set_set(set);
-                (result, version)
-            },
-            vr::TreeOpResult::Keys(keys) => {
-                let key_vec: Vec<_>  = keys.into_iter().map(|(name, version)| {
-                    let mut key = Key::new();
-                    key.set_name(name);
-                    key.set_version(version);
-                    key
-                }).collect();
-                let mut keys = Keys::new();
-                keys.set_keys(RepeatedField::from_vec(key_vec));
-                let mut result = TreeOpResult::new();
-                result.set_keys(keys);
-                (result, None)
-            }
-        };
-        if let Some(version) = version {
-            result.set_optional_version(version);
-        }
-        result
-    }
-}
-
-fn vr_api_rsp_to_proto_api_response(mut reply: ConsensusReply, value: VrApiRsp) -> ApiResponse {
-    match value {
-        VrApiRsp::Ok => reply.set_ok(true),
-        VrApiRsp::TreeOpResult(result) =>  reply.set_tree_op_result(result.into()),
-        VrApiRsp::TreeCasResult(results) => {
-            let results: Vec<_> = results.into_iter().map(|op| op.into()).collect();
-            let mut result = TreeCasResult::new();
-            result.set_results(RepeatedField::from_vec(results));
-            reply.set_tree_cas_result(result);
-        },
-        VrApiRsp::Path(path) => reply.set_path(path),
-        VrApiRsp::Error(error) => reply.set_error(error.into())
-    }
-    let mut response = ApiResponse::new();
-    response.set_consensus_reply(reply);
-    response
-}
-
-fn pid_to_api_pid(pid: Pid) -> ApiPid {
-    let mut api_pid = ApiPid::new();
-    api_pid.set_name(pid.name);
-    api_pid.set_node_name(pid.node.name);
-    api_pid.set_node_addr(pid.node.addr);
-    if pid.group.is_some() {
-        api_pid.set_group(pid.group.unwrap());
-    }
-    api_pid
-}
-
