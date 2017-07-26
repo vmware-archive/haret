@@ -4,19 +4,12 @@ directory.
 
 # Files
 
- * `backend.rs` - Contains the API for *upcalls* from commmitted VR operations that contain the
-   shared user state of the namespace. This API operates on
-   [vertrees](https://github.com/justinsheehy/vertree).
  * `replica.rs` - This file contains a representation of a VR replica that contains a `state` member
    variable that is the current state of the VR protocol. `Replica` implements a rabble process that
    accepts a Haret [Msg](https://github.com/vmware/haret/blob/master/haret/src/msg.rs).  It extracts
    out the VR related messages in its `handle` function and then transitions to the next state based
    on the message. It also handles administrative `GetReplicaState` messages that return the
    internal state to the admin user for help debugging.
- * `vr_api_messages.rs` - Contains all the backend related messages that control user operations on
-   the user state (vertree). This is virtually identical to the Vertree code itself, and may
-   possibly be removed to just use that code if we wrap the types in vertree with `Serialize` and
-   `Deserialize`.
  * `vr_ctx.rs` - Contains `VrCtx` which is the internal data state of a replica that exists in all states
    of the state machine. It is a component in each of the state Enums making up the VR protocol.
  * `vr_fsm.rs` - This file enumerates all states in the protocol implementation via the `VrState`

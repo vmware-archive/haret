@@ -3,9 +3,9 @@
 
 use rabble::{self, Pid};
 use msg::Msg;
-use super::vr_api_messages::{VrApiReq, VrApiRsp};
+use api::{ApiReq, ApiRsp};
 use super::replica::VersionedReplicas;
-use super::VrBackend;
+use api::Backend;
 use std::convert::From;
 
 /// Generate a message struct: `$struct_name` from a set of fields
@@ -87,7 +87,7 @@ impl From<Tick> for VrMsg {
 }
 
 msg!(ClientRequest {
-    op: VrApiReq,
+    op: ApiReq,
     client_id: String,
     request_num: u64
 });
@@ -102,7 +102,7 @@ msg!(ClientReply {
     epoch: u64,
     view: u64,
     request_num: u64,
-    value: VrApiRsp
+    value: ApiRsp
 });
 
 msg!(StartViewChange {
@@ -180,7 +180,7 @@ msg!(RecoveryResponse {
     // The following fields are only valid when sent by the Primary
     op: Option<u64>,
     commit_num: Option<u64>,
-    state: Option<VrBackend>,
+    state: Option<Backend>,
     log_start: Option<u64>,
     log_tail: Option<Vec<ClientOp>>,
 

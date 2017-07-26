@@ -1,6 +1,8 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg_attr(feature="cargo-clippy", allow(let_and_return))]
+
 //! This module contains assertion functions around VR protocol invariants. It's general enough to
 //! be used from multiple tests.
 
@@ -22,6 +24,7 @@ pub fn assert_single_primary_per_epoch_view(states: &[VrState]) -> Result<(), St
     Ok(())
 }
 
+#[cfg_attr(feature="cargo-clippy", allow(needless_return))]
 pub fn assert_minority_of_nodes_recovering(quorum: usize,
                                            states: &[VrState]) -> Result<(), String>
 {

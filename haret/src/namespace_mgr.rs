@@ -13,7 +13,7 @@ use namespace_msg::{NamespaceMsg, ClientId, NamespaceId};
 use namespaces::Namespaces;
 use vr::vr_ctx::{VrCtx, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_PRIMARY_IDLE_TIMEOUT_MS};
 use admin::{AdminReq, AdminRpy};
-use api::ApiRpy;
+use api::ClientRegistrationRpy;
 
 const MANAGEMENT_TICK_MS: u64 = 10000; // 10s
 
@@ -35,18 +35,19 @@ pub struct NamespaceMgr {
     /// value is set at 1/3 * DEFAULT_PRIMARY_IDLE_TIMEOUT_MS (`ctx.primary_idle_timeout_ms`) for
     /// the following reasons:
     ///
-    /// 1) We want to send timeout messages as close to the primary timeout as possible (therfore use
-    ///    smaller tick values)
+    /// 1) We want to send timeout messages as close to the primary timeout as possible (therfore
+    ///    use smaller tick values)
+    ///
     /// 2) We don't want to unnecessarily spam the FSMs with ticks and chew CPU cycles (therefore
     ///    use larger tick values)
     ///
     /// This setting allows us to maximally send a commit message 1/3 `ctx.primary_idle_timeout_ms`
-    /// late. If we always ensure that `ctx.idle_timeout` is at least double
+	/// late. If we always ensure that `ctx.idle_timeout` is at least double
     /// `ctx.primary_idle_timeout_ms` we can minimize unnecessary view changes. Note that for
     /// backups, the ticks are higher frequency than necessary, but this is the tradeoff made
     /// for having a single Tick message.
     tick_period: usize,
-    /*************************************************************************/
+
     fsm_timer_id: usize,
     management_timer_id: usize
 }
@@ -153,29 +154,35 @@ impl NamespaceMgr {
                 if replica.node == self.node.id {
                     // TODO: Actually return a valid new_registration value when the
                     // client table exists
-                    ApiRpy::ClientRegistration {primary: replica.clone(), new_registration: true}
+                    ClientRegistrationRpy::ClientRegistration {
+                        primary: replica.clone(),
+                        new_registration: true
+                    }
                 } else {
                     match self.api_addrs.get(&replica.node) {
                         Some(addr) =>
-                            ApiRpy::Redirect {primary: replica.clone(), api_addr: addr.clone()},
+                            ClientRegistrationRpy::Redirect {
+                                primary: replica.clone(),
+                                api_addr: addr.clone()
+                            },
                         None =>
-                            ApiRpy::Retry(10000)
+                            ClientRegistrationRpy::Retry(10000)
                     }
                 }
             },
             None => {
                 if self.namespaces.exists(&namespace_id) {
                     // A primary hasn't been elected yet
-                    ApiRpy::Retry(10000)
+                    ClientRegistrationRpy::Retry(10000)
                 } else {
-                    ApiRpy::UnknownNamespace
+                    ClientRegistrationRpy::UnknownNamespace
                 }
             }
         };
         let envelope = Envelope {
             to: c_id.pid.clone(),
             from: self.pid.clone(),
-            msg: rabble::Msg::User(Msg::ApiRpy(msg)),
+            msg: rabble::Msg::User(Msg::ClientRegistrationRpy(msg)),
             correlation_id: Some(c_id)
         };
         self.node.send(envelope).unwrap();

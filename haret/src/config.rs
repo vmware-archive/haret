@@ -29,8 +29,7 @@ impl Config {
         let mut file = File::open(path).unwrap();
         let mut string = String::new();
         file.read_to_string(&mut string).unwrap();
-        let config: Config = toml::from_str(&string).unwrap();
-        config
+        toml::from_str(&string).unwrap()
     }
 
     pub fn write_path(&self, path: &str) -> Result<(), VrError> {

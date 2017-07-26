@@ -7,7 +7,9 @@ use rand::thread_rng;
 use rand::distributions::range::Range;
 use rand::distributions::IndependentSample;
 use quickcheck::{Arbitrary, Gen};
-use haret::vr::{vr_msg, VrApiReq, TreeOp, NodeType};
+use vertree::NodeType;
+use haret::vr::vr_msg;
+use haret::api::{self, TreeOp};
 
 #[derive(Debug, Clone)]
 struct Path(pub String);
@@ -65,7 +67,7 @@ impl Arbitrary for ClientRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct ApiReq(pub VrApiReq);
+pub struct ApiReq(pub api::ApiReq);
 
 impl Arbitrary for ApiReq {
     fn arbitrary<G: Gen>(g: &mut G) -> ApiReq {
@@ -76,6 +78,6 @@ impl Arbitrary for ApiReq {
             1 => TreeOp::BlobPut {path: path, val: b"hello".to_vec()},
             _ => TreeOp::BlobGet {path: path}
         };
-        ApiReq(VrApiReq::TreeOp(op))
+        ApiReq(api::ApiReq::TreeOp(op))
     }
 }

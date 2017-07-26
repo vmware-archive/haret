@@ -1,14 +1,19 @@
 // Copyright © 2016-2017 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg_attr(feature="cargo-clippy", allow(let_and_return))]
+#![cfg_attr(feature="cargo-clippy", allow(needless_return))]
+
 //! This module contains test functions for specific API operations. It's intended to be general
 //! enough to use for multiple tests.
 
 use super::scheduler::Scheduler;
 use rabble::{self, Envelope};
+use vertree::NodeType;
 use haret::Msg;
-use haret::vr::{VrState, VrMsg, VrCtx, VrApiReq, VrApiRsp, VrApiError, TreeOp};
-use haret::vr::{ClientOp, ClientRequest, TreeOpResult, NodeType};
+use haret::vr::{VrState, VrMsg, VrCtx};
+use haret::vr::{ClientOp, ClientRequest};
+use haret::api::{ApiReq, ApiRsp, ApiError, TreeOp, TreeOpResult};
 use vertree::{self, Reply, Value};
 
 pub fn assert_create_response(scheduler: &Scheduler,
@@ -16,25 +21,24 @@ pub fn assert_create_response(scheduler: &Scheduler,
                               reply: Envelope<Msg>) -> Result<(), String>
 {
     let (request_num, api_req, api_rsp) = match_client_reply(request, reply)?;
-    let (path, ty) = if let VrApiReq::TreeOp(TreeOp::CreateNode {path, ty}) = api_req {
+    let (path, ty) = if let ApiReq::TreeOp(TreeOp::CreateNode {path, ty}) = api_req {
         (path, ty)
     } else {
         fail!()
     };
 
     match api_rsp {
-        VrApiRsp::Ok |
-        VrApiRsp::Error(VrApiError::AlreadyExists(_)) => {
+        ApiRsp::Ok |
+        ApiRsp::Error(ApiError::AlreadyExists(_)) => {
             assert_successful_create(scheduler, &path, request_num, ty)
         },
-        VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => {
+        ApiRsp::Error(ApiError::PathMustEndInDirectory(_)) => {
             Ok(())
         },
         e => {
             println!("e = {:?}", e);
             fail!()
         }
-        //_ => fail!()
     }
 }
 
@@ -45,20 +49,20 @@ pub fn assert_put_response(scheduler: &Scheduler,
 {
     let (request_num, api_req, api_rsp) = match_client_reply(request, reply)?;
     let (path, data) =
-        if let VrApiReq::TreeOp(TreeOp::BlobPut {path, val, ..}) = api_req {
+        if let ApiReq::TreeOp(TreeOp::BlobPut {path, val, ..}) = api_req {
             (path, val)
         } else {
             fail!()
         };
 
     match api_rsp {
-        VrApiRsp::TreeOpResult(TreeOpResult::Ok(_)) => {
+        ApiRsp::TreeOpResult(TreeOpResult::Ok(_)) => {
             assert_successful_put_or_get(scheduler, path, request_num, &data)
         },
-        VrApiRsp::Error(VrApiError::AlreadyExists(_)) |
-        VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => Ok(()),
-        VrApiRsp::Error(VrApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
-        VrApiRsp::Error(VrApiError::DoesNotExist(_)) => {
+        ApiRsp::Error(ApiError::AlreadyExists(_)) |
+        ApiRsp::Error(ApiError::PathMustEndInDirectory(_)) => Ok(()),
+        ApiRsp::Error(ApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
+        ApiRsp::Error(ApiError::DoesNotExist(_)) => {
             assert_element_not_found_primary(scheduler, path)
         },
         e => {
@@ -73,20 +77,20 @@ pub fn assert_get_response(scheduler: &Scheduler,
                            reply: Envelope<Msg>) -> Result<(), String>
 {
     let (request_num, api_req, api_rsp) = match_client_reply(request, reply)?;
-    let path = if let VrApiReq::TreeOp(TreeOp::BlobGet {path, ..}) = api_req {
+    let path = if let ApiReq::TreeOp(TreeOp::BlobGet {path, ..}) = api_req {
         path
     } else {
         fail!()
     };
 
     match api_rsp {
-        VrApiRsp::TreeOpResult(TreeOpResult::Blob(data, _)) => {
+        ApiRsp::TreeOpResult(TreeOpResult::Blob(data, _)) => {
             assert_successful_put_or_get(scheduler, path, request_num, &data)
         },
-        VrApiRsp::Error(VrApiError::AlreadyExists(_)) |
-        VrApiRsp::Error(VrApiError::PathMustEndInDirectory(_)) => Ok(()),
-        VrApiRsp::Error(VrApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
-        VrApiRsp::Error(VrApiError::DoesNotExist(_)) => {
+        ApiRsp::Error(ApiError::AlreadyExists(_)) |
+        ApiRsp::Error(ApiError::PathMustEndInDirectory(_)) => Ok(()),
+        ApiRsp::Error(ApiError::WrongType(_, ty)) => safe_assert_eq!(ty, NodeType::Directory),
+        ApiRsp::Error(ApiError::DoesNotExist(_)) => {
             assert_element_not_found_primary(scheduler, path)
         },
         e => {
@@ -99,7 +103,7 @@ pub fn assert_get_response(scheduler: &Scheduler,
 /// Attempt to retrieve a client reply and extract useful data from it, along with data from the
 /// request.
 fn match_client_reply(request: VrMsg, reply: Envelope<Msg>)
-  -> Result<(u64, VrApiReq, VrApiRsp), String>
+  -> Result<(u64, ApiReq, ApiRsp), String>
 {
     if let VrMsg::ClientRequest(ClientRequest {op, request_num, ..})= request {
         if let rabble::Msg::User(Msg::Vr(VrMsg::ClientReply(reply))) = reply.msg {
