@@ -103,13 +103,13 @@ Start here if you are looking to hack on haret.
    * curl -sSf https://static.rust-lang.org/rustup.sh | sh -s -- --channel=stable
  * Install [rlwrap](https://linux.die.net/man/1/rlwrap) so that you can have readline support on CLIs
  * Build a 3 node development cluster and launch 3 nodes on localhost
-   * `cd haret && make launch`
+   * `cd haret && make devrel && make launch`
  * Note that all node configuration is stored in `haret/dev/devN`
 
 ### Joining 3 nodes to create a cluster
  * Open a new terminal window (output from the launched nodes shows up in the original)
  * Connect to the admin server of node1
-   * `rlwrap cargo run --bin haret-admin 127.0.0.1:2001`
+   * `rlwrap ./target/debug/haret-admin 127.0.0.1:2001`
  * Check the cluster status to verify only a single node (dev1) exists
    * `haret-admin> cluster status`
  * Join the nodes together using their cluster ports to form a cluster
